@@ -132,7 +132,66 @@ function restore(st) {
 }
 function undo() { if (!E.undo.length) return; E.redo.push(E.undo[E.undo.length - 1].tempo ? fullSnapshot() : snapshot()); restore(E.undo.pop()); }
 function redo() { if (!E.redo.length) return; const st = E.redo.pop(); E.undo.push(st.tempo ? fullSnapshot() : snapshot()); restore(st); }
-function markDirty() { E.dirty = true; E.parts.forEach(p => p.tr.notes.sort((a, b) => a.t - b.t || a.n - b.n)); updateButtons(); draw(); }
+function markDirty() { E.dirty = true; E.parts.forEach(p => p.tr.notes.sort((a, b) => a.t - b.t || a.n - b.n)); updateButtons(); draw(); scheduleChecks(); }
+
+// ---------- chart rules, live (checks.js on the server): dismissable warnings, nothing is blocked ----------
+const ruleKey = i => `${i.rule}|${i.part || ""}|${i.diff || ""}`;
+function dismissed() { try { return new Set(JSON.parse(localStorage["pe.dismissed." + E.folder] || "[]")); } catch { return new Set(); } }
+function saveDismissed(set) { localStorage["pe.dismissed." + E.folder] = JSON.stringify([...set]); }
+function scheduleChecks() {
+  if (!E) return;
+  clearTimeout(E.checkTimer);
+  E.checkTimer = setTimeout(runChecks, 500);
+}
+async function runChecks() {
+  if (!E) return;
+  const seq = (E.checkSeq = (E.checkSeq || 0) + 1);
+  try {
+    const r = await api("POST", `/api/checks/${E.folder}`, { midi: E.midi, reduce: E.reduce });
+    if (!E || seq !== E.checkSeq) return;
+    const before = E.checks ? new Set(E.checks.map(ruleKey)) : null;
+    E.checks = r.items.filter(i => i.level !== "info");
+    // warnings this edit introduced (not on the first check) flash once
+    E.fresh = before ? new Set(E.checks.map(ruleKey).filter(k => !before.has(k))) : new Set();
+    renderRules();
+  } catch (e) { const el = $("#rules"); if (el) el.innerHTML = `<span class="dim small">rule check failed: ${esc(e.message)}</span>`; }
+}
+function renderRules() {
+  const el = $("#rules");
+  if (!el || !E.checks) return;
+  const dis = dismissed(), cur = DIFFS[E.diff];
+  const active = E.checks.filter(i => !dis.has(ruleKey(i)))
+    .sort((a, b) => (a.level === "error" ? 0 : 1) - (b.level === "error" ? 0 : 1) || (a.diff === cur ? 0 : 1) - (b.diff === cur ? 0 : 1));
+  const hidden = E.checks.length - active.length;
+  if (!active.length) {
+    el.className = "rules ok";
+    el.innerHTML = `<span>✓ Within the official charts' ranges${hidden ? ` (${hidden} dismissed)` : ""}.</span>${hidden ? ' <button class="small" id="rulesShow">Show dismissed</button>' : ""}`;
+  } else {
+    const shown = E.rulesOpen ? active : active.slice(0, 2);
+    el.className = "rules";
+    el.innerHTML = `<div class="rhead"><b>${active.length} rule${active.length > 1 ? "s" : ""} outside the official charts' style</b>
+      <span class="small dim">just a heads-up: the chart still saves and builds</span><span class="grow"></span>
+      ${active.length > 2 ? `<button class="small" id="rulesMore">${E.rulesOpen ? "Show fewer" : `Show all ${active.length}`}</button>` : ""}
+      <button class="small" id="rulesAll">Dismiss all</button>${hidden ? ` <button class="small" id="rulesShow">Show dismissed (${hidden})</button>` : ""}</div>
+      ${shown.map(i => `<div class="rrow ${E.fresh && E.fresh.has(ruleKey(i)) ? "fresh" : ""}" data-key="${esc(ruleKey(i))}">
+        <span class="badge ${i.level === "error" ? "bad" : "warn"}">${i.level === "error" ? "problem" : "rule"}</span>
+        ${i.part ? `<b>${esc(i.part)}</b>` : ""} <span>${esc(i.msg)}</span>
+        ${i.at != null ? `<a href="#" data-at="${i.at}" class="small">go</a>` : ""}<span class="grow"></span>
+        <button class="small rx" title="Dismiss: hide this warning for this song">×</button></div>`).join("")}`;
+  }
+  el.querySelectorAll("[data-at]").forEach(a => a.onclick = e => {
+    e.preventDefault();
+    const row = a.closest(".rrow"), item = E.checks.find(i => ruleKey(i) === row.dataset.key);
+    if (item && item.diff) { E.diff = DIFFS.indexOf(item.diff); $("#diff").value = E.diff; }
+    if (item && item.part) { E.focus = item.part; $("#focus").value = E.focus; }
+    seek(Number(a.dataset.at)); E.x0 = Math.max(0, Number(a.dataset.at) - 2); renderDiff(); renderRules(); draw();
+  });
+  el.querySelectorAll(".rx").forEach(b => b.onclick = () => { const d = dismissed(); d.add(b.closest(".rrow").dataset.key); saveDismissed(d); renderRules(); });
+  const all = el.querySelector("#rulesAll"); if (all) all.onclick = () => { const d = dismissed(); E.checks.forEach(i => d.add(ruleKey(i))); saveDismissed(d); renderRules(); };
+  const more = el.querySelector("#rulesMore"); if (more) more.onclick = () => { E.rulesOpen = !E.rulesOpen; renderRules(); };
+  const show = el.querySelector("#rulesShow"); if (show) show.onclick = () => { saveDismissed(new Set()); renderRules(); };
+  E.fresh = new Set();
+}
 function fxChanged() { E.fxDirty = true; updateButtons(); renderFxPanel(); draw(); }
 // a gem must end before the next gem in the same lane (one MIDI note number)
 function fixOverlaps(p) {
@@ -479,11 +538,12 @@ function renderShell(root, details) {
   </div>
   <div class="mixer">${TRACKS.map(t => `<span class="ch"><b>${TRACK_NAME[t]}</b><button data-m="${t}" title="mute">M</button><button data-s="${t}" title="solo">S</button><input type="range" min="0" max="1.5" step="0.05" value="1" data-v="${t}"></span>`).join("")}
     <span class="ch"><b>Ticks</b><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol"></span><span id="audioState" class="dim"></span></div>
+  <div id="rules" class="rules ok"><span class="dim small">checking the chart against the official charts' rules…</span></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
   <div class="edfoot">
     <div class="panel" style="flex:1"><div id="status"></div><div id="reduceLine" class="warnline"></div>
       <label class="small"><input type="checkbox" id="reduce" ${E.reduce ? "checked" : ""}> Easy, Medium and Hard are made from Expert at build time (only Expert edits count)</label>
-      <div id="diffBox" class="diffbox" style="margin-top:6px"></div><div id="checksLine" class="small" style="margin-top:6px"></div></div>
+      <div id="diffBox" class="diffbox" style="margin-top:6px"></div></div>
     <div class="panel" id="fxPanel" style="width:340px"></div>
     <div class="panel keys" style="width:390px">
       <kbd>Space</kbd> play/pause · click ruler = seek · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
@@ -510,7 +570,7 @@ function renderShell(root, details) {
   $("#play").onclick = () => E.playing ? stop() : play();
   $("#toStart").onclick = () => { seek(0); E.x0 = 0; draw(); };
   $("#rate").onchange = e => { const was = E.playing; stop(); E.rate = Number(e.target.value); if (was) play(); };
-  $("#diff").onchange = e => { E.diff = Number(e.target.value); E.sel.clear(); renderDiff(); draw(); };
+  $("#diff").onchange = e => { E.diff = Number(e.target.value); E.sel.clear(); renderDiff(); renderRules(); draw(); };
   $("#snap").onchange = e => { E.snap = Number(e.target.value); draw(); };
   $("#zoomIn").onclick = () => zoom(1.5, GUT + (E.W - GUT) / 2);
   $("#zoomOut").onclick = () => zoom(1 / 1.5, GUT + (E.W - GUT) / 2);
@@ -520,7 +580,7 @@ function renderShell(root, details) {
   $("#clickVol").oninput = e => { if (E.clickGain) E.clickGain.gain.value = Number(e.target.value); };
   $("#undo").onclick = undo; $("#redo").onclick = redo;
   $("#tempoBtn").onclick = tempoDialog;
-  $("#reduce").onchange = e => { E.reduce = e.target.checked; E.dirty = true; updateButtons(); draw(); };
+  $("#reduce").onchange = e => { E.reduce = e.target.checked; E.dirty = true; updateButtons(); draw(); scheduleChecks(); };
   $("#saveEd").onclick = () => save(false);
   $("#saveBuildEd").onclick = () => save(true);
   document.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const t = b.dataset.m; E.mute[t] = !E.mute[t]; b.classList.toggle("on", E.mute[t]); applyGains(); });
@@ -537,7 +597,7 @@ function renderShell(root, details) {
   E.hw.addEventListener("mousedown", e => { const r = E.hw.getBoundingClientRect(); const l = Math.floor((e.clientX - r.left - 24) / ((HW_W - 48) / 4)); if (l >= 0 && l < 4) recordGem(l); });
   E.onKey = onKey;
   window.addEventListener("keydown", E.onKey);
-  updateButtons(); renderFxPanel(); renderDiff();
+  updateButtons(); renderFxPanel(); renderDiff(); runChecks();
 }
 function toggleRec() { E.recording = !E.recording; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
 function recordGem(lane) {
@@ -822,7 +882,6 @@ async function save(rebuild) {
       E.parts.forEach(fixOverlaps);
       const r = await api("PUT", `/api/chart/${E.folder}`, { midi: E.midi, reduce: E.reduce });
       E.dirty = false; E.source = "edited"; E.S.chart = "chart.mid"; E.saved = true;
-      if (r.checks && $("#checksLine")) $("#checksLine").innerHTML = checksHtml(r.checks);
       if (!E.ghost && E.hasAuto) loadGhost(); else renderDiff();
     }
     if (E.fxDirty) {

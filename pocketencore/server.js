@@ -14,6 +14,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
 const MIDI = require("./midi.js");
+const { checkChart } = require("./checks.js");
 
 const TOOLS = path.resolve(__dirname, "..");
 const SONGS = path.join(TOOLS, "songs"), OUT = path.join(TOOLS, "out", "MUSIC"), REAPER = path.join(TOOLS, "reaper");
@@ -240,80 +241,13 @@ function chartPath(folder, auto = false) {
   return null;
 }
 
-// ---------- chart checks: the rules seen in the official charts (FINDINGS §28-33) ----------
-const PART_NAMES = { drums: ["PART DRUMS"], bass: ["PART BASS"], guitar: ["PART GUITAR"], vocals: ["PART KEYS", "PART VOCALS"] };
-const DIFF_NAMES = ["Easy", "Medium", "Hard", "Expert"];
-function tempoMap(midi) {
-  const segs = [];
-  for (const tr of midi.tracks) for (const e of tr.events) if (e.d[0] === 0xff && e.d[1] === 0x51) segs.push({ t: e.t, us: (e.d[3] << 16) | (e.d[4] << 8) | e.d[5] });
-  segs.sort((a, b) => a.t - b.t);
-  if (!segs.length || segs[0].t > 0) segs.unshift({ t: 0, us: 500000 });
-  let s = 0;
-  segs.forEach((g, i) => { if (i) s += (g.t - segs[i - 1].t) * segs[i - 1].us / 1e6 / midi.tpb; g.s = s; });
-  return t => { let g = segs[0]; for (const x of segs) if (x.t <= t) g = x; else break; return g.s + (t - g.t) * g.us / 1e6 / midi.tpb; };
-}
+// ---------- chart checks (checks.js): the rules seen in the official charts ----------
+function readAudio(folder) { try { return JSON.parse(fs.readFileSync(path.join(songDir(folder), "build", "audio.json"), "utf8")); } catch { return null; } }
 function chartChecks(folder) {
   const c = chartPath(folder);
-  if (!c || !fs.existsSync(c.file)) return { source: null, items: [{ level: "info", msg: "no chart yet: build the song once" }] };
-  const midi = MIDI.parse(fs.readFileSync(c.file)), sec = tempoMap(midi), items = [], tpb = midi.tpb;
-  let audio = null;
-  try { audio = JSON.parse(fs.readFileSync(path.join(songDir(folder), "build", "audio.json"), "utf8")); } catch { }
+  if (!c || !fs.existsSync(c.file)) return { source: null, items: [{ level: "info", rule: "no-chart", msg: "no chart yet: build the song once" }] };
   const S = readSong(folder);
-  const push = (level, part, msg, at) => items.push({ level, part, msg, at: at != null ? +at.toFixed(2) : undefined });
-  for (const [part, names] of Object.entries(PART_NAMES)) {
-    const tr = midi.tracks.find(t => names.includes(t.name));
-    if (!tr) { push("warn", part, "no track in the chart (the part will be empty)"); continue; }
-    const off = part === "drums" ? 1 : 0;
-    const solos = tr.notes.filter(n => n.n === 103), od = tr.notes.filter(n => n.n === 116).sort((a, b) => a.t - b.t);
-    if (solos.length > 4) push("error", part, `${solos.length} solos; the chart format holds at most 4`);
-    for (const s of solos) if (s.l <= tpb) push("error", part, `solo at ${sec(s.t).toFixed(2)} s is shorter than a beat (mid2rbu drops it)`, sec(s.t));
-    for (let i = 1; i < od.length; i++) if (sec(od[i].t) - sec(od[i - 1].t + od[i - 1].l) < 2) push("warn", part, `overdrive phrases ${i} and ${i + 1} are ${(sec(od[i].t) - sec(od[i - 1].t + od[i - 1].l)).toFixed(1)} s apart (official: several bars)`, sec(od[i].t));
-    for (let d = 3; d >= 0; d--) {
-      const base = 60 + 12 * d + off, gems = tr.notes.filter(n => n.n >= base && n.n < base + 4).sort((a, b) => a.t - b.t);
-      const dn = DIFF_NAMES[d];
-      if (!gems.length) { if (d === 3) push("warn", part, "no Expert gems"); continue; }
-      if (S.reduce && d < 3) continue;  // remade from Expert at build time
-      const first = sec(gems[0].t), last = gems[gems.length - 1];
-      if (first < 2.77) push("warn", part, `${dn}: first gem at ${first.toFixed(2)} s; official charts never start before 2.77 s`, first);
-      if (audio && sec(last.t + last.l) > audio.audioSeconds) push("error", part, `${dn}: a gem ends at ${sec(last.t + last.l).toFixed(2)} s, after the audio (${audio.audioSeconds.toFixed(2)} s)`, sec(last.t));
-      // chords (same tick), holds, density
-      const byTick = new Map();
-      for (const g of gems) byTick.set(g.t, (byTick.get(g.t) || 0) + 1);
-      const onsets = [...byTick.keys()].sort((a, b) => a - b), chords = [...byTick.values()].filter(n => n > 1).length;
-      // official: 3-gem chords on Expert guitar only (0.4 % of its gems, p50 4 per song); 4-gem chords practically never
-      const triples = [...byTick.values()].filter(n => n === 3).length, quads = [...byTick.values()].filter(n => n > 3).length;
-      if (quads) push("warn", part, `${dn}: ${quads} chord${quads > 1 ? "s" : ""} of 4 gems (official charts: practically never)`, sec(onsets.find(t => byTick.get(t) > 3)));
-      if (triples && (d < 3 || part !== "guitar")) push("warn", part, `${dn}: ${triples} chord${triples > 1 ? "s" : ""} of 3 gems (official: Expert guitar only)`, sec(onsets.find(t => byTick.get(t) === 3)));
-      else if (triples > Math.max(2, onsets.length * 0.02)) push("warn", part, `${dn}: ${triples} chords of 3 gems (official: about 4 per song)`, sec(onsets.find(t => byTick.get(t) === 3)));
-      const chordShare = chords / onsets.length;
-      if (part === "guitar" && chordShare > 0.55) push("warn", part, `${dn}: ${(chordShare * 100).toFixed(0)}% chords (official guitar: 4-49%, median 19%)`);
-      if ((part === "bass" || part === "vocals") && chordShare > 0.05) push("warn", part, `${dn}: ${(chordShare * 100).toFixed(0)}% chords (official ${part}: almost none)`);
-      if (part === "drums" && chords) push("info", part, `${dn}: ${chords} drum chords (official drums have some, as flams and kick+snare)`);
-      // official Expert charts (90th percentile): held gems bass 26%, guitar 18%, vocals 44%; drums never
-      const holds = gems.filter(g => g.l > 160).length / gems.length, holdLimit = { bass: 0.3, guitar: 0.25, vocals: 0.5 }[part];
-      if (part === "drums" && holds > 0) push("error", part, `${dn}: ${gems.filter(g => g.l > 160).length} held drum gems; official drums are never held`, sec(gems.find(g => g.l > 160).t));
-      else if (holds > holdLimit) push("warn", part, `${dn}: ${(holds * 100).toFixed(0)}% held gems (official ${part}: up to ~${holdLimit * 100}%)`);
-      // density: onsets per second in any 2 s window
-      let worst = 0, worstAt = 0;
-      for (let i = 0, j = 0; i < onsets.length; i++) {
-        while (j < onsets.length && sec(onsets[j]) - sec(onsets[i]) <= 2) j++;
-        if (j - i > worst) { worst = j - i; worstAt = sec(onsets[i]); }
-      }
-      // official Expert charts, busiest 2 s window (90th percentile): drums 10.5, bass 8.5, guitar 11.5, vocals 6.5 gems/s
-      const limit = { drums: 11, bass: 9, guitar: 12, vocals: 7 }[part];
-      if (worst / 2 > limit) push("warn", part, `${dn}: ${(worst / 2).toFixed(1)} gems/s around ${worstAt.toFixed(1)} s (official ${part}: up to ~${limit}/s)`, worstAt);
-      // vocals: gap after a hold
-      if (part === "vocals") for (let i = 1; i < gems.length; i++) { const p = gems[i - 1]; if (p.l > 160 && sec(gems[i].t) - sec(p.t + p.l) < 0.25 && gems[i].t !== p.t) { push("warn", part, `${dn}: a gem ${(sec(gems[i].t) - sec(p.t + p.l)).toFixed(2)} s after a held one at ${sec(p.t).toFixed(2)} s (official: ≥ 0.3 s)`, sec(p.t)); break; } }
-      // tiny gaps on the same lane
-      for (let i = 1; i < gems.length; i++) if (gems[i].n === gems[i - 1].n && gems[i].t !== gems[i - 1].t && sec(gems[i].t) - sec(gems[i - 1].t) < 0.08) { push("warn", part, `${dn}: two gems on one lane ${((sec(gems[i].t) - sec(gems[i - 1].t)) * 1000).toFixed(0)} ms apart at ${sec(gems[i].t).toFixed(2)} s`, sec(gems[i].t)); break; }
-      // solos must end at or before the last gem
-      for (const s of solos) if (s.t + s.l > last.t + 1) push("warn", part, `${dn}: solo at ${sec(s.t).toFixed(2)} s ends after the part's last gem (mksong clamps it)`, sec(s.t));
-    }
-  }
-  if (audio && audio.musicStart != null && audio.musicStart < 2.9) push("warn", null, `the music starts at ${audio.musicStart} s; official songs leave ~3 s (set "leadIn")`);
-  const order = { error: 0, warn: 1, info: 2 };
-  items.sort((a, b) => order[a.level] - order[b.level] || (a.at ?? 1e9) - (b.at ?? 1e9));
-  return { source: c.source, items };
+  return { source: c.source, items: checkChart(MIDI.parse(fs.readFileSync(c.file)), { reduce: !!S.reduce, audio: readAudio(folder) }) };
 }
 
 // ---------- audio: the five tracks as the game plays them ----------
@@ -496,6 +430,11 @@ async function route(req, res) {
     return json(res, { ok: true });
   }
   if (what === "checks" && M === "GET") return json(res, chartChecks(folder));
+  if (what === "checks" && M === "POST") {  // the editor's chart, not saved yet
+    const { midi, reduce } = await body(req);
+    readSong(folder);
+    return json(res, { source: "editor", items: checkChart(midi, { reduce: !!reduce, audio: readAudio(folder) }) });
+  }
   if (what === "effects" && M === "PUT") {
     const { effects } = await body(req);
     validateEffects(effects);

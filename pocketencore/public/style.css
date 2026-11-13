@@ -124,3 +124,12 @@ button.small { padding: 1px 7px; font-size: 11px; }
 input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
 .req { color: var(--bad); }
 input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+
+/* live chart rules */
+.rules { border: 1px solid #6b5a2c; background: rgba(232,184,74,.07); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; }
+.rules.ok { border-color: var(--line); background: none; color: var(--ok); padding: 4px 10px; }
+.rules .rhead { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
+.rules .rrow { display: flex; gap: 6px; align-items: center; padding: 2px 0; border-top: 1px solid rgba(255,255,255,.05); }
+.rules .rrow.fresh { animation: rulesflash 1.6s ease-out; }
+@keyframes rulesflash { 0% { background: rgba(232,184,74,.45); } 100% { background: none; } }
+.rules .rx { padding: 0 7px; }
