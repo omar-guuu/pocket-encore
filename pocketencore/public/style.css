@@ -148,3 +148,11 @@ body.onboarding #buildToggle, body.onboarding #setupLink { display: none; }
 .obmode { margin-top: 4px; }
 .obnav { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
 #modeBadge:empty { display: none; }
+
+/* packs */
+.card.pack { cursor: default; }
+.card.pack:hover { border-color: var(--line); }
+.pktable td:first-child, .pktable th:first-child { width: 28px; }
+body.onboarding a.navlink { display: none; }
+.pktable th, .pktable td { text-align: left !important; }
+.pktable th:last-child, .pktable td:last-child { text-align: right !important; }

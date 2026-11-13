@@ -166,6 +166,7 @@ Our scripts (`rbu-tools\scripts`), in pipeline order:
 | editing | `reaperpack.js` | chart + WAVs for REAPER (customs and official references) |
 | checks | `loudness.js`, `chartmap.js`, `stresspack.js` | loudness of decoded tracks, chart memory map, 300-song stress test |
 | config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, disc image, python, at3tool, mid2rbu) with detected defaults; `check()` = Setup and onboarding |
+| packs | `mkpack.js` | built songs + a song database listing only them → `out\PACKS\<name>\MUSIC` + `pack.txt` |
 | config | `game.js`, `iso.js` | finds the game (PPSSPP memory stick, disc image), picks the game mode (Base Game + Complete DLC / + Incomplete DLC / Base Game only), reads disc files from the ISO/CSO |
 
 ### Pocket Encore: the all-in-one page (since 2026-11-11; named RBU Studio until 2026-11-12)
@@ -207,6 +208,15 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   too close, solos too short or too many; "go" opens the editor at that time). Also gem counts and star scores per
   difficulty from the last build. **song.json** tab = the raw file; unknown effect names are refused on save.
   Every save keeps the old file as `song.json.bak`; saving without changes leaves the file (and build state) alone.
+- **Packs** (top right): sets of your songs, each with its own song database, to switch what the game lists without
+  rebuilding songs. The game holds 300 songs including the official ones (Base Game + Complete DLC: 112 official, so up
+  to 188 custom songs per pack; Base Game only: 55, so 245). Create a pack, name it (empty = "Pocket Encore <JB code>",
+  the 6 digits of its song database file), tick its songs or "Add all songs with genre…". **Build pack** builds the
+  pack's new or changed songs, then writes `out\PACKS\<pack name>\MUSIC\` (its song folders + its own
+  `ZZCUSTOMDB`) and a `pack.txt` listing them. To switch packs on the memory stick: delete the previous pack's song
+  folders and `ZZCUSTOMDB` from `PSP\GAME\ULUS10418\MUSIC` (its `pack.txt` lists them), then copy the new
+  pack's `MUSIC` contents there. Official DLC stays; scores are kept per song (same folder name = same song id). The
+  pack list is `songs\packs.json` (in the repo); what was built where is `songs\.db\packs-built.json` (per machine).
 - **Build** (whole song) and **Rebuild chart** (chart and database only, reusing the audio). The output streams into the
   build log at the bottom and is written to `songs\<FOLDER>\build\build.log` (**Last log** shows it later).
 - **Chart & effects**: the four parts' gems on a time line, over each part's own stem waveform, with playback of the

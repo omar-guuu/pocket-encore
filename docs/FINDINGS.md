@@ -745,3 +745,9 @@ YOURENOROCKNROLLFUN (song-list base)? The PSP store no longer sells the DLC, so 
   in every language). Mode labels: Base Game only / Base Game + Incomplete DLC / Base Game + Complete DLC (complete = every
   DLC record of the newest song list has its folder). Onboarding detection of both other modes confirmed by the user
   (2026-11-13); in-game play of disc-only builds still to test.
+
+**§34 addendum: song packs (2026-11-13).** Only the newest song database is shown, so one custom database is active at
+a time: a pack = song folders + a ZZCUSTOMDB listing only them (scripts/mkpack.js, Pocket Encore → Packs). Switching
+copies whole packs (the user's choice: delete the old pack's folders and ZZCUSTOMDB, copy the new one); keeping all song
+folders on the stick and swapping only the database was not chosen (untested: folders not in the active list).
+Capacity per pack = 300 - official songs in the base list (188 with complete DLC, 245 base game only).

@@ -273,38 +273,110 @@ function audioFile(folder, track) {
 }
 
 // ---------- builds (one at a time, output streamed to the page and written to build/build.log) ----------
-let build = null;  // { folder, from, lines: [], done: false, code, listeners: Set }
-function startBuild(folder, from) {
+let build = null;  // the running (or last) job: { folder, from, lines: [], done, code, listeners: Set }
+// A job runs its steps (node scripts) one after the other, streaming their output to the page and to a log file.
+// step: { args: [script, ...], label, onDone(code, output lines) }
+function runJob(folder, from, steps, logFile) {
   if (build && !build.done) throw httpError(409, `a build of ${build.folder} is running`);
-  if (!["audio", "chart", "db"].includes(from)) throw httpError(400, "bad stage");
-  readSong(folder);
-  const setup = settings.check();
-  if (!setup.ok) throw httpError(400, "setup incomplete: " + Object.entries(setup.checks).filter(([, c]) => !c.ok).map(([k]) => k).join(", ") + " (see Setup)");
-  const hash = inputsHash(folder);
-  const B = path.join(songDir(folder), "build"); fs.mkdirSync(B, { recursive: true });
-  const logFile = path.join(B, "build.log"), log = fs.createWriteStream(logFile);
-  log.write(`# ${new Date().toISOString()} mksong ${folder} --from ${from}\n`);
-  const args = [path.join(SCRIPTS, "mksong.js"), path.join(songDir(folder), "song.json"), "--from", from];
-  const p = spawn(process.execPath, args, { cwd: SCRIPTS });
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  const log = fs.createWriteStream(logFile);
   build = { folder, from, lines: [], done: false, code: null, listeners: new Set(), started: Date.now() };
   const b = build;
   const push = line => { b.lines.push(line); log.write(line + "\n"); for (const l of b.listeners) l("line", line); };
-  let rest = { out: "", err: "" };
-  const feed = (k, chunk) => {
-    rest[k] += chunk.toString("utf8");
-    const parts = rest[k].split(/\r?\n/); rest[k] = parts.pop();
-    parts.forEach(push);
+  const finish = code => { log.end(`# exit ${code}\n`); b.done = true; b.code = code; for (const l of b.listeners) l("end", String(code)); };
+  let k = 0;
+  const next = () => {
+    if (k >= steps.length) return finish(0);
+    const st = steps[k++];
+    if (st.label) push(st.label);
+    const p = spawn(process.execPath, st.args, { cwd: SCRIPTS });
+    const rest = { out: "", err: "" }, all = [];
+    const feed = (key, chunk) => {
+      rest[key] += chunk.toString("utf8");
+      const parts = rest[key].split(/\r?\n/); rest[key] = parts.pop();
+      parts.forEach(l => { all.push(l); push(l); });
+    };
+    p.stdout.on("data", c => feed("out", c));
+    p.stderr.on("data", c => feed("err", c));
+    p.on("close", code => {
+      for (const key of ["out", "err"]) if (rest[key]) { all.push(rest[key]); push(rest[key]); }
+      try { if (st.onDone) st.onDone(code, all); } catch (e) { push("error: " + e.message); }
+      if (code !== 0) return finish(code);
+      next();
+    });
   };
-  p.stdout.on("data", c => feed("out", c));
-  p.stderr.on("data", c => feed("err", c));
-  p.on("close", code => {
-    if (rest.out) push(rest.out); if (rest.err) push(rest.err);
-    log.end(`# exit ${code}\n`);
-    if (code === 0) fs.writeFileSync(path.join(B, "inputs.json"), JSON.stringify({ hash, from, at: new Date().toISOString() }));
-    b.done = true; b.code = code;
-    for (const l of b.listeners) l("end", String(code));
-  });
+  next();
   return b;
+}
+function checkSetup() {
+  const setup = settings.check();
+  if (!setup.ok) throw httpError(400, "setup incomplete: " + Object.entries(setup.checks).filter(([, c]) => !c.ok).map(([k]) => k).join(", ") + " (see Setup)");
+}
+function songBuildStep(folder, from = "audio") {
+  const hash = inputsHash(folder), B = path.join(songDir(folder), "build");
+  return { args: [path.join(SCRIPTS, "mksong.js"), path.join(songDir(folder), "song.json"), "--from", from],
+    onDone: code => { if (code === 0) { fs.mkdirSync(B, { recursive: true }); fs.writeFileSync(path.join(B, "inputs.json"), JSON.stringify({ hash, from, at: new Date().toISOString() })); } } };
+}
+function startBuild(folder, from) {
+  if (!["audio", "chart", "db"].includes(from)) throw httpError(400, "bad stage");
+  readSong(folder);
+  checkSetup();
+  const step = songBuildStep(folder, from);
+  step.label = `# ${new Date().toISOString()} mksong ${folder} --from ${from}`;
+  return runJob(folder, from, [step], path.join(songDir(folder), "build", "build.log"));
+}
+
+// ---------- packs: sets of songs with their own song database (songs/packs.json; built into out/PACKS/<name>) ----------
+const PACKS_FILE = path.join(SONGS, "packs.json"), PACKS_OUT = path.join(TOOLS, "out", "PACKS");
+// packs.json (in the repo): { packs: [{ id, name, songs, created }] }; what was built where is per machine:
+// songs/.db/packs-built.json { <id>: mkpack's PACK info }
+const PACKS_BUILT = path.join(SONGS, ".db", "packs-built.json");
+function readPacks() { try { return JSON.parse(fs.readFileSync(PACKS_FILE, "utf8")).packs || []; } catch { return []; } }
+function writePacks(packs) { fs.writeFileSync(PACKS_FILE, pretty({ packs: packs.map(({ id, name, songs, created }) => ({ id, name, songs, created })) }) + "\n"); }
+function readBuilt() { try { return JSON.parse(fs.readFileSync(PACKS_BUILT, "utf8")); } catch { return {}; } }
+function writeBuilt(b) { fs.mkdirSync(path.dirname(PACKS_BUILT), { recursive: true }); fs.writeFileSync(PACKS_BUILT, JSON.stringify(b, null, 1)); }
+// JB number = days since 2008-03-07 (as mksong.js / mkpack.js)
+function dayNumber(date = new Date()) { return Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(2008, 2, 7)) / 86400000); }
+const packName = p => (p.name || "").trim() || `Pocket Encore ${String(dayNumber()).padStart(6, "0")}`;
+const safeDir = n => n.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/, "").slice(0, 80) || "Pack";
+function songFolderMb(d) { try { const dir = path.join(OUT, d); return fs.readdirSync(dir).reduce((n, f) => n + fs.statSync(path.join(dir, f)).size, 0) / 1048576; } catch { return 0; } }
+function packsView() {
+  const mode = settings.gameMode();
+  const list = fs.existsSync(SONGS) ? fs.readdirSync(SONGS).filter(d => FOLDER_RE.test(d) && fs.existsSync(path.join(SONGS, d, "song.json"))) : [];
+  const status = Object.fromEntries(list.map(d => { try { return [d, summary(d)]; } catch { return [d, null]; } }));
+  let official = 55;
+  if (mode.mode !== "disc") { try { const f = fs.readdirSync(mode.base).find(x => /^JB\d{6}/i.test(x)); official = fs.readFileSync(path.join(mode.base, f)).readUInt32LE(0x30); } catch { official = 112; } }
+  return {
+    mode, official, capacity: 300 - official,
+    songs: list.map(d => { const s = status[d]; return s ? { folder: d, title: s.song.title, artist: s.song.artist, genre: s.song.genre || "", status: s.status, mb: +songFolderMb(d).toFixed(1) } : { folder: d, error: true }; }),
+    packs: readPacks().map(p => { const last = readBuilt()[p.id]; return { ...p, display: packName(p), missing: p.songs.filter(f => !status[f]), outdated: p.songs.filter(f => status[f] && status[f].status !== "built"),
+      mb: +p.songs.reduce((n, f) => n + songFolderMb(f), 0).toFixed(1), built: last && last.dir && fs.existsSync(last.dir) ? last : null }; }),
+  };
+}
+function startPack(id) {
+  const p = readPacks().find(x => x.id === id);
+  if (!p) throw httpError(404, "no such pack");
+  if (!p.songs.length) throw httpError(400, "the pack has no songs");
+  checkSetup();
+  const view = packsView(), known = new Map(view.songs.filter(s => !s.error).map(s => [s.folder, s]));
+  const missing = p.songs.filter(f => !known.has(f));
+  if (missing.length) throw httpError(400, `songs not found: ${missing.join(", ")}`);
+  if (p.songs.length > view.capacity) throw httpError(400, `${p.songs.length} songs; the game holds ${view.capacity} custom songs in this mode`);
+  const name = packName(p), dir = path.join(PACKS_OUT, safeDir(name));
+  // songs that are new or changed are built first (whole song); the others are reused as they are
+  const steps = p.songs.filter(f => known.get(f).status !== "built").map(f => ({ ...songBuildStep(f), label: `\n=== building ${f} (new or changed) ===` }));
+  const args = [path.join(SCRIPTS, "mkpack.js"), "--out", dir, ...(p.name && p.name.trim() ? ["--name", p.name.trim()] : []), ...p.songs];
+  steps.push({ args, label: `\n=== pack "${name}": ${p.songs.length} songs ===`, onDone: (code, lines) => {
+    if (code !== 0) return;
+    const line = lines.find(l => l.startsWith("PACK "));
+    if (!line) return;
+    const info = JSON.parse(line.slice(5)), built = readBuilt(), prev = built[id];
+    // an earlier build of this pack under another folder name (unnamed packs carry the day's code) is replaced
+    if (prev && prev.dir && path.resolve(prev.dir) !== path.resolve(dir) && path.resolve(prev.dir).startsWith(PACKS_OUT)) fs.rmSync(prev.dir, { recursive: true, force: true });
+    built[id] = info;
+    writeBuilt(built);
+  } });
+  return runJob(`pack "${name}"`, "pack", steps, path.join(SONGS, ".db", `pack-${id}.log`));
 }
 
 // ---------- file browser (to pick stems and MIDIs) ----------
@@ -490,6 +562,35 @@ async function route(req, res) {
     if (!fs.existsSync(f)) throw httpError(404, "this song has no build log yet");
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
     return fs.createReadStream(f).pipe(res);
+  }
+  if (what === "packs" && M === "GET") return json(res, packsView());
+  if (what === "packs" && M === "PUT") {
+    const { packs } = await body(req);
+    if (!Array.isArray(packs)) throw httpError(400, "packs must be a list");
+    const old = readPacks();
+    const clean = packs.map(p => {
+      const id = /^[a-z0-9]{4,20}$/.test(p.id || "") ? p.id : Math.random().toString(36).slice(2, 10);
+      const prev = old.find(x => x.id === id);
+      return { id, name: String(p.name || "").trim().slice(0, 60), songs: [...new Set((p.songs || []).filter(x => FOLDER_RE.test(x)))],
+        created: (prev && prev.created) || new Date().toISOString() };
+    });
+    // a deleted pack's built folder goes too
+    const built = readBuilt();
+    for (const p of old) if (!clean.find(x => x.id === p.id)) {
+      const b = built[p.id];
+      if (b && b.dir && path.resolve(b.dir).startsWith(PACKS_OUT)) fs.rmSync(b.dir, { recursive: true, force: true });
+      delete built[p.id];
+    }
+    writeBuilt(built);
+    writePacks(clean);
+    return json(res, packsView());
+  }
+  if (what === "packbuild" && M === "POST") { const bj = startPack(folder); return json(res, { started: bj.started }); }
+  if (what === "packopen" && M === "POST") {
+    const b = readBuilt()[folder];
+    if (!b || !b.dir || !fs.existsSync(b.dir)) throw httpError(404, "this pack has not been built yet");
+    spawn("explorer.exe", [b.dir], { detached: true, stdio: "ignore" }).unref();
+    return json(res, { dir: b.dir });
   }
   if (what === "ls" && M === "GET") return json(res, listDir(u.searchParams.get("dir")));
   if (what === "open" && M === "POST") return json(res, { dir: openFolder(folder, u.searchParams.get("what")) });

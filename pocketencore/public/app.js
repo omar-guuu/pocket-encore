@@ -40,6 +40,8 @@ async function route(ev) {
     if (h[0] === "song" && h[1]) await showSong(h[1], h[2] || "details");
     else if (h[0] === "new") showNew();
     else if (h[0] === "setup") await showSetup();
+    else if (h[0] === "packs") await showPacks();
+    else if (h[0] === "pack" && h[1]) await showPackEdit(h[1]);
     else await showLibrary();
   } catch (e) { $("#main").innerHTML = `<div class="panel">Error: ${esc(e.message)}</div>`; }
 }
@@ -68,6 +70,7 @@ async function showLibrary() {
       <input id="filter" placeholder="Filter…" value="${esc(localStorage.libFilter || "")}">
       <select id="sort"><option value="folder">by folder</option><option value="title">by title</option><option value="changed">last built</option></select>
       <button onclick="openFolder('', 'out')" title="The built songs, ready to copy to the memory stick">Open output folder</button>
+      <button onclick="location.hash='#/packs'" title="Sets of songs with their own song database, to switch on the memory stick">Packs</button>
       <span class="grow"></span><span class="dim">${list.length} songs in rbu-tools/songs</span></div>
     <div class="cards">${list.map(s => {
       if (s.error) return `<div class="card"><h3>${esc(s.folder)}</h3><div class="sub" style="color:var(--bad)">${esc(s.error)}</div></div>`;
@@ -223,6 +226,108 @@ async function showSetup() {
       META = await api("GET", "/api/meta"); renderModeBadge(); $("#setupLink").classList.toggle("warn", !META.setupOk); toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok); showSetup();
     } catch (e) { toast(e.message, true); }
   };
+}
+
+// ---------- packs: sets of songs with their own song database, to switch on the memory stick ----------
+let PK = null;  // packs view from the server
+const fmtDate = s => s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
+async function savePacks(packs) { PK = await api("PUT", "/api/packs", { packs: packs.map(p => ({ id: p.id, name: p.name, songs: p.songs })) }); return PK; }
+function packState(p) {
+  if (!p.built) return { cls: "bad", text: "not built" };
+  const same = p.built.folders && p.built.folders.length === p.songs.length && p.built.folders.every(x => p.songs.includes(x.folder));
+  if (!same || p.outdated.length) return { cls: "warn", text: "changed since build" };
+  return { cls: "ok", text: "built" };
+}
+async function showPacks() {
+  $("#crumb").innerHTML = `<a href="#/">Songs</a> / Packs`;
+  PK = await api("GET", "/api/packs");
+  const m = PK.mode;
+  $("#main").innerHTML = `<div class="libbar"><button class="primary" id="pk_new">+ New pack</button>
+      <span class="grow"></span><span class="dim small">Game: ${esc(m.label)} · up to <b>${PK.capacity}</b> custom songs per pack (the game holds 300 songs, ${PK.official} of them official)</span></div>
+    <div class="panel small"><b>How packs work.</b> A pack is a set of your songs with its own song database. Building a pack builds any of its
+      songs that are new or changed, then puts the songs and the database in <span class="mono">out\\PACKS\\&lt;pack name&gt;\\MUSIC</span>.
+      To switch packs on the memory stick: delete the previous pack's song folders and <span class="mono">ZZCUSTOMDB</span> from
+      <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> (its <span class="mono">pack.txt</span> lists them), then copy the new pack's
+      <span class="mono">MUSIC</span> contents there. Official DLC stays; scores are kept per song.</div>
+    ${PK.packs.length ? `<div class="cards">${PK.packs.map(p => { const st = packState(p); return `<div class="card pack" data-id="${esc(p.id)}">
+        <h3>${esc(p.display)}</h3><div class="sub">${p.name ? "" : '<span class="small dim">no name: named after its song database code</span>'}</div>
+        <div class="row"><span class="badge ${st.cls}">${st.text}</span><span class="badge">${p.songs.length} song${p.songs.length === 1 ? "" : "s"}</span><span class="badge">${p.mb} MB</span>
+          ${p.songs.length > PK.capacity ? `<span class="badge bad">over ${PK.capacity}</span>` : ""}${p.missing.length ? `<span class="badge bad">${p.missing.length} missing</span>` : ""}</div>
+        <div class="row small dim">${p.built ? `built ${esc(fmtDate(p.built.at))} · ${esc(p.built.jb)} · ${esc(p.built.mode)}` : "never built"}${p.outdated.length ? ` · ${p.outdated.length} song${p.outdated.length > 1 ? "s" : ""} to rebuild` : ""}</div>
+        <div class="actions" style="margin-top:8px"><button data-a="edit">Edit</button><button class="primary" data-a="build" ${p.songs.length ? "" : "disabled"}>Build pack</button>
+          <button data-a="open" ${p.built ? "" : "disabled"}>Open folder</button><span class="grow"></span><button class="danger" data-a="del">Delete</button></div></div>`; }).join("")}</div>`
+      : `<div class="panel dim">No packs yet. A pack groups songs (for example by genre) so you can switch what the game lists without rebuilding them.</div>`}`;
+  $("#pk_new").onclick = () => { location.hash = "#/pack/new"; };
+  document.querySelectorAll(".card.pack [data-a]").forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const id = b.closest(".card").dataset.id, p = PK.packs.find(x => x.id === id), a = b.dataset.a;
+    try {
+      if (a === "edit") location.hash = `#/pack/${id}`;
+      else if (a === "build") await buildPack(id);
+      else if (a === "open") await api("POST", `/api/packopen/${id}`);
+      else if (a === "del") {
+        if (!confirm(`Delete the pack "${p.display}"? Its songs stay; only the pack${p.built ? " and its built folder" : ""} go.`)) return;
+        await savePacks(PK.packs.filter(x => x.id !== id)); showPacks(); toast("Pack deleted");
+      }
+    } catch (err) { toast(err.message, true); }
+  });
+}
+async function buildPack(id) {
+  try { await api("POST", `/api/packbuild/${id}`); } catch (e) { toast(e.message, true); return; }
+  showBuildPanel(true);
+  followBuild();
+}
+async function showPackEdit(id) {
+  PK = await api("GET", "/api/packs");
+  const isNew = id === "new", p = isNew ? { id: "", name: "", songs: [] } : PK.packs.find(x => x.id === id);
+  if (!p) { $("#main").innerHTML = `<div class="panel">No such pack.</div>`; return; }
+  $("#crumb").innerHTML = `<a href="#/">Songs</a> / <a href="#/packs">Packs</a> / ${isNew ? "New pack" : esc(p.display)}`;
+  const sel = new Set(p.songs), songs = PK.songs.filter(s => !s.error);
+  const genres = [...new Set(songs.map(s => s.genre).filter(Boolean))].sort();
+  const code = String(Math.round((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.UTC(2008, 2, 7)) / 86400000)).padStart(6, "0");
+  $("#main").innerHTML = `<div class="panel"><h4>${isNew ? "New pack" : "Edit pack"}</h4><div class="form" style="grid-template-columns:120px 1fr">
+      <label>Pack name</label><input type="text" id="pk_name" maxlength="60" value="${esc(p.name)}" placeholder="e.g. Metal, Alternative rock… (empty: Pocket Encore ${code}, the code of its song database)">
+    </div></div>
+    <div class="panel"><h4>Songs</h4>
+      <div class="libbar"><input id="pk_filter" placeholder="Filter…"><select id="pk_genre"><option value="">Add all songs with genre…</option>${genres.map(g => `<option>${esc(g)}</option>`).join("")}</select>
+        <button id="pk_all">Select all</button><button id="pk_none">Clear</button><span class="grow"></span><span id="pk_count" class="small"></span></div>
+      <table class="t pktable"><tr><th></th><th>Song</th><th>Artist</th><th>Genre</th><th>Build</th><th>MB</th></tr>
+        ${songs.map(s => `<tr data-f="${esc(s.folder)}" data-q="${esc((s.title + " " + s.artist + " " + s.folder + " " + s.genre).toLowerCase())}">
+          <td><input type="checkbox" ${sel.has(s.folder) ? "checked" : ""}></td><td>${esc(s.title)} <span class="dim small">${esc(s.folder)}</span></td><td>${esc(s.artist)}</td><td>${esc(s.genre)}</td>
+          <td><span class="badge ${s.status === "built" ? "ok" : s.status === "not built" ? "bad" : "warn"}">${esc(s.status)}</span></td><td>${s.mb || "–"}</td></tr>`).join("")}</table>
+      ${p.missing && p.missing.length ? `<p class="warnline small">Songs no longer in the library (dropped when you save): ${esc(p.missing.join(", "))}</p>` : ""}
+    </div>
+    <div class="actions"><button class="primary" id="pk_save">Save</button><button id="pk_savebuild">Save and build pack</button><button id="pk_cancel">Cancel</button>
+      <span class="small dim">Songs that are not built yet, or changed, are built when the pack is built.</span></div>`;
+  const count = () => {
+    const chosen = songs.filter(s => sel.has(s.folder)), mb = chosen.reduce((n, s) => n + (s.mb || 0), 0), todo = chosen.filter(s => s.status !== "built").length;
+    $("#pk_count").innerHTML = `<b>${chosen.length}</b> of up to ${PK.capacity} songs · ${mb.toFixed(1)} MB${todo ? ` · ${todo} to build` : ""}${chosen.length > PK.capacity ? ' <span class="badge bad">too many for the game</span>' : ""}`;
+  };
+  const sync = () => document.querySelectorAll(".pktable tr[data-f]").forEach(tr => { tr.querySelector("input").checked = sel.has(tr.dataset.f); });
+  document.querySelectorAll(".pktable tr[data-f] input").forEach(cb => cb.onchange = () => { const f = cb.closest("tr").dataset.f; cb.checked ? sel.add(f) : sel.delete(f); count(); });
+  $("#pk_filter").oninput = e => { const q = e.target.value.toLowerCase(); document.querySelectorAll(".pktable tr[data-q]").forEach(tr => tr.classList.toggle("hidden", !tr.dataset.q.includes(q))); };
+  $("#pk_genre").onchange = e => { const g = e.target.value; if (!g) return; songs.filter(s => s.genre === g).forEach(s => sel.add(s.folder)); e.target.value = ""; sync(); count(); toast(`Added the ${g} songs`); };
+  $("#pk_all").onclick = () => { document.querySelectorAll(".pktable tr[data-f]:not(.hidden)").forEach(tr => sel.add(tr.dataset.f)); sync(); count(); };
+  $("#pk_none").onclick = () => { sel.clear(); sync(); count(); };
+  $("#pk_cancel").onclick = () => { location.hash = "#/packs"; };
+  const save = async build => {
+    const name = $("#pk_name").value.trim();
+    if (!sel.size) return toast("Pick at least one song", true);
+    if (sel.size > PK.capacity) return toast(`The game holds ${PK.capacity} custom songs in this mode; this pack has ${sel.size}`, true);
+    if (name && PK.packs.some(x => x.id !== p.id && (x.name || "").toLowerCase() === name.toLowerCase())) return toast("Another pack has that name", true);
+    const songsInOrder = songs.map(s => s.folder).filter(f => sel.has(f));
+    const list = isNew ? [...PK.packs, { id: "", name, songs: songsInOrder }] : PK.packs.map(x => x.id === p.id ? { ...x, name, songs: songsInOrder } : x);
+    try {
+      const r = await savePacks(list);
+      const saved = isNew ? r.packs[r.packs.length - 1] : r.packs.find(x => x.id === p.id);
+      toast("Pack saved");
+      location.hash = "#/packs";
+      if (build) await buildPack(saved.id);
+    } catch (e) { toast(e.message, true); }
+  };
+  $("#pk_save").onclick = () => save(false);
+  $("#pk_savebuild").onclick = () => save(true);
+  count();
 }
 
 // ---------- song page ----------
@@ -619,13 +724,16 @@ function followBuild() {
   const log = $("#buildLog");
   log.innerHTML = "";
   es = new EventSource("/api/build");
-  es.addEventListener("start", e => { const d = JSON.parse(e.data); $("#buildTitle").textContent = `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
+  let kind = "";
+  es.addEventListener("start", e => { const d = JSON.parse(e.data); kind = d.from; $("#buildTitle").textContent = d.from === "pack" ? `Build ${d.folder}` : `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
   es.addEventListener("line", e => logLine(log, JSON.parse(e.data)));
   es.addEventListener("end", e => {
     const code = JSON.parse(e.data);
     es.close(); es = null;
     if (code === "none") { $("#buildTitle").textContent = "Build"; $("#buildState").innerHTML = '<span class="dim">nothing built yet in this session (a song\'s "Last log" button shows its log from disk)</span>'; return; }
-    $("#buildState").innerHTML = code === "0" ? '<span class="badge ok">done</span> <span class="small dim">copy the song folder and ZZCUSTOMDB from out\\MUSIC to the memory stick</span>' : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
+    $("#buildState").innerHTML = code === "0" ? (kind === "pack"
+      ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: delete the previous pack from the memory stick (its pack.txt lists it), then copy this pack\'s MUSIC contents</span>'
+      : '<span class="badge ok">done</span> <span class="small dim">copy the song folder and ZZCUSTOMDB from out\\MUSIC to the memory stick</span>') : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
     log.scrollTop = log.scrollHeight;
     if (code === "0" && !(window.editorDirty && window.editorDirty())) route();
   });
