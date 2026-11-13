@@ -179,6 +179,7 @@ async function showDetails(folder) {
       <label>Stars scale</label><span class="inline"><input type="number" step="0.01" id="f_starsScale" value="${esc(S.starsScale ?? "")}" placeholder="1"><span class="small dim">&gt; 1 harder, &lt; 1 easier</span> <button class="small" id="calib">Calibrate from a play…</button></span>
       <label>Preview start (s)</label><span class="inline"><input type="number" step="0.1" id="f_preview" value="${esc(S.preview && S.preview.start != null ? S.preview.start : "")}" placeholder="loudest 30 s" ${S.preview === false ? "disabled" : ""}>
         <label class="small"><input type="checkbox" id="f_nopreview" ${S.preview === false ? "checked" : ""}> no preview</label></span>
+      <label>Guitar chords (%)</label><span class="inline"><input type="number" step="1" min="0" max="60" id="f_chords" value="${S.autochart && S.autochart.chords != null ? Math.round(S.autochart.chords * 100) : ""}" placeholder="auto" ${S.chart ? "disabled" : ""}><span class="small dim">${S.chart ? "not used: the gems were edited by hand" : "share of guitar gems that are chords; empty = from the music (official songs 4–49 %, median 19 %)"}</span></span>
       <label>Loudness (LUFS)</label><input type="number" step="0.5" id="f_loudness" value="${esc(S.loudness ?? "")}" placeholder="-14">
     </div></div>
     <div class="panel"><h4>Chart checks</h4><div id="checks" class="dim small">checking…</div></div>
@@ -258,6 +259,12 @@ async function saveDetails(folder) {
   setOrDelete(S, "leadIn", v("#f_leadIn") === "" ? "" : Number(v("#f_leadIn")));
   setOrDelete(S, "starsScale", v("#f_starsScale") === "" ? "" : Number(v("#f_starsScale")));
   setOrDelete(S, "loudness", v("#f_loudness") === "" ? "" : Number(v("#f_loudness")));
+  if ($("#f_chords") && !$("#f_chords").disabled) {
+    const A = Object.assign({}, S.autochart), pc = v("#f_chords");
+    if (pc === "") delete A.chords;
+    else { const x = Number(pc); if (!(x >= 0 && x <= 60)) throw new Error("Guitar chords: 0-60 %"); A.chords = Math.round(x) / 100; }
+    if (Object.keys(A).length) S.autochart = A; else delete S.autochart;
+  }
   if ($("#f_nopreview").checked) S.preview = false;
   else if (v("#f_preview") !== "") S.preview = Object.assign(typeof S.preview === "object" ? S.preview : {}, { start: Number(v("#f_preview")) });
   else if (S.preview === false || (S.preview && S.preview.start != null)) delete S.preview;

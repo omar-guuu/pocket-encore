@@ -15,7 +15,7 @@ Rules measured on the 112 official charts (FINDINGS §28):
 - Which ones: strong beats first (downbeat > beat > 8th > 16th/triplet), sustains and notes after a pause
   nearly always; no two kept notes closer than the difficulty's gap (Hard >=140 ms, Medium >=220, Easy >=290;
   raised per song until the density matches).
-- Lanes: Hard keeps Expert's; Medium keeps chords only on downbeats and long notes (at most 2 notes); Easy has single notes on the
+- Lanes: Hard keeps Expert's (3-gem chords become 2); Hard/Medium keep the strongest chords up to 1.16x/0.73x Expert's chord share; Easy has single notes on the
   two middle lanes only (lane 0 folds to 1, lane 3 to 2) with the up/down direction of Expert kept.
 """
 import argparse
@@ -33,6 +33,10 @@ DENSITY = {
     "guitar": [(2.88, .84, .49, .42), (3.61, .79, .49, .37), (4.22, .79, .47, .33), (5.20, .70, .44, .32)],
     "vocals": [(1.23, .90, .67, .57), (1.60, .93, .68, .51), (1.88, .89, .63, .50), (2.42, .89, .64, .51)],
 }
+# Chord share of Hard / Medium relative to Expert's (official, per song p50 1.16 / 0.73); never above CHORD_CEILING
+# (official Hard guitar p90 55 %)
+CHORD_RATIO = {"hard": 1.16, "medium": 0.73}
+CHORD_CEILING = 0.55
 MIN_GAP = {"instrument": {"hard": 140, "medium": 220, "easy": 290},
            "vocals": {"hard": 150, "medium": 220, "easy": 300}}
 # second pass: if the gap above leaves too few notes (music on a grid jumps from all 8ths to only quarters), the
@@ -185,12 +189,23 @@ def reduce_part(events, timing, part="guitar", prune_expert=False):
             gap *= 1.04
         if len(idx) < targets[diff] * n:
             idx = _select(ms, score, FILL_GAP[kind][diff], start=idx, limit=round(targets[diff] * n), pref=pref)
+        # Hard / Medium: the strongest chords (downbeats, long notes, then other beats) stay chords up to CHORD_RATIO x
+        # Expert's chord share (at most CHORD_CEILING); the rest play their top lane.
+        kept_chords = None
+        if diff in CHORD_RATIO:
+            expert_share = sum(1 for e in events if len(e[2]) > 1) / max(1, len(events))
+            ranked = sorted((i for i in idx if len(events[i][2]) > 1),
+                            key=lambda i: -(timing.strength(events[i][0]) + (3 if events[i][1] >= TPB else 0)))
+            share = min(CHORD_CEILING, CHORD_RATIO[diff] * expert_share)
+            kept_chords = set(ranked[:round(share * len(idx))])
         sel = []
         for i in idx:
             t, d, lanes = events[i]
-            if diff == "medium" and len(lanes) > 1:
-                # official Medium has ~0.8x Expert's chord share: chords on the downbeat and on long notes only
-                lanes = set(sorted(lanes)[-2:]) if timing.strength(t) >= 5 or d >= TPB else {_top(lanes)}
+            if len(lanes) > 2 and diff != "expert":
+                # 3-gem chords are Expert only (official Hard/Medium/Easy have none): outer lanes of the chord
+                lanes = {min(lanes), max(lanes)}
+            if kept_chords is not None and len(lanes) > 1 and i not in kept_chords:
+                lanes = {_top(lanes)}
             sel.append((t, d, set(lanes)))
         if diff == "easy":
             sel = _easy_lanes(sel)

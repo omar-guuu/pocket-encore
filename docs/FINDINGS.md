@@ -539,6 +539,20 @@ Measured over the 112 official charts (gem flag byte 0x8 = held, 0xa/0xb = short
   - Bass: held 7-15 %.
   - Max runs: 4 or less.
 
+**§30 addendum: chords follow the music; 3-gem chords (2026-11-12).** User feedback: custom guitar charts lack
+chords. Our Expert charts had 18-26 % chords (official median 19 %), but three of four were at autochart's 25 % cap,
+so chord-heavy songs lost most of their chords, and there were no 3-gem chords at all. Official Expert guitar:
+2-gem chords 19.6 % of all gems, 3-gem 0.42 %, 4-gem 0.002 % (practically never); Hard has no 3-gem chords.
+3-gem chords: 342 in 40 of 112 songs (p50 4 per song with any, max 40), spread over the song (position p10/50/90
+0.12/0.46/0.91), 49 % held, shapes lanes 1+2+3 (216) and 0+2+3 (121): always both right lanes. Chord share per song,
+Hard / Medium / Easy relative to Expert (p50): 1.16 / 0.73 / 0. Chords are spread out: 8-second windows with a chord
+p50 77 %, longest chord-free stretch p50 30 s. Chord gem bytes (flag byte, +0x10 word) of our charts match the
+official ones, so the game shows them.
+Changes: chord cap = 0.8 x the source's polyphonic share, 25-45 % (Push It 26 -> 47 %, Handlebars 26 -> 35 %);
+song.json `autochart.chords` sets the share and promotes strong single notes when too few chords were detected
+(stem songs); Expert 3-gem chords, one per 200 gems, on held/after-pause downbeat chords (3+ pitches first);
+Hard/Medium keep the strongest chords up to 1.16x/0.73x Expert's share, at most 55 %, 3-gem chords become 2.
+
 ## 31. Vocals and drums: spacing and held notes (official stats vs autochart, 2026-11-09)
 
 User feedback: the vocals still had held notes and gems too close together, unlike any official chart.

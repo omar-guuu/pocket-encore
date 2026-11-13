@@ -280,10 +280,14 @@ function chartChecks(folder) {
       const byTick = new Map();
       for (const g of gems) byTick.set(g.t, (byTick.get(g.t) || 0) + 1);
       const onsets = [...byTick.keys()].sort((a, b) => a - b), chords = [...byTick.values()].filter(n => n > 1).length;
-      const triples = [...byTick.values()].filter(n => n > 2).length;
-      if (triples) push("error", part, `${dn}: ${triples} chord${triples > 1 ? "s" : ""} with 3+ gems (the game plays 1-2 gems at a time)`, sec(onsets.find(t => byTick.get(t) > 2)));
+      // official: 3-gem chords on Expert guitar only (0.4 % of its gems, p50 4 per song); 4-gem chords practically never
+      const triples = [...byTick.values()].filter(n => n === 3).length, quads = [...byTick.values()].filter(n => n > 3).length;
+      if (quads) push("warn", part, `${dn}: ${quads} chord${quads > 1 ? "s" : ""} of 4 gems (official charts: practically never)`, sec(onsets.find(t => byTick.get(t) > 3)));
+      if (triples && (d < 3 || part !== "guitar")) push("warn", part, `${dn}: ${triples} chord${triples > 1 ? "s" : ""} of 3 gems (official: Expert guitar only)`, sec(onsets.find(t => byTick.get(t) === 3)));
+      else if (triples > Math.max(2, onsets.length * 0.02)) push("warn", part, `${dn}: ${triples} chords of 3 gems (official: about 4 per song)`, sec(onsets.find(t => byTick.get(t) === 3)));
       const chordShare = chords / onsets.length;
-      if (part !== "drums" && chordShare > 0.3) push("warn", part, `${dn}: ${(chordShare * 100).toFixed(0)}% chords (official guitar: 4-47%, median 19%; bass almost none)`);
+      if (part === "guitar" && chordShare > 0.55) push("warn", part, `${dn}: ${(chordShare * 100).toFixed(0)}% chords (official guitar: 4-49%, median 19%)`);
+      if ((part === "bass" || part === "vocals") && chordShare > 0.05) push("warn", part, `${dn}: ${(chordShare * 100).toFixed(0)}% chords (official ${part}: almost none)`);
       if (part === "drums" && chords) push("info", part, `${dn}: ${chords} drum chords (official drums have some, as flams and kick+snare)`);
       // official Expert charts (90th percentile): held gems bass 26%, guitar 18%, vocals 44%; drums never
       const holds = gems.filter(g => g.l > 160).length / gems.length, holdLimit = { bass: 0.3, guitar: 0.25, vocals: 0.5 }[part];

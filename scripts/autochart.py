@@ -71,7 +71,15 @@ def chord_lanes(root, width, octave=False):
 BOUNCE = {0: 2, 1: 2, 2: 1, 3: 1}  # repeated notes alternate between their lane and this one (always the other thumb)
 
 
-def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
+# Chords follow the music (FINDINGS §30 addendum): official Expert guitar has 4-49 % chords (median 19 %), more in
+# chordy songs. The share kept grows with the share of the source's onsets that are chords: 0.8 x that, 25-45 %.
+CHORD_MIN, CHORD_MAX, CHORD_PER_POLY = 0.25, 0.45, 0.8
+# 3-gem chords (Expert only): official 0.4 % of Expert guitar gems, in 40 of 112 songs (p50 4 per song), half of
+# them held; always both right lanes plus one left lane (lanes 1+2+3: 216, 0+2+3: 121 of 342).
+TRIAD_EVERY = 200
+
+
+def onsets_from_pitched(notes, timing=None, chords=False, max_chords=None, target=None):
     """One gem per onset; lanes follow the melody like the official charts (FINDINGS §29):
     a phrase (notes less than phrase_gap apart) starts on the lane of its first note's place in the phrase's range;
     then up = right, down = left (1 lane up to a tone, 2 up to a fifth, 3 beyond); a repeated note stays once and
@@ -80,16 +88,22 @@ def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
     they matter (beats, held notes, chord changes, up to max_chords of the gems); the rest play their root.
     Official guitar: chords 4-47 % of the gems (median 19 %), bass almost never."""
     phrase_gap = 2 * TPB
-    by_tick = {}
+    by_tick, pitches = {}, {}
     for s_, d, p in notes:
         lo, hi, dd = by_tick.get(s_, (p, p, d))
         by_tick[s_] = (min(lo, p), max(hi, p), max(dd, d))
+        pitches.setdefault(s_, set()).add(p)
     ticks = sorted(by_tick)
     # which polyphonic onsets keep their chord: score, then the best ones up to max_chords of all onsets
-    keep = set()
+    keep, triads = set(), set()
     if chords and timing is not None:
+        poly = sum(1 for t in ticks if by_tick[t][1] > by_tick[t][0]) / max(1, len(ticks))
+        if target is not None:  # song.json "autochart": { "chords": 0.35 }: this share of the gems, whatever was detected
+            max_chords = max(0.0, min(0.6, target))
+        elif max_chords is None:
+            max_chords = min(CHORD_MAX, max(CHORD_MIN, CHORD_PER_POLY * poly))
         cand = []
-        prev_root = None
+        prev_root, prev_t = None, None
         for t in ticks:
             lo, hi, d = by_tick[t]
             if hi > lo:
@@ -98,6 +112,26 @@ def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
             prev_root = lo
         cand.sort()
         keep = {t for sc, t in cand[:int(len(ticks) * max_chords)] if -sc >= 3}
+        if target is not None and len(keep) < int(len(ticks) * max_chords):
+            # too few chords detected (stem transcriptions only hear clear power chords): the strongest single notes
+            # (downbeats and beats 3, held notes) become chords too
+            single = sorted((-(timing.strength(t) + (3 if by_tick[t][2] >= TPB else 0)), t) for t in ticks
+                            if t not in keep and (timing.strength(t) >= 4 or by_tick[t][2] >= TPB))
+            keep |= {t for _, t in single[:int(len(ticks) * max_chords) - len(keep)]}
+        # 3-gem chords: the biggest accents among the kept chords: on a downbeat, held or after a pause (chords of
+        # 3+ pitches first; stem transcriptions only give 2-note power chords)
+        big = []
+        for k, t in enumerate(ticks):
+            lo, hi, d = by_tick[t]
+            if t not in keep or timing.strength(t) < 5:
+                continue
+            gap = t - ticks[k - 1] if k else 10 * TPB
+            if d >= TPB or gap >= TPB:
+                big.append((-(len(pitches[t]) >= 3), -(min(d, 4 * TPB) + min(gap, 4 * TPB)), t))
+        big.sort()
+        triads = {t for _, _, t in big[:len(ticks) // TRIAD_EVERY]}
+        print(f"  chords: {poly:.0%} of the source onsets are chords -> {'target' if target is not None else 'up to'} {max_chords:.0%}; "
+              f"{len(keep)} chords, {len(triads)} of 3 gems")
     out, lane, prev, prev_t, home, reps = [], 0, None, None, 0, 0
     for k, t in enumerate(ticks):
         p, top, d = by_tick[t]
@@ -123,7 +157,10 @@ def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
             if new == lane:
                 new = lane - 1 if lane == 3 else lane + 1
             lane = new
-        if t in keep:
+        if t in triads:
+            lanes = {1, 2, 3} if lane >= 1 else {0, 2, 3}
+            lane = min(lanes)
+        elif t in keep:
             width = 1 if (top - p) % 12 in (3, 4) else 2
             lanes = chord_lanes(lane, width, octave=(top - p) % 12 == 0)
             lane = min(lanes)
@@ -323,6 +360,7 @@ def main():
     ap.add_argument("--od-bars", type=int, default=1)
     ap.add_argument("--intro-stems"); ap.add_argument("--intro-start", type=float, default=0.0)
     ap.add_argument("--name", default="SONG")
+    ap.add_argument("--chords", type=float, help="guitar chord share wanted (0-0.6); default from the source's chords")
     ap.add_argument("--vocal-events")
     ap.add_argument("--solo", action="append", default=[])
     a = ap.parse_args()
@@ -364,7 +402,7 @@ def main():
     def part(idxs, kind, stem=None, lanes=(1, 2), name="guitar"):
         notes = [(conv(s), int(round(d * scale)), p) for s, d, p in merged_notes(idxs)]
         events = (onsets_from_drums(notes, timing) if kind == "drums"
-                  else onsets_from_pitched(notes, timing, chords=(name == "guitar")))
+                  else onsets_from_pitched(notes, timing, chords=(name == "guitar"), target=a.chords if name == "guitar" else None))
         if stem and a.intro_stems:
             times = detect_onsets(f"{a.intro_stems}/{stem}", a.intro_start, a.offset - 0.05)
             events = intro_events(times, sec_to_tick, lead, lanes) + events

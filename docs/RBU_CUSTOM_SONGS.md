@@ -288,12 +288,18 @@ What it does:
     thumb, and fast alternations (gems 250 ms or less apart) never stay on one thumb for more than 2 changes: every
     other gem moves to the other thumb (red/yellow → red/green, yellow/blue…), like the official charts (FINDINGS §29).
   - **Chords and held notes (autochart, FINDINGS §30):** guitar onsets with 2+ notes in the MIDI (power chords,
-    octaves) become two-gem chords on beats, long notes and chord changes, at most 25 % of the gems (official median
-    19 %); the rest play the root. Shapes: fifths skip a lane (1+3, 2+4), thirds/fourths are adjacent, octaves on the
+    octaves) become two-gem chords on beats, long notes and chord changes; the rest play the root. How many follows
+    the music: 0.8 × the share of the source's onsets that are chords, between 25 and 45 % of the gems (official
+    4–49 %, median 19 %). Stem transcriptions only hear clear power chords, so for them set the share by hand:
+    `"autochart": { "chords": 0.35 }` (Pocket Encore: Details → Guitar chords %); if too few chords were detected,
+    the strongest single notes (downbeats, beat 3, held notes) become chords. Expert also gets about one 3-gem chord
+    per 200 gems on the biggest accents (a downbeat chord that is held or comes after a pause): blue + green + one
+    left lane, as in the official charts; Hard and lower turn them into 2-gem chords. Shapes: fifths skip a lane (1+3, 2+4), thirds/fourths are adjacent, octaves on the
     low lane 1+4; never the two left lanes. Bass gets no chords (official ~0 %). Bass/guitar hold a gem only when the
     MIDI note lasts a beat or more, at most 15 % of the gems (the longest), and the tail ends 1/16 (Expert/Hard),
     3/16 (Medium) or 1/4 note (Easy) before the next gem (rules from the Rock Band Network guides, as summarised by
-    rockbandcustomsblog.wordpress.com). Medium keeps chords on downbeats/long notes; Easy never has more than 4 gems
+    rockbandcustomsblog.wordpress.com). Hard and Medium keep the strongest chords up to 1.16× / 0.73× Expert's chord share (at most 55 %), as the
+    official charts do; Easy never has more than 4 gems
     in a row on one lane.
   - **Vocals and drums (autochart, FINDINGS §31):** vocals are thinned to at most 2 gems/s on Expert (official median
     1.75, p90 2.4; the weakest-position syllables go first), a vocal gem is held only when the note lasts an 8th or

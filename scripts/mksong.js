@@ -39,7 +39,9 @@
 //     "drums": 1, "bass": 3, "guitar": 2, "vocals": 4,   source track indices (see midiinfo.py)
 //     "odEvery": 6, "odFirst": 2, "odBars": 1, "introStart": 4.3, "intro": true,
 //     "guitar": "0,4",               several tracks: each later one takes over from its first note
-//     "vocalsFromStem": true },      vocal notes from the vocals stem's syllables (vocalchart.js), e.g. rap
+//     "vocalsFromStem": true,        vocal notes from the vocals stem's syllables (vocalchart.js), e.g. rap
+//     "chords": 0.35 },              guitar chord share wanted (default: 0.8 x the source's chord share, 25-45 %);
+//                                    raises single notes on strong beats to chords when too few chords were detected
 //   "solos": [ { "part": "guitar", "start": 6.7, "end": 20.2 } ]   plain MIDIs: solo sections in audio seconds
 //   "effects": [ { "effect": "oldfilm", "from": 83.0, "to": 97.5 } ]   screen effects (seconds; names: fxchart.js),
 //                                  or a path to such a JSON file; the donor's own effects are removed first
@@ -328,6 +330,7 @@ function stageChart(S, B, music) {
       "--name", S.title.toUpperCase()];
     for (const k of ["bass", "guitar", "vocals"]) if (A[k] != null) args.push(`--${k}`, String(A[k]));
     if (drumTrack != null) args.push("--drums", String(drumTrack));
+    if (A.chords != null) args.push("--chords", String(A.chords));
     args.push("--od-every", String(A.odEvery ?? 6), "--od-first", String(A.odFirst ?? 2), "--od-bars", String(A.odBars ?? 1));
     if (A.intro !== false) args.push("--intro-stems", path.join(B, "wav"), "--intro-start", String(sh(A.introStart ?? 0)));
     if (A.vocalsFromStem) {
