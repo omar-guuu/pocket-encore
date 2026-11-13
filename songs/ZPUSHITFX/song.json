@@ -1,0 +1,33 @@
+{
+ "folder": "ZPUSHITFX",
+ "title": "Push It (FX test)",
+ "artist": "Static-X",
+ "album": "Wisconsin Death Trip",
+ "year": 1999,
+ "genre": "NU-METAL",
+ "tiers": {
+  "drums": 2,
+  "guitar": 2,
+  "bass": 2,
+  "vocals": 2,
+  "band": 2
+ },
+ "vocals": 1,
+ "stems": {
+  "drums": "../../customs/PUSHIT/PUSHIT_Drums_mono.wav",
+  "bass": "../../customs/PUSHIT/PUSHIT_Bass_mono.wav",
+  "guitar": "../../customs/PUSHIT/PUSHIT_Guitar_mono.wav",
+  "vocals": "../../customs/PUSHIT/PUSHIT_Vocals_mono.wav",
+  "fill": "../../customs/PUSHIT/PUSHIT_Others_mono.wav"
+ },
+ "midi": "../../customs/PUSHIT/Push it (Static-X).mid",
+ "tail": 6,
+ "autochart": {
+  "introStart": 4.3,
+  "odEvery": 6,
+  "odFirst": 2,
+  "odBars": 1
+ },
+ "donor": "../../work/donors/TODAY/BEATMATCH.STR",
+ "_note": "Test: Push It built on TODAY on-disc chart as donor, to see if the old-film effect carries over."
+}

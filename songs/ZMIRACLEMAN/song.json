@@ -1,0 +1,37 @@
+{
+ "folder": "ZMIRACLEMAN",
+ "title": "Miracle Man",
+ "artist": "Oliver Tree",
+ "album": "Ugly Is Beautiful",
+ "year": 2020,
+ "genre": "ALTERNATIVE",
+ "tiers": {
+  "drums": 1,
+  "guitar": 1,
+  "bass": 0,
+  "vocals": 1,
+  "band": 2
+ },
+ "vocals": 1,
+ "stems": {
+  "drums": "../../customs/MIRACLEMAN/Miracle Man Drums-E minor-140bpm-441hz.mp3",
+  "bass": "../../customs/MIRACLEMAN/Miracle Man Bass-E minor-140bpm-441hz.mp3",
+  "guitar": "../../customs/MIRACLEMAN/Miracle Man Guitar-E minor-140bpm-441hz.mp3",
+  "vocals": "../../customs/MIRACLEMAN/Miracle Man Vocals-E minor-140bpm-441hz.mp3"
+ },
+ "stemSource": {
+  "type": "ai",
+  "tool": "fadr",
+  "notes": "4 stems; guitar and backing in one track"
+ },
+ "effects": [
+  {
+   "effect": "blurtint",
+   "from": 0,
+   "to": 13.92
+  }
+ ],
+ "_note": "Charted from stems alone (no MIDI).",
+ "countIn": true,
+ "starsScale": 1.2
+}

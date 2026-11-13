@@ -1,0 +1,55 @@
+{
+ "folder": "ZHANDLEBARSFX",
+ "title": "Handlebars (FX test)",
+ "starsScale": 0.89,
+ "artist": "Flobots",
+ "album": "Fight with Tools",
+ "year": 2008,
+ "genre": "URBAN",
+ "tiers": {
+  "drums": 1,
+  "guitar": 2,
+  "bass": 0,
+  "vocals": 1,
+  "band": 1
+ },
+ "vocals": 1,
+ "stems": {
+  "drums": "../../customs/HANDLEBARS/HandleBars_Drums.wav",
+  "bass": "../../customs/HANDLEBARS/HandleBars_Bass.wav",
+  "guitar": "../../customs/HANDLEBARS/HandleBars_Guitar.wav",
+  "vocals": "../../customs/HANDLEBARS/HandleBars_Vocals.wav",
+  "fill": "../../customs/HANDLEBARS/HandleBars_Fill.wav"
+ },
+ "midi": "../../customs/HANDLEBARS/Handlebars - Flobots.mid",
+ "autochart": {
+  "drums": 3,
+  "bass": 2,
+  "guitar": "0,4",
+  "vocalsFromStem": true
+ },
+ "solos": [
+  {
+   "part": "guitar",
+   "start": 6.7,
+   "end": 20.2
+  },
+  {
+   "part": "vocals",
+   "start": 140.28,
+   "end": 209.57
+  }
+ ],
+ "effects": [
+  {
+   "effect": "oldfilm",
+   "from": 6.7,
+   "to": 20.2
+  },
+  {
+   "effect": "oldfilm",
+   "from": 140.28
+  }
+ ],
+ "_note": "Test: old film over the guitar solo (0:06.7-0:20.2) and over a new vocal solo on the last vocal part (2:20.28-3:29.57)."
+}

@@ -1,0 +1,77 @@
+[
+ {
+  "effect": "vortex",
+  "from": 8,
+  "to": 17
+ },
+ {
+  "effect": "nightvision",
+  "from": 20,
+  "to": 29
+ },
+ {
+  "effect": "oldfilm",
+  "from": 32,
+  "to": 41
+ },
+ {
+  "effect": "colorfilm",
+  "from": 44,
+  "to": 53
+ },
+ {
+  "effect": "tintlines",
+  "from": 56,
+  "to": 65
+ },
+ {
+  "effect": "blur2",
+  "from": 68,
+  "to": 77
+ },
+ {
+  "effect": "blur3",
+  "from": 80,
+  "to": 89
+ },
+ {
+  "effect": "bwflash",
+  "from": 92,
+  "to": 101
+ },
+ {
+  "effect": "negative",
+  "from": 104,
+  "to": 113
+ },
+ {
+  "effect": "bw",
+  "from": 116,
+  "to": 125
+ },
+ {
+  "effect": "sepia",
+  "from": 128,
+  "to": 137
+ },
+ {
+  "effect": "film",
+  "from": 140,
+  "to": 149
+ },
+ {
+  "effect": "blurbwflash",
+  "from": 152,
+  "to": 161
+ },
+ {
+  "effect": "blurtint",
+  "from": 164,
+  "to": 173
+ },
+ {
+  "effect": "blur",
+  "from": 176,
+  "to": 185
+ }
+]

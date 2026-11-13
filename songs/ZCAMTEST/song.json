@@ -1,0 +1,29 @@
+{
+ "folder": "ZCAMTEST",
+ "title": "Camera test (shots)",
+ "artist": "Flobots",
+ "album": "Fight with Tools",
+ "year": 2008,
+ "genre": "URBAN",
+ "tiers": {
+  "drums": 1,
+  "guitar": 2,
+  "bass": 0,
+  "vocals": 1,
+  "band": 1
+ },
+ "vocals": 1,
+ "stems": {
+  "drums": "../../customs/HANDLEBARS/HandleBars_Drums.wav",
+  "bass": "../../customs/HANDLEBARS/HandleBars_Bass.wav",
+  "guitar": "../../customs/HANDLEBARS/HandleBars_Guitar.wav",
+  "vocals": "../../customs/HANDLEBARS/HandleBars_Vocals.wav",
+  "fill": "../../customs/HANDLEBARS/HandleBars_Fill.wav"
+ },
+ "chart": "marker.mid",
+ "effects": "cams.json",
+ "stripCommands": [
+  22
+ ],
+ "_note": "Camera showcase: Handlebars audio, marker gems only (lane = group, count = shot), 32 camera shots (#22) one at a time; see checklist.txt. Built by make.py. Test-only."
+}
