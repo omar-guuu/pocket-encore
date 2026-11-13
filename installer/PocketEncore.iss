@@ -5,7 +5,7 @@
 ;         "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\PocketEncore.iss
 ; Output: installer\Output\PocketEncore-Setup-<version>.exe
 ;
-; The installer copies scripts\, pocketencore\, docs\, pocketencore.cmd and README.md; makes Start-menu and desktop shortcuts
+; The installer copies scripts\, pocketencore\, docs\, pocketencore.cmd, README.md and LICENSE; makes Start-menu and desktop shortcuts
 ; that run pocketencore.cmd; and offers to start Pocket Encore at the end. Nothing is installed system-wide and no
 ; registry keys beyond the uninstaller's are written. Songs are kept in <install dir>\songs (per user: the default
 ; install dir is %LOCALAPPDATA%\PocketEncore so no admin rights are needed and the tool can write next to itself).
@@ -44,6 +44,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\pocketencore.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 Source: "..\scripts\*"; DestDir: "{app}\scripts"; Flags: ignoreversion recursesubdirs; Excludes: "__pycache__"
 Source: "..\pocketencore\*"; DestDir: "{app}\pocketencore"; Flags: ignoreversion recursesubdirs; Excludes: ".window"
 Source: "..\docs\*"; DestDir: "{app}\docs"; Flags: ignoreversion recursesubdirs

@@ -1,10 +1,17 @@
-# rbu-tools: custom songs for Rock Band Unplugged (PSP, ULUS10418)
+# Pocket Encore: custom songs for Rock Band Unplugged (PSP, ULUS10418)
 
 Tools to build custom songs that the game loads natively on PPSSPP: audio (.ATM), chart (BEATMATCH.STR.EDAT),
 preview and the song database, from stems and an optional MIDI. **Pocket Encore** is the all-in-one app: song library,
 details, stems and their quality, builds, and a chart/effects editor with playback, a highway preview and record mode.
 
-For personal use with your own copy of the game and its DLC. No game files are in this repository.
+> **Disclaimer:** Pocket Encore is an unofficial fan project. It is not affiliated with, endorsed by or connected to
+> Harmonix, MTV Games, Electronic Arts, Sony Interactive Entertainment or any other company behind Rock Band or the
+> PSP. Rock Band and Rock Band Unplugged are trademarks of their respective owners.
+>
+> You need your own legally obtained copy of Rock Band Unplugged (US, ULUS10418), and its DLC if you want to keep the
+> DLC songs listed. This repository contains no game files, and Pocket Encore only reads the files of your own copy
+> on your own computer. Do not share game files, and only use audio you have the right to use: songs built from
+> copyrighted recordings are for personal use only.
 
 ## Start
 
@@ -40,3 +47,9 @@ Everything can also be run from the command line: `node scripts\mksong.js songs\
 
 - Never commit game files, stems or anything decoded from the game; `.gitignore` keeps them out.
 - The song's `song.json` stays the source of truth; Pocket Encore and the scripts both read and write it.
+
+## License
+
+Pocket Encore and its scripts are released under the [MIT License](LICENSE). The license covers only the code in this
+repository: not the game, its files or its DLC, and not the third-party tools it works with (Node.js, Python and its
+packages, mid2rbu, at3tool), which keep their own licenses and are downloaded separately.
