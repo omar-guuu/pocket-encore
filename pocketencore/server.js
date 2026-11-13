@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// RBU Studio: a local web app for custom songs (song library, details, stems, build, chart and effects editor).
+// Pocket Encore: a local web app for custom songs (song library, details, stems, build, chart and effects editor).
 //
-//   node studio/server.js [--port 8642] [--open]     then open http://localhost:8642 (studio.cmd does both)
+//   node pocketencore/server.js [--port 8642] [--open]     then open http://localhost:8642 (pocketencore.cmd does both)
 //
 // songs/<FOLDER>/song.json stays the single source of truth: the page edits it and runs mksong.js to build.
 // Gem edits are saved as songs/<FOLDER>/chart.mid (a Rock Band-format MIDI, the same layout as the REAPER
@@ -504,12 +504,12 @@ function openWindow(url) {
   const pf = [process.env["ProgramFiles(x86)"], process.env.ProgramFiles, process.env.LOCALAPPDATA].filter(Boolean);
   const cands = pf.flatMap(d => [path.join(d, "Microsoft", "Edge", "Application", "msedge.exe"), path.join(d, "Google", "Chrome", "Application", "chrome.exe")]);
   const exe = cands.find(f => fs.existsSync(f));
-  if (exe) spawn(exe, [`--app=${url}`, "--window-size=1500,1000", `--user-data-dir=${path.join(TOOLS, "studio", ".window")}`], { detached: true, stdio: "ignore" }).unref();
+  if (exe) spawn(exe, [`--app=${url}`, "--window-size=1500,1000", `--user-data-dir=${path.join(TOOLS, "pocketencore", ".window")}`], { detached: true, stdio: "ignore" }).unref();
   else spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
 }
 server.listen(PORT, "127.0.0.1", () => {
   const url = `http://localhost:${PORT}`;
-  console.log(`RBU Studio: ${url}  (close this window or press Ctrl+C to stop)`);
+  console.log(`Pocket Encore: ${url}  (close this window or press Ctrl+C to stop)`);
   if (process.argv.includes("--open")) openWindow(url);
 });
-server.on("error", e => { console.error(e.code === "EADDRINUSE" ? `port ${PORT} is in use: is RBU Studio already running? (or use --port)` : e.message); process.exit(1); });
+server.on("error", e => { console.error(e.code === "EADDRINUSE" ? `port ${PORT} is in use: is Pocket Encore already running? (or use --port)` : e.message); process.exit(1); });

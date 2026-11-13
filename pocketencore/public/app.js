@@ -1,5 +1,5 @@
 "use strict";
-// RBU Studio page: library, song details (song.json form), new song, setup, builds. The chart/FX editor is editor.js.
+// Pocket Encore page: library, song details (song.json form), new song, setup, builds. The chart/FX editor is editor.js.
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const DIFFS = ["Easy", "Medium", "Hard", "Expert"];
@@ -89,9 +89,9 @@ async function showSetup() {
   const s = await api("GET", "/api/setup");
   const row = (k, label) => { const c = s.checks[k]; return `<tr><td>${c.ok ? '<span class="badge ok">ok</span>' : '<span class="badge bad">missing</span>'}</td><td>${label}</td><td class="mono small">${esc(c.detail)}</td><td class="small">${!c.ok && c.url ? (c.url.startsWith("http") ? `<a href="${esc(c.url)}" target="_blank">${esc(c.url)}</a>` : esc(c.url)) : ""}</td></tr>`; };
   $("#main").innerHTML = `<div class="panel"><h4>What the tool needs</h4>
-    <p class="small dim">RBU Studio and its scripts are ours; the pieces below are not, so they are not included. Install each one and set its path here (saved in <span class="mono">${esc(s.file)}</span>).</p>
+    <p class="small dim">Pocket Encore and its scripts are ours; the pieces below are not, so they are not included. Install each one and set its path here (saved in <span class="mono">${esc(s.file)}</span>).</p>
     <table class="t setup"><tr><th></th><th>Piece</th><th>Found</th><th>Where to get it</th></tr>
-      ${row("node", "Node.js (runs the studio and the scripts)")}${row("python", "Python 3.12 (charting, stem analysis, count-in, mid2rbu)")}${row("packages", "Python packages mido, numpy, miniaudio")}
+      ${row("node", "Node.js (runs Pocket Encore and the scripts)")}${row("python", "Python 3.12 (charting, stem analysis, count-in, mid2rbu)")}${row("packages", "Python packages mido, numpy, miniaudio")}
       ${row("mid2rbu", "mid2rbu (Rock Band MIDI → .rbu chart)")}${row("at3tool", "at3tool.exe (ATRAC3 encoder for the audio)")}${row("music", "The game's MUSIC folder with your official DLC (donor chart and song list)")}</table></div>
     <div class="panel"><h4>Paths</h4><div class="form" style="grid-template-columns:160px 1fr auto">
       <label>MUSIC folder</label><input type="text" id="s_music" value="${esc(s.settings.music)}"><button onclick="pickInto('#s_music', null, true)">Browse…</button>
@@ -190,7 +190,7 @@ async function showDetails(folder) {
       </div></div>
     <div class="panel"><h4>Chart</h4><div class="form">
       <label>Source MIDI</label><span class="inline"><input type="text" id="f_midi" value="${esc(S.midi || "")}" placeholder="(none: charted from the stems)" style="flex:1"><button onclick="pickInto('#f_midi','${folder}')">Browse…</button></span>
-      <label>Gems</label><span>${s.chartSource === "edited" ? `edited in the studio (<span class="mono">${esc(S.chart)}</span>) <button class="danger" onclick="revertChart('${folder}')">Back to automatic chart</button><div class="warnline">The edited chart is in game time: changing the lead-in, the count-in or the stems' start moves the audio but not the gems.</div>` : "automatic (autochart from " + (S.midi ? "the MIDI" : "the stems") + ")"}</span>
+      <label>Gems</label><span>${s.chartSource === "edited" ? `edited in Pocket Encore (<span class="mono">${esc(S.chart)}</span>) <button class="danger" onclick="revertChart('${folder}')">Back to automatic chart</button><div class="warnline">The edited chart is in game time: changing the lead-in, the count-in or the stems' start moves the audio but not the gems.</div>` : "automatic (autochart from " + (S.midi ? "the MIDI" : "the stems") + ")"}</span>
       <label>Audio</label><span class="small">${au ? `length ${fmtTime(au.audioSeconds)}, lead-in ${au.lead ?? 0} s, music starts at ${au.musicStart ?? "–"} s` : "not built"}</span>
     </div></div>
     <div class="panel"><h4>Stars and gems (last build)</h4>${starsTable}</div>

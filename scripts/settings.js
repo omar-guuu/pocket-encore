@@ -1,4 +1,4 @@
-// Where the external pieces are: rbu-tools/settings.json (made by RBU Studio's Setup page, or by hand).
+// Where the external pieces are: rbu-tools/settings.json (made by Pocket Encore's Setup page, or by hand).
 // {
 //   "music": "C:/PSP/ppsspp_win/memstick/PSP/GAME/ULUS10418/MUSIC",   the game's MUSIC folder (official DLC: donor chart + song list)
 //   "python": "C:/.../python.exe",                                     Python 3.12 with mido, numpy, miniaudio

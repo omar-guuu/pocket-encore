@@ -1,5 +1,5 @@
 # Game-derived and generated data never goes in the repo (personal use only; see docs/RBU_CUSTOM_SONGS.md).
-# What stays: scripts/, studio/, installer/, docs/, songs/*/song.json + chart.mid + effects.json, studio.cmd, README.md.
+# What stays: scripts/, pocketencore/, installer/, docs/, songs/*/song.json + chart.mid + effects.json, pocketencore.cmd, README.md.
 
 # built songs and work files
 out/
@@ -22,14 +22,14 @@ customs/
 *.STR
 *.zip
 
-# third-party tools: downloaded by the user (see the studio's Setup page)
+# third-party tools: downloaded by the user (see the Setup page)
 at3tool/
 mid2rbu/
 ATMTool-main/
 
 # per-machine
 settings.json
-studio/.window/
+pocketencore/.window/
 installer/Output/
 __pycache__/
 *.pyc

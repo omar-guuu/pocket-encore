@@ -1,7 +1,7 @@
 # Rock Band Unplugged (PSP, ULUS10418) — Custom songs: reference
 
 Summary of everything found so far (as of 2026-11-10). The detailed research log, with evidence and dead ends, is
-`docs\FINDINGS.md`, next to this file. The repository is `rbu-tools` (scripts, studio, installer, docs and the songs'
+`docs\FINDINGS.md`, next to this file. The repository is `rbu-tools` (scripts, Pocket Encore, installer, docs and the songs'
 `song.json` files; no game files, stems or build output).
 
 **Status:** custom songs work **natively**, with no plugin and no cheats. The test song, "Push It" (Static-X,
@@ -165,11 +165,11 @@ Our scripts (`rbu-tools\scripts`), in pipeline order:
 | database | `mkjukebox.js` | official list + all customs → `ZZCUSTOMDB\JB<day>.STR.EDAT` + TEXT |
 | editing | `reaperpack.js` | chart + WAVs for REAPER (customs and official references) |
 | checks | `loudness.js`, `chartmap.js`, `stresspack.js` | loudness of decoded tracks, chart memory map, 300-song stress test |
-| config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, python, at3tool, mid2rbu) with defaults; `check()` = the studio's Setup page |
+| config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, python, at3tool, mid2rbu) with defaults; `check()` = the Setup page |
 
-### RBU Studio: the all-in-one page (since 2026-11-11)
-Double-click `rbu-tools\studio.cmd` (or `node rbu-tools\studio\server.js --open`), or install it with the installer
-(`installer\RBUStudio.iss`, built with Inno Setup; it installs only our files to `%LOCALAPPDATA%\RBUStudio` and makes
+### Pocket Encore: the all-in-one page (since 2026-11-11; named RBU Studio until 2026-11-12)
+Double-click `rbu-tools\pocketencore.cmd` (or `node rbu-tools\pocketencore\server.js --open`), or install it with the installer
+(`installer\PocketEncore.iss`, built with Inno Setup; it installs only our files to `%LOCALAPPDATA%\PocketEncore` and makes
 shortcuts). It opens in its own window (Edge or Chrome in app mode; otherwise the default browser) at
 http://localhost:8642. The server only listens on this PC (127.0.0.1); close the console window or press Ctrl+C to stop it.
 `song.json` stays the single source of truth: the page reads and writes it and runs `mksong.js` for builds.
