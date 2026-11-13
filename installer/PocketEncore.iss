@@ -11,7 +11,9 @@
 ; install dir is %LOCALAPPDATA%\PocketEncore so no admin rights are needed and the tool can write next to itself).
 
 #define MyAppName "Pocket Encore"
-#define MyAppVersion "0.2"
+; keep in step with pocketencore\version.json
+#define MyAppVersion "0.1 Beta"
+#define MyAppVersionFile "0.1-beta"
 #define MyAppPublisher "Pocket Encore"
 #define MyAppExeName "pocketencore.cmd"
 
@@ -25,7 +27,7 @@ DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=Output
-OutputBaseFilename=PocketEncore-Setup-{#MyAppVersion}
+OutputBaseFilename=PocketEncore-Setup-{#MyAppVersionFile}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

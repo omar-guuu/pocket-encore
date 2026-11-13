@@ -156,3 +156,18 @@ body.onboarding #buildToggle, body.onboarding #setupLink { display: none; }
 body.onboarding a.navlink { display: none; }
 .pktable th, .pktable td { text-align: left !important; }
 .pktable th:last-child, .pktable td:last-child { text-align: right !important; }
+
+/* version + help */
+.version { color: var(--dim); font-size: 12px; margin-left: -8px; border: 1px solid var(--line); border-radius: 9px; padding: 0 7px; }
+.navlink.help { padding: 2px 9px; }
+body.onboarding a.navlink.help { display: inline; }
+.helpwrap { display: grid; grid-template-columns: 200px 1fr; gap: 16px; max-width: 1100px; }
+.helpnav { position: sticky; top: 60px; align-self: start; display: grid; gap: 2px; }
+.helpnav a { color: var(--dim); padding: 4px 8px; border-radius: 4px; }
+.helpnav a.on, .helpnav a:hover { color: var(--text); background: var(--panel2); }
+.helpbody h2 { margin: 0 0 10px; }
+.helpbody h3 { margin: 18px 0 6px; font-size: 15px; }
+.helpbody p, .helpbody li { line-height: 1.55; }
+.helpbody ol, .helpbody ul { padding-left: 22px; }
+.helpbody table.t td, .helpbody table.t th { text-align: left; }
+@media (max-width: 800px) { .helpwrap { grid-template-columns: 1fr; } .helpnav { position: static; } }

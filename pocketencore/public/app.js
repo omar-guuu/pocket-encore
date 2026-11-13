@@ -36,11 +36,13 @@ async function route(ev) {
   document.body.classList.remove("onboarding");
   const h = location.hash.replace(/^#\/?/, "").split("/");
   try {
+    if (h[0] === "help") return showHelp(h[1]);
     if (!META.configured || h[0] === "welcome") { if (h[0] !== "welcome") { skipRoute = true; location.hash = "#/welcome"; lastHash = location.hash; } return await showWelcome(); }
     if (h[0] === "song" && h[1]) await showSong(h[1], h[2] || "details");
     else if (h[0] === "new") showNew();
     else if (h[0] === "setup") await showSetup();
     else if (h[0] === "packs") await showPacks();
+    else if (h[0] === "help") showHelp(h[1]);
     else if (h[0] === "pack" && h[1]) await showPackEdit(h[1]);
     else await showLibrary();
   } catch (e) { $("#main").innerHTML = `<div class="panel">Error: ${esc(e.message)}</div>`; }
@@ -328,6 +330,98 @@ async function showPackEdit(id) {
   $("#pk_save").onclick = () => save(false);
   $("#pk_savebuild").onclick = () => save(true);
   count();
+}
+
+// ---------- help ----------
+const HELP = [
+  ["start", "Getting started", `
+    <p>Pocket Encore makes custom songs for <b>Rock Band Unplugged</b> (PSP, US version ULUS10418) that the game loads by
+    itself on PPSSPP: no plugin, no cheats. You need your own copy of the game (its disc image) or the game plus its DLC.</p>
+    <ol>
+      <li><b>Setup</b> (top right) shows what was found: your game, Python and its packages, mid2rbu and at3tool. Everything
+        must be found before songs can be built. The first start walks you through it.</li>
+      <li><b>+ New song</b>: fill in the details and drop the stems (or Browse). A MIDI is optional; without one the chart is
+        made from the stems.</li>
+      <li><b>Build</b>: makes the audio, the chart and the song database.</li>
+      <li>Copy the song folder and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span> (<b>Open output</b>)
+        into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> on PPSSPP's memory stick, replacing the old
+        <span class="mono">ZZCUSTOMDB</span>. Pocket Encore never copies to the memory stick itself.</li>
+    </ol>`],
+  ["song", "Making a song", `
+    <h3>Stems</h3>
+    <p>One file per instrument: drums, bass, guitar, vocals (required) and backing (optional: everything else). WAV, MP3, FLAC
+    or OGG. Drop up to 5 files at once: each goes to the instrument its name mentions; the rest fill the empty slots in order.
+    Stems from AI separation (Fadr, Moises.ai, Lalal.ai…) work; the Details tab shows level, clipping and possible bleed.</p>
+    <h3>Details</h3>
+    <ul>
+      <li><b>Tiers</b> (0–6): the difficulty dots in the song list.</li>
+      <li><b>Count-in</b>: 4 stick clicks before the music. <b>Lead-in</b>: silence before the music (automatic).</li>
+      <li><b>Stars scale</b>: above 1 = harder stars, below 1 = easier. <b>Calibrate from a play…</b> works it out from when gold
+        appeared.</li>
+      <li><b>Guitar chords (%)</b>: how many guitar gems are chords; empty = from the music.</li>
+    </ul>
+    <h3>Builds</h3>
+    <p><b>Build</b> does everything; <b>Rebuild chart</b> reuses the audio (faster) after chart or star changes. The build log
+    (bottom) shows each step; <b>Last log</b> shows the previous one.</p>`],
+  ["editor", "Chart editor", `
+    <p>The <b>Chart &amp; effects</b> tab shows the four parts' gems over each stem's waveform, with the song playing. Saving
+    turns the automatic chart into your own (<span class="mono">chart.mid</span>); <b>Back to automatic chart</b> on Details
+    undoes that.</p>
+    <table class="t"><tr><th>Key / action</th><th>Does</th></tr>
+      <tr><td><kbd>Space</kbd></td><td>play / pause (click the ruler to jump)</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>add a gem in that lane of the selected part at the playhead, also while playing</td></tr>
+      <tr><td><kbd>R</kbd> / Record</td><td>play in record mode</td></tr>
+      <tr><td>click a lane · drag · drag the right end</td><td>add a gem · move · make it a hold</td></tr>
+      <tr><td><kbd>Del</kbd> · <kbd>←</kbd><kbd>→</kbd> · <kbd>↑</kbd><kbd>↓</kbd> · <kbd>T</kbd></td><td>delete · move by snap · change lane · tap/hold</td></tr>
+      <tr><td><kbd>O</kbd> · <kbd>L</kbd></td><td>overdrive phrase · solo, on/off for the selection</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> · <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>undo/redo · copy/paste at the playhead · save</td></tr>
+      <tr><td>wheel · <kbd>Ctrl</kbd>+wheel</td><td>scroll · zoom</td></tr>
+    </table>
+    <h3>Chart rules</h3>
+    <p>The bar above the time line warns when the chart leaves what the official charts do (too fast, too many chords, one
+    thumb alternating, held drums…). It never blocks you: dismiss a warning with ×, or <b>go</b> to it.</p>
+    <h3>Effects and tempo</h3>
+    <p>Double-click the effects lane to add a screen effect, drag it to move or resize. <b>Tempo…</b> sets a steady BPM from the
+    first beat, or shifts every gem against the audio.</p>`],
+  ["packs", "Song packs", `
+    <p>The game lists at most 300 songs, official ones included (188 custom songs with all the DLC, 245 with the base game
+    only). A <b>pack</b> is a set of your songs with its own song database, so you can switch what the game lists.</p>
+    <ol>
+      <li><b>Packs</b> → <b>+ New pack</b>: name it (empty = "Pocket Encore" + its database code) and tick songs, or add all
+        songs of a genre.</li>
+      <li><b>Build pack</b>: builds the pack's new or changed songs and writes <span class="mono">out\\PACKS\\&lt;name&gt;</span>.</li>
+      <li>On the memory stick: delete the previous pack's song folders and <span class="mono">ZZCUSTOMDB</span> (its
+        <span class="mono">pack.txt</span> lists them), then copy the new pack's <span class="mono">MUSIC</span> contents.</li>
+    </ol>
+    <p>Scores are kept per song, so they come back with the song.</p>`],
+  ["modes", "Game modes", `
+    <p>Checked every time Pocket Encore starts (badge at the top right):</p>
+    <ul>
+      <li><b>Base Game + Complete DLC</b>: all the DLC is installed; songs are built on it and every song stays listed.</li>
+      <li><b>Base Game + Incomplete DLC</b>: some DLC; songs are built on it and your DLC songs stay listed.</li>
+      <li><b>Base Game only</b>: no DLC; songs are built from the game's disc image.</li>
+    </ul>
+    <p>When the mode changes (DLC added or removed), build any song and copy <span class="mono">ZZCUSTOMDB</span> again.</p>`],
+  ["trouble", "Troubleshooting", `
+    <ul>
+      <li><b>A build fails</b>: the build log says which step. Setup must show everything found.</li>
+      <li><b>The song isn't in the game's list</b>: copy <span class="mono">ZZCUSTOMDB</span> again after every build; the song
+        folder name must match (Z + capital letters).</li>
+      <li><b>Notes feel early or late</b>: in the editor, <b>Tempo…</b> → shift all gems by a few ms.</li>
+      <li><b>Stars too easy or hard</b>: Details → Stars scale → <b>Calibrate from a play…</b>, then Rebuild chart.</li>
+      <li><b>Pocket Encore won't start</b>: the console window says why; if it's already running, starting it again just opens
+        its window.</li>
+    </ul>
+    <p>Everything in detail (file formats, every option, what was tested): <button id="openGuide">Open the full guide</button></p>`],
+];
+function showHelp(topic) {
+  const t = HELP.find(h => h[0] === topic) || HELP[0];
+  $("#crumb").innerHTML = META.configured ? `<a href="#/">Songs</a> / Help` : `<a href="#/welcome">Welcome</a> / Help`;
+  $("#main").innerHTML = `<div class="helpwrap"><nav class="helpnav">${HELP.map(([k, n]) => `<a href="#/help/${k}" class="${k === t[0] ? "on" : ""}">${n}</a>`).join("")}
+      <span class="small dim" style="margin-top:10px">Pocket Encore ${META.version ? `v${esc(META.version.version)} ${esc(META.version.stage)}` : ""}</span></nav>
+    <div class="panel helpbody"><h2>${t[1]}</h2>${t[2]}</div></div>`;
+  const g = $("#openGuide");
+  if (g) g.onclick = () => api("POST", "/api/open/ZNONE?what=guide").catch(e => toast(e.message, true));
 }
 
 // ---------- song page ----------
@@ -742,6 +836,7 @@ function followBuild() {
 (async () => {
   META = await api("GET", "/api/meta");
   $("#setupLink").classList.toggle("warn", !META.setupOk);
+  if (META.version) { $("#version").textContent = `v${META.version.version} ${META.version.stage}`.trim(); document.title = `Pocket Encore v${META.version.version} ${META.version.stage}`.trim(); }
   renderModeBadge();
   route();
 })();

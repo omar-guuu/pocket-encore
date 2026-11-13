@@ -28,6 +28,7 @@ const STEM_KEYS = { drums: "drums", bass: "bass_guitar", guitar: "lead_guitar", 
 const GENRES = ["ALTERNATIVE", "BLUES", "CLASSIC ROCK", "COUNTRY", "EMO", "FUSION", "GLAM", "GRUNGE", "INDIE ROCK", "JAZZ",
   "METAL", "NOVELTY", "NU-METAL", "POP-ROCK", "PROG", "PUNK", "ROCK", "SOUTHERN ROCK", "URBAN"];
 const FOLDER_RE = /^Z[A-Z0-9_]{1,30}$/;
+const VERSION = (() => { try { return JSON.parse(fs.readFileSync(path.join(__dirname, "version.json"), "utf8")); } catch { return { version: "?", stage: "" }; } })();
 // Stem formats the pipeline reads: WAV (16/24/32-bit PCM, 32/64-bit float; prepwav.js) and, decoded first by
 // decode.py (miniaudio), MP3, FLAC and Ogg Vorbis.
 const AUDIO_EXT = [".wav", ".mp3", ".flac", ".ogg"], MIDI_EXT = [".mid", ".midi"];
@@ -390,6 +391,11 @@ function listDir(dir) {
   return { dir, parent: path.dirname(dir) !== dir ? path.dirname(dir) : null, entries };
 }
 function openFolder(folder, what) {
+  if (what === "guide") {  // the full guide, in the default app for .md files (or Notepad)
+    const f = path.join(TOOLS, "docs", "RBU_CUSTOM_SONGS.md");
+    spawn("cmd", ["/c", "start", "", f], { detached: true, stdio: "ignore" }).unref();
+    return f;
+  }
   const dir = what === "out" ? OUT : what === "song" ? songDir(folder) : what === "outsong" ? path.join(OUT, folder) : null;
   if (!dir || !fs.existsSync(dir)) throw httpError(404, "no such folder yet");
   spawn("explorer.exe", [dir.split("/").join("\\")], { detached: true, stdio: "ignore" }).unref();
@@ -421,7 +427,7 @@ async function route(req, res) {
   const [, what, folder, extra] = p;
   if (what === "meta" && M === "GET") {
     const c = settings.check();
-    return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: c.ok,
+    return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: c.ok, version: VERSION,
       configured: c.configured, mode: c.mode, db: dbState(c.mode), audioExt: AUDIO_EXT, midiExt: MIDI_EXT });
   }
   if (what === "setup" && M === "GET") return json(res, { ...settings.check(), file: settings.FILE });
@@ -619,7 +625,7 @@ function openWindow(url) {
 }
 server.listen(PORT, "127.0.0.1", () => {
   const url = `http://localhost:${PORT}`;
-  console.log(`Pocket Encore: ${url}  (close this window or press Ctrl+C to stop)`);
+  console.log(`Pocket Encore v${VERSION.version} ${VERSION.stage}: ${url}  (close this window or press Ctrl+C to stop)`);
   // the game mode is checked on every start (DLC can be added or removed between sessions)
   try {
     const c = settings.check();
