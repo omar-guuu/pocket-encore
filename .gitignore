@@ -34,3 +34,8 @@ installer/Output/
 __pycache__/
 *.pyc
 Thumbs.db
+
+# files dropped on the New song page, before the song is created
+incoming/
+# stems copied into a song folder (copyrighted audio)
+songs/*/stems/

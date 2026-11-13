@@ -27,6 +27,17 @@ const STEM_KEYS = { drums: "drums", bass: "bass_guitar", guitar: "lead_guitar", 
 const GENRES = ["ALTERNATIVE", "BLUES", "CLASSIC ROCK", "COUNTRY", "EMO", "FUSION", "GLAM", "GRUNGE", "INDIE ROCK", "JAZZ",
   "METAL", "NOVELTY", "NU-METAL", "POP-ROCK", "PROG", "PUNK", "ROCK", "SOUTHERN ROCK", "URBAN"];
 const FOLDER_RE = /^Z[A-Z0-9_]{1,30}$/;
+// Stem formats the pipeline reads: WAV (16/24/32-bit PCM, 32/64-bit float; prepwav.js) and, decoded first by
+// decode.py (miniaudio), MP3, FLAC and Ogg Vorbis.
+const AUDIO_EXT = [".wav", ".mp3", ".flac", ".ogg"], MIDI_EXT = [".mid", ".midi"];
+// Dropped files land here until the song is created (then they move to songs/<FOLDER>/stems/); old leftovers are removed.
+const INCOMING = path.join(TOOLS, "incoming");
+try {
+  for (const d of fs.readdirSync(INCOMING)) {
+    const p = path.join(INCOMING, d);
+    if (Date.now() - fs.statSync(p).mtimeMs > 2 * 86400000) fs.rmSync(p, { recursive: true, force: true });
+  }
+} catch { }
 const STAR_FRACTIONS = [0.0524, 0.1048, 0.1572, 0.473, 0.789, 0.874];  // of the chart's max (FINDINGS §33)
 
 // ---------- song.json ----------
@@ -388,7 +399,7 @@ async function route(req, res) {
   }
   const [, what, folder, extra] = p;
   if (what === "meta" && M === "GET")
-    return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: settings.check().ok });
+    return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: settings.check().ok, audioExt: AUDIO_EXT, midiExt: MIDI_EXT });
   if (what === "setup" && M === "GET") return json(res, { ...settings.check(), file: settings.FILE });
   if (what === "settings" && M === "PUT") { settings.save(await body(req)); return json(res, { ...settings.check(), file: settings.FILE }); }
   if (what === "songs" && M === "GET") {
@@ -407,13 +418,38 @@ async function route(req, res) {
     if (!FOLDER_RE.test(S.folder || "")) throw httpError(400, "folder: Z + capital letters/digits, e.g. ZMYSONG");
     if (fs.existsSync(path.join(SONGS, S.folder))) throw httpError(409, "that folder already exists");
     const dir = songDir(S.folder);
+    // dropped files sit in incoming/: move them into the song's own stems/ folder
+    const own = f => {
+      const abs = path.resolve(f);
+      if (!abs.startsWith(INCOMING + path.sep)) return abs;
+      const dest = path.join(dir, "stems", path.basename(abs));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      try { fs.renameSync(abs, dest); } catch { fs.copyFileSync(abs, dest); fs.rmSync(abs, { force: true }); }
+      return dest;
+    };
     for (const k of Object.keys(S.stems || {})) {
       if (!S.stems[k]) delete S.stems[k];
-      else S.stems[k] = path.relative(dir, path.resolve(S.stems[k])).split(path.sep).join("/");
+      else S.stems[k] = path.relative(dir, own(S.stems[k])).split(path.sep).join("/");
     }
-    if (S.midi) S.midi = path.relative(dir, path.resolve(S.midi)).split(path.sep).join("/");
+    if (S.midi) S.midi = path.relative(dir, own(S.midi)).split(path.sep).join("/");
     writeSong(S.folder, S);
     return json(res, details(S.folder));
+  }
+  if (what === "upload" && M === "POST") {  // a dropped file (the page can not see its path): saved to incoming/<batch>/
+    const name = path.basename(String(u.searchParams.get("name") || "")).replace(/[<>:"|?*\x00-\x1f]/g, "_");
+    const ext = path.extname(name).toLowerCase();
+    if (!AUDIO_EXT.includes(ext) && !MIDI_EXT.includes(ext)) throw httpError(400, `${name}: unsupported format (audio: ${AUDIO_EXT.join(" ")}; MIDI: ${MIDI_EXT.join(" ")})`);
+    const batch = String(u.searchParams.get("batch") || "").replace(/[^a-z0-9]/gi, "").slice(0, 24) || Date.now().toString(36);
+    const dest = path.join(INCOMING, batch, name);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    await new Promise((ok, bad) => {
+      let n = 0;
+      const out = fs.createWriteStream(dest);
+      req.on("data", d => { n += d.length; if (n > 1024 << 20) { req.destroy(); out.destroy(); bad(httpError(413, "file larger than 1 GB")); } });
+      req.pipe(out);
+      out.on("finish", ok); out.on("error", bad); req.on("error", bad);
+    });
+    return json(res, { path: dest, name, size: fs.statSync(dest).size });
   }
   if (what === "relpath" && M === "GET") {  // absolute path -> relative to the song folder (for the stems form)
     return json(res, { rel: path.relative(songDir(folder), path.resolve(u.searchParams.get("p"))).split(path.sep).join("/") });

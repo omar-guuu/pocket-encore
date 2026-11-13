@@ -15,7 +15,9 @@ async function api(method, url, body) {
 function toast(msg, bad) {
   const d = document.createElement("div");
   d.textContent = msg;
-  Object.assign(d.style, { position: "fixed", right: "16px", top: "56px", background: bad ? "#5a1f1f" : "#1f4a2c", padding: "8px 14px", borderRadius: "6px", zIndex: 30, maxWidth: "50vw" });
+  d.className = "toast";
+  const top = [...document.querySelectorAll(".toast")].reduce((y, t) => Math.max(y, t.offsetTop + t.offsetHeight + 6), 56);
+  Object.assign(d.style, { position: "fixed", right: "16px", top: top + "px", background: bad ? "#5a1f1f" : "#1f4a2c", padding: "8px 14px", borderRadius: "6px", zIndex: 30, maxWidth: "50vw" });
   document.body.appendChild(d);
   setTimeout(() => d.remove(), bad ? 6000 : 2500);
 }
@@ -151,7 +153,7 @@ function checksHtml(c) {
 async function showDetails(folder) {
   const s = CUR, S = s.song, T = S.tiers || {}, src = S.stemSource || {};
   const tierSel = k => `<select data-tier="${k}">${opt([0, 1, 2, 3, 4, 5, 6].map(n => [n, n === 0 ? "0 (none)" : starStr(n).slice(0, n) + "  " + n]), T[k] ?? 0)}</select>`;
-  const stemLines = s.stems.map(st => `<div class="stemrow"><label>${st.part}</label><input type="text" data-stem="${st.part}" value="${esc(st.source || "")}" placeholder="(none)">
+  const stemLines = s.stems.map(st => `<div class="stemrow"><label>${st.part} ${tip(st.part)}</label><input type="text" data-stem="${st.part}" value="${esc(st.source || "")}" placeholder="(none)">
       <button onclick="pickInto('[data-stem=${st.part}]','${folder}')">Browse…</button><div class="stemstat">${stemLine(st)}</div></div>`).join("");
   const bleed = s.bleed && s.bleed.length ? `<div class="small warnline" style="margin-top:6px">Possible bleed (stems that rise and fall together): ${s.bleed.map(b => `${b.a} ↔ ${b.b} (${(b.corr * 100).toFixed(0)}%)`).join(", ")}. Normal for a real band playing together; with AI stems it usually means one instrument leaked into another's track.</div>` : "";
   const B = s.built;
@@ -281,6 +283,85 @@ function showJson(folder) {
 }
 
 // ---------- new song ----------
+// ---------- stems: slots, tooltips, drag and drop ----------
+const STEM_SLOTS = ["drums", "bass", "guitar", "vocals", "fill"];
+const MAX_DROP = 5;
+// Hover text for each instrument (to be written).
+const STEM_TIPS = { drums: "placeholder", bass: "placeholder", guitar: "placeholder", vocals: "placeholder", fill: "placeholder" };
+const tip = k => `<span class="tip" data-tip="${esc(STEM_TIPS[k] || "")}">ⓘ</span>`;
+// Instrument from the file name only (no audio analysis). Checked in this order, so "drum bass" is drums,
+// "no_vocals"/"instrumental" is backing and "lead vocal" is vocals, not guitar.
+const NAME_RULES = [
+  ["fill", /no[ _.-]?vocals?|instrumental|karaoke|minus[ _.-]?one/i],
+  ["vocals", /vocal|vox|voice|sing|acapella|a[ _.-]?cappella/i],
+  ["drums", /drum|kit|perc/i],
+  ["bass", /bass/i],
+  ["guitar", /guitar|gtr/i],
+  ["fill", /backing|back[ _.-]?track|other|accomp|keys|piano|synth|fill|rest|music/i],
+];
+function slotFromName(name) {
+  const base = name.replace(/\.[^.]+$/, "");
+  for (const [slot, re] of NAME_RULES) if (re.test(base)) return slot;
+  return null;
+}
+// files -> { slot: File } for the stems, plus the MIDI; named files first, then the rest in the order given
+function assignFiles(files, filled) {
+  const out = {}, rest = [];
+  let midi = null;
+  for (const f of files) {
+    const ext = "." + f.name.split(".").pop().toLowerCase();
+    if (META.midiExt.includes(ext)) { midi = f; continue; }
+    const s = slotFromName(f.name);
+    if (s && !out[s]) out[s] = f; else rest.push(f);
+  }
+  const free = STEM_SLOTS.filter(s => !out[s] && !filled.includes(s));
+  const unplaced = [];
+  for (const f of rest) { const s = free.shift(); if (s) out[s] = f; else unplaced.push(f); }
+  return { out, midi, unplaced };
+}
+function badFiles(files) {
+  const ok = [...META.audioExt, ...META.midiExt];
+  return files.filter(f => !ok.includes("." + f.name.split(".").pop().toLowerCase()));
+}
+async function uploadTo(input, file, batch) {
+  input.value = ""; input.placeholder = `uploading ${file.name}…`;
+  const r = await fetch(`/api/upload?name=${encodeURIComponent(file.name)}&batch=${batch}`, { method: "POST", body: file });
+  const v = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(v.error || r.statusText);
+  input.value = v.path; input.scrollLeft = input.scrollWidth; input.title = `${file.name} (${(file.size / 1048576).toFixed(1)} MB), copied into the song's stems folder when the song is created`;
+}
+function setupDrop() {
+  const panel = $("#dropPanel"), zone = $("#dropzone");
+  const batch = Date.now().toString(36);
+  let depth = 0;
+  panel.addEventListener("dragenter", e => { e.preventDefault(); depth++; panel.classList.add("dragging"); });
+  panel.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; panel.classList.remove("dragging"); } });
+  panel.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+  panel.addEventListener("drop", async e => {
+    e.preventDefault(); depth = 0; panel.classList.remove("dragging");
+    const files = [...e.dataTransfer.files];
+    if (!files.length) return;
+    if (files.length > MAX_DROP) return toast(`${files.length} files dropped; at most ${MAX_DROP} at a time`, true);
+    const bad = badFiles(files);
+    if (bad.length) return toast(`Not supported: ${bad.map(f => f.name).join(", ")}. Audio: ${META.audioExt.join(" ")}; MIDI: ${META.midiExt.join(" ")}`, true);
+    // dropped on one instrument's row with a single file: that slot, whatever the name says
+    const row = e.target.closest && e.target.closest("[data-slot]");
+    let plan;
+    if (row && files.length === 1 && !META.midiExt.includes("." + files[0].name.split(".").pop().toLowerCase())) plan = { out: { [row.dataset.slot]: files[0] }, midi: null, unplaced: [] };
+    else plan = assignFiles(files, STEM_SLOTS.filter(s => $("#n_stem_" + s).value.trim()));
+    if (plan.midi && files.filter(f => META.midiExt.includes("." + f.name.split(".").pop().toLowerCase())).length > 1) toast("More than one MIDI dropped; using " + plan.midi.name, true);
+    try {
+      zone.textContent = "Copying the files…";
+      for (const [slot, f] of Object.entries(plan.out)) await uploadTo($("#n_stem_" + slot), f, batch);
+      if (plan.midi) await uploadTo($("#n_midi"), plan.midi, batch);
+      const placed = Object.entries(plan.out).map(([s, f]) => `${f.name} → ${s}`).concat(plan.midi ? [`${plan.midi.name} → MIDI`] : []);
+      toast(placed.join(" · ") + (plan.unplaced.length ? ` · no free slot for ${plan.unplaced.map(f => f.name).join(", ")}` : ""), !!plan.unplaced.length);
+    } catch (err) { toast(err.message, true); }
+    zone.innerHTML = zone.dataset.html;
+  });
+  zone.dataset.html = zone.innerHTML;
+}
+
 function showNew() {
   $("#crumb").innerHTML = `<a href="#/">Songs</a> / New song`;
   $("#main").innerHTML = `<div class="grid2"><div class="panel"><h4>New song</h4><div class="form">
@@ -292,8 +373,11 @@ function showNew() {
       <label>Genre</label><select id="n_genre">${opt(META.genres.map(g => [g, g]), "ROCK")}</select>
       <label>Lead vocals</label><select id="n_vocals">${opt([[1, "male"], [2, "female"]], 1)}</select>
     </div></div>
-    <div class="panel"><h4>Audio and chart</h4>
-      ${["drums", "bass", "guitar", "vocals", "fill"].map(k => `<div class="stemrow"><label>${k}</label><input type="text" id="n_${k}" placeholder="${k === "fill" ? "backing / everything else (optional)" : "(none)"}"><button onclick="pickInto('#n_${k}')">Browse…</button></div>`).join("")}
+    <div class="panel" id="dropPanel"><h4>Audio and chart</h4>
+      <div class="dropzone" id="dropzone">Drop up to ${MAX_DROP} files here (stems and/or a MIDI). Each goes to the instrument its name mentions
+        (drums, bass, guitar, vocals, backing…); the rest fill the empty slots in the order given.<br>
+        <span class="small dim">Audio: ${META.audioExt.map(e => e.slice(1).toUpperCase()).join(", ")} (WAV: 16/24/32-bit or float, any rate, mono or stereo) · MIDI: ${META.midiExt.join(" ")}</span></div>
+      ${STEM_SLOTS.map(k => `<div class="stemrow" data-slot="${k}"><label>${k} ${tip(k)}</label><input type="text" id="n_stem_${k}" placeholder="${k === "fill" ? "backing / everything else (optional)" : "(none)"}"><button onclick="pickInto('#n_stem_${k}')">Browse…</button></div>`).join("")}
       <div class="form" style="margin-top:10px">
         <label>MIDI (optional)</label><span class="inline"><input type="text" id="n_midi" placeholder="none: chart from the stems" style="flex:1"><button onclick="pickInto('#n_midi')">Browse…</button></span>
         <label>Stems from</label><select id="n_srcType">${opt([["ai", "AI separation"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["unknown", "unknown"]], "ai")}</select>
@@ -304,12 +388,13 @@ function showNew() {
       <p class="small dim">Stems: WAV, MP3, FLAC or OGG. Without a MIDI the chart is made from the stems (needs at least drums). Tiers start at 2; set them on the Details tab.</p>
       <div class="actions"><button class="primary" id="n_create">Create</button><label class="small"><input type="checkbox" id="n_build" checked> and build now</label></div>
     </div></div>`;
+  setupDrop();
   $("#n_create").onclick = async () => {
     const v = id => $(id).value.trim();
     const folder = v("#n_folder").toUpperCase();
     const S = { folder, title: v("#n_title"), artist: v("#n_artist"), album: v("#n_album") || undefined, year: v("#n_year") ? Number(v("#n_year")) : undefined,
       genre: v("#n_genre"), tiers: { drums: 2, guitar: 2, bass: 2, vocals: 2, band: 2 }, vocals: Number(v("#n_vocals")), stems: {} };
-    for (const k of ["drums", "bass", "guitar", "vocals", "fill"]) if (v("#n_" + k)) S.stems[k] = v("#n_" + k);
+    for (const k of STEM_SLOTS) if (v("#n_stem_" + k)) S.stems[k] = v("#n_stem_" + k);
     if (v("#n_midi")) S.midi = v("#n_midi");
     S.stemSource = { type: v("#n_srcType") };
     if (v("#n_srcTool")) S.stemSource.tool = v("#n_srcTool");
