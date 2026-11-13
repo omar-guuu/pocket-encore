@@ -68,6 +68,9 @@ def chord_lanes(root, width, octave=False):
     return {lo, lo + 1}
 
 
+BOUNCE = {0: 2, 1: 2, 2: 1, 3: 1}  # repeated notes alternate between their lane and this one (always the other thumb)
+
+
 def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
     """One gem per onset; lanes follow the melody like the official charts (FINDINGS §29):
     a phrase (notes less than phrase_gap apart) starts on the lane of its first note's place in the phrase's range;
@@ -111,7 +114,8 @@ def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
             if reps == 1:
                 home = lane
             elif not (out and len(out[-1][2]) > 1) and t not in keep:
-                lane = (home + (1 if home < 2 else -1)) if lane == home else home
+                # bounce to a lane on the other thumb (0/1 -> 2, 2/3 -> 1), not the neighbour on the same thumb
+                lane = BOUNCE[home] if lane == home else home
         else:
             reps = 0
             step = 1 if abs(p - prev) <= 2 else 2 if abs(p - prev) <= 7 else 3
@@ -128,6 +132,43 @@ def onsets_from_pitched(notes, timing=None, chords=False, max_chords=0.25):
         out.append((t, d, lanes))
         prev, prev_t = p, t
     return out
+
+
+# Thumbs: lanes 0-1 (red, yellow) are played with the left thumb, lanes 2-3 (blue, green) with the right. In the
+# official charts, when bass/guitar gems come 250 ms or less apart, about 75 % of the lane changes switch thumbs and
+# runs of one-thumb changes are short (Expert, longest per song: p50 1, p90 3; at 150 ms or less: max 2). Repeated
+# notes that bounce between two neighbouring lanes (0-1 or 2-3) would otherwise make long one-thumb alternations.
+FAST_MS = 250
+
+
+def spread_hands(events, timing, fast_ms=FAST_MS, longest=2):
+    """A run of fast one-thumb lane changes (x y x y ... on lanes 0/1 or 2/3, single gems <= fast_ms apart) longer
+    than `longest` changes keeps x and moves every y to the same place on the other thumb (0<->2, 1<->3), so the
+    alternation is shared by both thumbs. Returns (events, number of gems moved)."""
+    hand = lambda l: 0 if l < 2 else 1
+    ev = [list(e) for e in events]
+    ms = [timing.ms(e[0]) for e in ev]
+
+    def one_thumb_step(i):  # gem i -> gem i+1
+        a, b = ev[i][2], ev[i + 1][2]
+        if len(a) != 1 or len(b) != 1 or ms[i + 1] - ms[i] > fast_ms:
+            return False
+        (x,), (y,) = a, b
+        return x != y and hand(x) == hand(y)
+
+    moved, k, n = 0, 0, len(ev)
+    while k < n - 1:
+        m = k
+        while m + 1 < n and one_thumb_step(m):
+            m += 1
+        if m - k > longest:
+            (y,) = ev[k + 1][2]
+            other = {0: 2, 1: 3, 2: 0, 3: 1}[y]
+            for j in range(k + 1, m + 1, 2):
+                ev[j][2] = {other}
+                moved += 1
+        k = max(m, k + 1)
+    return [tuple(e) for e in ev], moved
 
 
 def limit_runs(events, longest=2):
@@ -327,6 +368,10 @@ def main():
         if stem and a.intro_stems:
             times = detect_onsets(f"{a.intro_stems}/{stem}", a.intro_start, a.offset - 0.05)
             events = intro_events(times, sec_to_tick, lead, lanes) + events
+        if kind != "drums":
+            events, moved = spread_hands(events, timing)
+            if moved:
+                print(f"{name}: {moved} gems moved to the other thumb (fast one-thumb alternations)")
         return reduce_part(events, timing, name, prune_expert=True), None
 
     drums, kicks = part(tracks_of(a.drums), "drums", "drums.wav", (3, 1), "drums")

@@ -494,6 +494,22 @@ Expert gems of the 112 official charts (mask bit 0-3 = lanes left to right; Easy
   Result (expert): Push It drums kick 35 / snare 24 / cymbals 49 %, guitar longest same-lane run 3 (was 224);
   Handlebars cymbal runs alternate 132/134, steps of bass/guitar/vocals close to the official spread.
 
+**§29 addendum: thumbs (2026-11-12).** Lanes 0-1 (red, yellow) are the left thumb, 2-3 (blue, green) the right.
+User feedback on ZBEAUTIFULLY: bass phrases alternated red/yellow for ~10 fast gems, all on one thumb. Official Expert
+charts, consecutive single gems close together:
+
+| gap | part | same lane | one-thumb change | other thumb | longest run of one-thumb changes per song (p50/p90/max) |
+|---|---|---|---|---|---|
+| <= 150 ms | bass / guitar | 7 / 4 % | 5 / 5 % | 88 / 90 % | 0/1/2, 1/2/2 |
+| <= 200 ms | bass / guitar | 13 / 8 % | 11 / 10 % | 77 / 82 % | 1/2/4, 2/3/5 |
+| <= 250 ms | bass / guitar | 18 / 10 % | 12 / 13 % | 70 / 77 % | 1/3/4, 2/4/6 |
+
+Cause: repeated notes bounced to the neighbouring lane (0<->1, 3<->2: same thumb). Fix in autochart: repeated notes
+bounce to the other thumb (0/1 -> 2, 2/3 -> 1), and `spread_hands` moves every other gem of a run of more than 2
+one-thumb changes between single gems <= 250 ms apart to the other thumb (0<->2, 1<->3). ZBEAUTIFULLY Expert bass
+(<= 200 ms): one-thumb changes 43 -> 20 %, longest run 6 -> 2; guitar 22 -> 13 %, 3 -> 2; every difficulty <= 2
+up to 300 ms.
+
 ## 30. Chords and held notes on bass/guitar (official stats vs autochart, 2026-11-09)
 
 User feedback on autocharted ZHANDLEBARS: bass/guitar had too many held notes crowding the next gem, and guitar had no chords.

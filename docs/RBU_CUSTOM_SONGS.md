@@ -284,6 +284,9 @@ What it does:
     crash on the first; at most 2 gems at once (kick+cymbal on 1 and 3, kick+snare); tambourine/cowbell/shakers only
     stand in where a bar has no cymbal. Guitar/bass/vocals: lanes follow the melody (higher = further right, bigger
     jump = more lanes), a repeated note bounces between two lanes, never more than 2-3 gems in a row on one lane.
+    Thumbs: red/yellow are the left thumb, blue/green the right. A repeated note bounces to a lane on the other
+    thumb, and fast alternations (gems 250 ms or less apart) never stay on one thumb for more than 2 changes: every
+    other gem moves to the other thumb (red/yellow → red/green, yellow/blue…), like the official charts (FINDINGS §29).
   - **Chords and held notes (autochart, FINDINGS §30):** guitar onsets with 2+ notes in the MIDI (power chords,
     octaves) become two-gem chords on beats, long notes and chord changes, at most 25 % of the gems (official median
     19 %); the rest play the root. Shapes: fifths skip a lane (1+3, 2+4), thirds/fourths are adjacent, octaves on the
