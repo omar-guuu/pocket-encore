@@ -1,4 +1,4 @@
-# Pocket Encore: custom songs for Rock Band Unplugged (PSP, ULUS10418)
+# Pocket Encore: create custom songs for Rock Band Unplugged.
 
 Tools to build custom songs that the game loads natively on PPSSPP: audio (.ATM), chart (BEATMATCH.STR.EDAT),
 preview and the song database, from stems and an optional MIDI. **Pocket Encore** is the all-in-one app: song library,
@@ -15,7 +15,7 @@ details, stems and their quality, builds, and a chart/effects editor with playba
 
 ## Start
 
-1. Install the pieces the tool needs (none of them are ours):
+1. Needed before first using Pocket Encore: Install the needed tools, and have your copy of RockBand Unplugged US Version:
    - [Node.js](https://nodejs.org/en/download) (LTS)
    - [Python 3.12](https://www.python.org/downloads/windows/), then `pip install mido numpy miniaudio`
    - [mid2rbu](https://github.com/maodus/mid2rbu) (`git clone` it, e.g. into `rbu-tools\mid2rbu`)
@@ -42,11 +42,6 @@ Everything can also be run from the command line: `node scripts\mksong.js songs\
 | `docs\FINDINGS.md` | reverse-engineering notes on the game's formats and behaviour |
 | `installer\PocketEncore.iss` | Inno Setup script for the installer |
 | `out\`, `reaper\`, `songs\*\build\` | generated (not in the repo) |
-
-## Rules
-
-- Never commit game files, stems or anything decoded from the game; `.gitignore` keeps them out.
-- The song's `song.json` stays the source of truth; Pocket Encore and the scripts both read and write it.
 
 ## License
 
