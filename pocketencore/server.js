@@ -548,4 +548,20 @@ server.listen(PORT, "127.0.0.1", () => {
   console.log(`Pocket Encore: ${url}  (close this window or press Ctrl+C to stop)`);
   if (process.argv.includes("--open")) openWindow(url);
 });
-server.on("error", e => { console.error(e.code === "EADDRINUSE" ? `port ${PORT} is in use: is Pocket Encore already running? (or use --port)` : e.message); process.exit(1); });
+server.on("error", async e => {
+  if (e.code === "EADDRINUSE") {
+    // already running (e.g. started twice): just open its window
+    const url = `http://localhost:${PORT}`;
+    try {
+      const r = await fetch(url + "/api/meta", { signal: AbortSignal.timeout(3000) });
+      if (r.ok && (await r.json()).genres) {
+        console.log(`Pocket Encore is already running at ${url}; opening its window.`);
+        if (process.argv.includes("--open")) openWindow(url);
+        setTimeout(() => process.exit(0), 500);
+        return;
+      }
+    } catch { }
+    console.error(`Port ${PORT} is used by another program. Close it, or start Pocket Encore on another port: pocketencore.cmd --port 8643`);
+  } else console.error(e.message);
+  process.exit(1);
+});
