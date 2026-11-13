@@ -123,9 +123,10 @@ async function showWelcome() {
     next = "Find my game";
   } else if (OB.step === 1) {
     const g = c.checks.game;
-    const modeText = m.mode === "dlc" ? "Your DLC is installed: custom songs are built on it, and the game keeps listing every disc and DLC song."
-      : m.mode === "partial" ? `Some DLC is installed (${m.dlc} song folder${m.dlc > 1 ? "s" : ""}): custom songs are built on it, and your DLC songs stay listed.`
-      : "No official DLC was found: custom songs are built from the game disc, and the game lists the disc songs and yours.";
+    const cov = m.coverage ? `${m.coverage.present} of the ${m.coverage.listed} DLC songs are installed` : `${m.dlc} DLC song folder${m.dlc > 1 ? "s" : ""}`;
+    const modeText = m.complete ? `All the DLC is installed (${cov}): custom songs are built on it, and the game keeps listing every base game and DLC song.`
+      : m.mode !== "disc" ? `Some of the DLC is installed (${cov}): custom songs are built on it, and the game keeps listing your DLC songs.`
+      : "No official DLC was found: custom songs are built from the base game's disc image, and the game lists the base game's songs and yours.";
     body = `<h2>Your game</h2>
       ${REQUIRED_NOTE}
       <div class="form" style="grid-template-columns:170px 1fr auto;margin-top:12px">
@@ -207,7 +208,7 @@ async function showSetup() {
     <table class="t setup"><tr><th></th><th>Piece</th><th>Found</th><th>Where to get it</th></tr>
       ${row("node", "Node.js (runs Pocket Encore and the scripts)")}${row("python", "Python 3.12 (charting, stem analysis, count-in, mid2rbu)")}${row("packages", "Python packages mido, numpy, miniaudio")}
       ${row("mid2rbu", "mid2rbu (Rock Band MIDI → .rbu chart)")}${row("at3tool", "at3tool.exe (ATRAC3 encoder for the audio)")}${row("game", `Rock Band Unplugged: <span class="badge ${s.mode.mode === "disc" ? "" : "ok"}">${esc(s.mode.label)}</span> <span class="small dim">chart container ${esc(s.mode.donorName)}, song list ${esc(s.mode.baseName)}</span>`)}</table>
-    <p class="small dim">The game mode is checked every time Pocket Encore starts: DLC folders in MUSIC → built on the DLC (all disc and DLC songs stay listed); no DLC → built from the disc image. <a href="#/welcome" onclick="OB.step=0;OB.check=null;OB.settings=null">Run the first-time setup again</a></p></div>
+    <p class="small dim">The game mode is checked every time Pocket Encore starts: Base Game + Complete / Incomplete DLC → built on your DLC (every song you have stays listed); Base Game only → built from the disc image. <a href="#/welcome" onclick="OB.step=0;OB.check=null;OB.settings=null">Run the first-time setup again</a></p></div>
     <div class="panel"><h4>Paths</h4><div class="form" style="grid-template-columns:160px 1fr auto">
       <label>Disc image (ISO/CSO)</label><input type="text" id="s_iso" value="${esc(s.settings.iso)}"><button onclick="pickInto('#s_iso')">Browse…</button>
       <label>MUSIC folder</label><input type="text" id="s_music" value="${esc(s.settings.music)}"><button onclick="pickInto('#s_music', null, true)">Browse…</button>

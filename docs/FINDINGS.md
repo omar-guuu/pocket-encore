@@ -742,4 +742,6 @@ YOURENOROCKNROLLFUN (song-list base)? The PSP store no longer sells the DLC, so 
   shows only the newest JB, so with partial DLC the base is the user's newest JB (game.js "partial" mode).
 - Tools: `scripts/iso.js` (ISO 9660 + CSO reader, no extraction), `scripts/game.js` (detection, modes, disc cache in
   rbu-tools/cache). Built and verified in all three modes on a copy of Miracle Man (labels resolve to the right text
-  in every language). **Not yet tested in game:** disc-only and partial modes.
+  in every language). Mode labels: Base Game only / Base Game + Incomplete DLC / Base Game + Complete DLC (complete = every
+  DLC record of the newest song list has its folder). Onboarding detection of both other modes confirmed by the user
+  (2026-11-13); in-game play of disc-only builds still to test.

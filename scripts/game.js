@@ -7,6 +7,9 @@
 //           newest one the user has (the game only shows the newest list, so their DLC songs stay listed).
 //   disc    no official DLC: chart container and song list come from the game disc image (ISO/CSO): the list holds
 //           the 55 disc songs + customs (FINDINGS §34).
+// Labels: "Base Game + Complete DLC" only when every DLC song of the newest song list has its folder; otherwise
+// "Base Game + Incomplete DLC" (in dlc mode too: the same files are used, songs without a folder are just not listed);
+// "Base Game only" without DLC.
 // Game files are only read from the user's own copies; disc files are cached in rbu-tools/cache (never in the repo).
 "use strict";
 const fs = require("fs");
@@ -72,25 +75,48 @@ function dlcFolders(music) {
     return jb && bm ? { name: e.name, dir, jb, jbNumber: parseInt(jb.slice(2, 8), 10), chart: path.join(dir, bm) } : null;
   }).filter(Boolean);
 }
+// DLC songs listed in a song list (JB: records with flag 0x80, names in the pool) and how many have a folder in MUSIC.
+function dlcCoverage(folder, music) {
+  try {
+    const jbName = fs.readdirSync(folder).filter(f => /^JB\d{6}\.STR\.EDAT$/i.test(f)).sort().pop();
+    const jb = fs.readFileSync(path.join(folder, jbName));
+    const count = jb.readUInt32LE(0x30), POOL = 0x1756c, have = new Set(fs.readdirSync(music).map(n => n.toUpperCase()));
+    let listed = 0, present = 0;
+    for (let i = 0; i < count; i++) {
+      const r = 0x34 + i * 0x114;
+      if (!(jb.readUInt32LE(r + 0xc) & 0x80)) continue;
+      let e = POOL + jb.readUInt32LE(r + 4), name = "";
+      while (jb[e]) name += String.fromCharCode(jb[e++]);
+      listed++;
+      if (have.has(name.toUpperCase())) present++;
+    }
+    return { listed, present };
+  } catch { return null; }
+}
+const LABEL = { complete: "Base Game + Complete DLC", incomplete: "Base Game + Incomplete DLC", base: "Base Game only" };
 function mode(music, iso) {
   const dlc = dlcFolders(music);
   const by = n => dlc.find(d => d.name.toUpperCase() === n);
+  const newest = dlc.length ? dlc.reduce((a, b) => (b.jbNumber > a.jbNumber ? b : a)) : null;
+  const cov = newest ? dlcCoverage(newest.dir, music) : null;
+  const complete = !!cov && cov.listed > 0 && cov.present === cov.listed;
   if (by(DLC_DONOR) && by(DLC_BASE)) {
-    return { mode: "dlc", label: "Disc + DLC", dlc: dlc.length, donor: by(DLC_DONOR).chart, donorName: DLC_DONOR, base: by(DLC_BASE).dir, baseName: DLC_BASE };
+    return { mode: "dlc", label: complete ? LABEL.complete : LABEL.incomplete, complete, coverage: cov, dlc: dlc.length,
+      donor: by(DLC_DONOR).chart, donorName: DLC_DONOR, base: by(DLC_BASE).dir, baseName: DLC_BASE };
   }
   if (dlc.length) {
-    const newest = dlc.reduce((a, b) => (b.jbNumber > a.jbNumber ? b : a));
     const donor = by(DLC_DONOR) || [...dlc].sort((a, b) => a.name.localeCompare(b.name))[0];
-    return { mode: "partial", label: "Disc + some DLC", dlc: dlc.length, donor: donor.chart, donorName: donor.name, base: newest.dir, baseName: newest.name };
+    return { mode: "partial", label: LABEL.incomplete, complete: false, coverage: cov, dlc: dlc.length,
+      donor: donor.chart, donorName: donor.name, base: newest.dir, baseName: newest.name };
   }
-  return { mode: "disc", label: "Disc only", dlc: 0, donor: null, donorName: DISC_DONOR + " (disc)", base: null, baseName: "the disc's song list", needsIso: true, iso: iso || null };
+  return { mode: "disc", label: LABEL.base, complete: false, dlc: 0, donor: null, donorName: DISC_DONOR + " (disc)", base: null, baseName: "the disc's song list", needsIso: true, iso: iso || null };
 }
 
 // ---------- disc files (cached) ----------
 // cache/disc-<size>-<mtime>/: base/JB000000.STR.EDAT (= STREAMS/JUKEBOX.STR) + base/TEXT/STR_<LANG>_jukebox(2).txt.EDAT
 // (= TEXT/STR_<LANG>_JUKEBOX.TXT; DLC packs ship the same text twice), donor/BEATMATCH.STR (a disc song's chart).
 function prepareDisc(iso) {
-  if (!iso || !fs.existsSync(iso)) throw new Error("Disc-only mode needs the game's disc image (ISO or CSO): set it on the Setup page");
+  if (!iso || !fs.existsSync(iso)) throw new Error("Base Game only mode needs the game's disc image (ISO or CSO): set it on the Setup page");
   const st = fs.statSync(iso);
   const dir = path.join(TOOLS, "cache", `disc-${st.size}-${Math.round(st.mtimeMs)}`);
   const base = path.join(dir, "base"), donor = path.join(dir, "donor", "BEATMATCH.STR");

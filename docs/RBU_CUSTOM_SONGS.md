@@ -166,7 +166,7 @@ Our scripts (`rbu-tools\scripts`), in pipeline order:
 | editing | `reaperpack.js` | chart + WAVs for REAPER (customs and official references) |
 | checks | `loudness.js`, `chartmap.js`, `stresspack.js` | loudness of decoded tracks, chart memory map, 300-song stress test |
 | config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, disc image, python, at3tool, mid2rbu) with detected defaults; `check()` = Setup and onboarding |
-| config | `game.js`, `iso.js` | finds the game (PPSSPP memory stick, disc image), picks the game mode (Disc + DLC / some DLC / disc only), reads disc files from the ISO/CSO |
+| config | `game.js`, `iso.js` | finds the game (PPSSPP memory stick, disc image), picks the game mode (Base Game + Complete DLC / + Incomplete DLC / Base Game only), reads disc files from the ISO/CSO |
 
 ### Pocket Encore: the all-in-one page (since 2026-11-11; named RBU Studio until 2026-11-12)
 Double-click `rbu-tools\pocketencore.cmd` (or `node rbu-tools\pocketencore\server.js --open`), or install it with the installer
@@ -181,11 +181,12 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   without the game; 3. Tools (Node, Python + packages, mid2rbu, at3tool) with download links and **Check again**;
   4. Done, which writes `settings.json`. Nothing is saved before the last step.
 - **Game mode**, checked every time Pocket Encore starts and shown at the top right:
-  - **Disc + DLC** (SHESNOTTHERE and YOURENOROCKNROLLFUN in MUSIC): built on SHESNOTTHERE's chart and
+  - **Base Game + Complete DLC** (every DLC song of the newest song list has its folder in MUSIC): built on SHESNOTTHERE's chart and
     YOURENOROCKNROLLFUN's song list; the game lists every disc and DLC song plus yours.
-  - **Disc + some DLC** (other DLC packs only): built on one of your DLC charts and your newest pack's song list, so
+  - **Base Game + Incomplete DLC** (some DLC): with SHESNOTTHERE and YOURENOROCKNROLLFUN, built on them as above (songs you
+    don't have are simply not listed); without them, built on one of your DLC charts and your newest pack's song list, so
     your DLC songs stay listed.
-  - **Disc only** (no DLC): built on a disc chart (Mr. Brightside) and the disc's song list, read straight from the disc
+  - **Base Game only** (no DLC): built on a disc chart (Mr. Brightside) and the disc's song list, read straight from the disc
     image (cached in `rbu-tools\cache`); the game lists the 55 disc songs plus yours. (FINDINGS §34; not yet
     tested in game.)
   - When the mode changes (DLC added or removed), the badge and the library say the song database needs rebuilding:

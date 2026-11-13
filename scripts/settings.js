@@ -84,8 +84,8 @@ function check(over = {}) {
   // the game: the disc image always identifies it; with DLC the build can run on the DLC alone
   const m = gameMode(s), isoOk = !!s.iso && fs.existsSync(s.iso) && game.isGameImage(s.iso);
   const isoNote = isoOk ? `disc image ${s.iso}` : s.iso ? `${s.iso} is not a Rock Band Unplugged (${game.GAME_ID}) disc image` : "no disc image found";
-  if (m.mode === "disc") r.game = { ok: isoOk, mode: m, detail: isoOk ? `Disc only: ${isoNote}; no official DLC in ${s.music || "(no MUSIC folder)"}` : `Disc only (no official DLC found), and ${isoNote}`, url: URLS.game };
-  else r.game = { ok: true, mode: m, detail: `${m.label}: ${m.dlc} official DLC song folder${m.dlc > 1 ? "s" : ""} in ${s.music}; ${isoNote}`, url: URLS.game };
+  if (m.mode === "disc") r.game = { ok: isoOk, mode: m, detail: isoOk ? `${m.label}: ${isoNote}; no official DLC in ${s.music || "(no MUSIC folder)"}` : `${m.label} (no official DLC found), and ${isoNote}`, url: URLS.game };
+  else r.game = { ok: true, mode: m, detail: `${m.label}: ${m.coverage ? `${m.coverage.present} of the ${m.coverage.listed} DLC songs` : `${m.dlc} official DLC song folder${m.dlc > 1 ? "s" : ""}`} in ${s.music}; ${isoNote}`, url: URLS.game };
   return { settings: s, checks: r, ok: Object.values(r).every(x => x.ok), configured: configured(), mode: m, detected: detectGame() };
 }
 

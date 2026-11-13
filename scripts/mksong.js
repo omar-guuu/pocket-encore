@@ -64,7 +64,8 @@ const SETTINGS = require("./settings.js").load();  // rbu-tools/settings.json: m
 const PY = SETTINGS.python, AT3TOOL = SETTINGS.at3tool, MID2RBU = SETTINGS.mid2rbu, DEFAULT_MUSIC = SETTINGS.music;
 const DB_FOLDER = "ZZCUSTOMDB";
 // Chart container and song-list base come from the game mode (game.js): DLC (SHESNOTTHERE + YOURENOROCKNROLLFUN),
-// some DLC (one of its charts + its newest list) or disc only (a disc chart + the disc's list, read from the ISO).
+// incomplete DLC without those two (one of its charts + its newest list) or base game only (a disc chart + the disc's
+// list, read from the ISO).
 const game = require("./game.js");
 let GAME = null;
 function gameFiles(music) {
