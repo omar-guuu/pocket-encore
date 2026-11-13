@@ -1,0 +1,18 @@
+{
+  "folder": "ZBEAUTIFULLY",
+  "title": "Beautifully Unconventional",
+  "artist": "Wolf Alice",
+  "album": "Visions of a Life",
+  "year": 2017,
+  "genre": "ALTERNATIVE",
+  "tiers": { "drums": 2, "guitar": 2, "bass": 2, "vocals": 2, "band": 2 },
+  "vocals": 2,
+  "stems": {
+    "drums": "stems/Drums - Wolf Alice - Beautifully Unconventional (Official Video).mp3",
+    "bass": "stems/Bass - Wolf Alice - Beautifully Unconventional (Official Video).mp3",
+    "guitar": "stems/Other - Wolf Alice - Beautifully Unconventional (Official Video).mp3",
+    "vocals": "stems/Vocals - Wolf Alice - Beautifully Unconventional (Official Video).mp3"
+  },
+  "stemSource": { "type": "ai", "tool": "Fadr", "quality": "high" },
+  "countIn": true
+}
