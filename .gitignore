@@ -39,3 +39,6 @@ Thumbs.db
 incoming/
 # stems copied into a song folder (copyrighted audio)
 songs/*/stems/
+
+# disc files read from the user's own ISO (game data)
+cache/

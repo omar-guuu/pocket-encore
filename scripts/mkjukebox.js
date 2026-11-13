@@ -28,7 +28,11 @@ const path = require("path");
 const JB_SIZE = 0x1d580, REC0 = 0x34, REC_SIZE = 0x114, CAPACITY = 300, POOL = 0x1756c, POOL_END = POOL + 0x6000;
 const FILL = 0x7f800001;
 const FLAG_DLC_BASE = 0x8c;
-const TEXT_DIFF = 0x167, TEXT_ERA = 0x16e, TEXT_GENRE = 0x173, TEXT_SORT_123 = 0x1a7, TEXT_SORT_A = 0x1c2;
+// Label text ids in the newest DLC pack's text (533 entries: language, 112 songs x 3, then 196 labels). Lists with
+// fewer songs (older packs, the disc's 55-song list with 362 entries) have the same labels, earlier by 3 per song:
+// the ids are shifted by (entries - 533) (FINDINGS §34).
+const TEXT_DIFF = 0x167, TEXT_ERA = 0x16e, TEXT_GENRE = 0x173, TEXT_SORT_123 = 0x1a7, TEXT_SORT_A = 0x1c2, TEXT_REF_COUNT = 533;
+const DISC_B4_SENTINEL = 9999999;
 const DIFFICULTIES = ["WARMUP", "APPRENTICE", "SOLID", "MODERATE", "CHALLENGING", "NIGHTMARE", "IMPOSSIBLE"];
 const ERAS = ["'60S HITS", "'70S HITS", "'80S HITS", "'90S HITS", "'00S HITS"];
 const GENRES = ["ALTERNATIVE", "BLUES", "CLASSIC ROCK", "COUNTRY", "EMO", "FUSION", "GLAM", "GRUNGE", "INDIE ROCK", "JAZZ",
@@ -89,11 +93,17 @@ function main() {
   const recAt = i => REC0 + i * REC_SIZE;
   const ids = new Set([...Array(count)].map((_, i) => jb.readUInt32LE(recAt(i))));
 
-  // Template: last DLC record of the base table.
-  let tmpl = -1;
+  // Template: last DLC record of the base table; a disc-only list (the disc's STREAMS/JUKEBOX.STR) has none, so the
+  // last disc record with an ordinary +0xB4 value is used, with its .ATM hash (+0xF4, 0 on disc songs) left at 0.
+  let tmpl = -1, fromDisc = false;
   for (let i = count - 1; i >= 0; i--) if (jb.readUInt32LE(recAt(i) + 0xc) & 0x80) { tmpl = i; break; }
-  if (tmpl < 0) throw new Error("base JB has no DLC record to use as a template");
-  const template = jb.subarray(recAt(tmpl), recAt(tmpl) + REC_SIZE);
+  if (tmpl < 0) {
+    for (let i = count - 1; i > 0; i--) if (jb.readUInt32LE(recAt(i) + 0xb4) !== DISC_B4_SENTINEL) { tmpl = i; break; }
+    fromDisc = true;
+  }
+  if (tmpl < 0) throw new Error("base song list has no record to use as a template");
+  const template = Buffer.from(jb.subarray(recAt(tmpl), recAt(tmpl) + REC_SIZE));
+  if (fromDisc) template.writeUInt32LE(0, 0xf4);
 
   // Free space in the name pool: after the last referenced name, must be fill.
   let poolUsed = POOL;
@@ -109,6 +119,8 @@ function main() {
   const texts = textFiles.map(f => ({ f, ...readText(path.join(textDir, f)) }));
   const textCount = texts[0].entries.length;
   if (texts.some(t => t.entries.length !== textCount)) throw new Error("text files disagree on entry count");
+  const shift = textCount - TEXT_REF_COUNT;
+  if ((-shift) % 3 !== 0 || textCount !== 1 + 3 * count + (TEXT_REF_COUNT - 1 - 3 * 112)) throw new Error(`text has ${textCount} entries; expected ${1 + 3 * count + 196} for ${count} songs`);
 
   const songs = o.songs.map(p => ({ p, s: JSON.parse(fs.readFileSync(p, "utf8")) }));
   if (count + songs.length > CAPACITY) throw new Error(`too many songs: ${count} + ${songs.length} > ${CAPACITY}`);
@@ -144,13 +156,13 @@ function main() {
 
     const first = String(s.title).trim()[0] || "";
     const up = first.toUpperCase();
-    const sortId = up >= "A" && up <= "Z" ? TEXT_SORT_A + (up.charCodeAt(0) - 65) : TEXT_SORT_123;
+    const sortId = shift + (up >= "A" && up <= "Z" ? TEXT_SORT_A + (up.charCodeAt(0) - 65) : TEXT_SORT_123);
 
     const r = Buffer.from(template);
     const w = (off, v) => r.writeUInt32LE(v >>> 0, off);
     w(0x00, id); w(0x04, nameOff); w(0x08, nameOff); w(0x0c, FLAG_DLC_BASE);
     w(0x10, textId); w(0x14, textId + 1); w(0x18, textId + 2); w(0x1c, sortId);
-    w(0x20, TEXT_DIFF + difficulty); w(0x24, TEXT_GENRE + genre); w(0x28, TEXT_ERA + era);
+    w(0x20, shift + TEXT_DIFF + difficulty); w(0x24, shift + TEXT_GENRE + genre); w(0x28, shift + TEXT_ERA + era);
     w(0xa8, year);
     if (s.vocals === 1 || s.vocals === 2) w(0xac, s.vocals);
     w(0xb8, tiers.drums); w(0xbc, tiers.guitar); w(0xc0, tiers.bass); w(0xc4, tiers.vocals); w(0xc8, tiers.band);

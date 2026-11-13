@@ -133,3 +133,18 @@ input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px 
 .rules .rrow.fresh { animation: rulesflash 1.6s ease-out; }
 @keyframes rulesflash { 0% { background: rgba(232,184,74,.45); } 100% { background: none; } }
 .rules .rx { padding: 0 7px; }
+
+/* onboarding */
+body.onboarding #buildToggle, body.onboarding #setupLink { display: none; }
+.onboard { max-width: 860px; margin: 10px auto; }
+.onboard h2 { margin: 0 0 10px; }
+.onboard p { line-height: 1.55; }
+.obsteps { display: flex; gap: 18px; margin-bottom: 12px; color: var(--dim); font-size: 13px; }
+.obsteps .on { color: var(--accent); font-weight: 600; }
+.obsteps .done { color: var(--ok); }
+.obreq { border: 1px solid var(--accent); background: rgba(240,160,48,.08); border-radius: 6px; padding: 10px 14px; margin: 12px 0; line-height: 1.5; }
+.obrow { border-top: 1px solid var(--line); padding: 8px 0; display: grid; gap: 4px; }
+.obrow > .badge { justify-self: start; }
+.obmode { margin-top: 4px; }
+.obnav { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+#modeBadge:empty { display: none; }

@@ -718,3 +718,28 @@ is slow (71 BPM, 62 bars in 209 s), so it has few phrases for its length, and th
 (user phrase counts ≈ bars / 2.1–2.4: Crush 107/51, Wonderwall 96/42, Miracle Man 75/36, Handlebars 62/26) does not beat length on
 the official stored maxima (held-out p90 16–17% versus 11–14%), so the model is unchanged. Slow songs get a manual starsScale: Handlebars
 and the FX copy use 0.89 (Expert max 1,814,312, 5★ 1,431,492, gold 1,585,709).
+
+
+## 34. Building without DLC: the disc's song list and charts (2026-11-13)
+Question: can customs be built without the official DLC folders SHESNOTTHERE (chart container) and
+YOURENOROCKNROLLFUN (song-list base)? The PSP store no longer sells the DLC, so many owners have only the disc.
+- **Disc song list** = `PSP_GAME/USRDIR/STREAMS/JUKEBOX.STR` (§1: the game falls back to it when DLC is off or the
+  scan fails). Same format and size as a DLC JB (0x1d580 bytes, 300 x 0x114 records): count 55 (the disc songs,
+  flags 0x0c, +0xF4 hash 0). The newest DLC JB (JB000571, 112 songs) = these 55 + 57 DLC; its disc records differ from
+  the disc file only in name-pool offsets (+0x04/+0x08) and text ids (+0x1C..+0x28), plus +0xB4 on 10 records.
+- **Disc song-list text** = `PSP_GAME/USRDIR/TEXT/STR_<LANG>_JUKEBOX.TXT` (EN FR GE IT SP; plain UTF-8, same layout as
+  the DLC `STR_<LANG>_jukebox(2).txt.EDAT`, which are two identical copies): 362 entries = language + 55 songs x 3 +
+  196 labels. The DLC text (533) = the same first 166 entries + 57 DLC songs x 3 + the same 196 labels. So every
+  label id (difficulty, era, genre, sort letter) is lower by 3 per missing song: id = DLC id + (entries - 533).
+  This also matters for older DLC packs (fewer songs in their list); mkjukebox assumed the 112-song layout before.
+- **Disc charts** = `PSP_GAME/USRDIR/MUSIC/<SONG>/BEATMATCH.STR`: same header as DLC charts (01 00 00 00 80 48 ...).
+  Chart container chosen for disc-only builds: MRBRIGHTSIDE (no screen effects; 122 scripts / 255 events, closest to
+  SHESNOTTHERE's 119 / 264). Disc charts with no effects: ABC, ALIVE, COMEOUTANDPLAY, IWASWRONG, KILLINGJAR, KRYPTONITE,
+  MESSAGEINABOTTLE, MRBRIGHTSIDE, PINBALLWIZARD, ROCKYOURSOCKS (+ the tutorials T01-T15). Painkiller is on the disc.
+- **Record template without DLC:** the disc list has no DLC record to copy, so mkjukebox copies the last disc record
+  whose +0xB4 is not the 9999999 sentinel (record 40), sets flags 0x8c and +0xF4 = 0. +0xB4 and +0xCC stay unknown.
+- Every DLC pack folder carries a chart and a JB; an older pack's JB lists only the DLC released up to then. The game
+  shows only the newest JB, so with partial DLC the base is the user's newest JB (game.js "partial" mode).
+- Tools: `scripts/iso.js` (ISO 9660 + CSO reader, no extraction), `scripts/game.js` (detection, modes, disc cache in
+  rbu-tools/cache). Built and verified in all three modes on a copy of Miracle Man (labels resolve to the right text
+  in every language). **Not yet tested in game:** disc-only and partial modes.

@@ -241,6 +241,17 @@ function chartPath(folder, auto = false) {
   return null;
 }
 
+// ---------- song database vs game mode ----------
+// mksong writes songs/.db/mode.json with the mode ZZCUSTOMDB was built for; a different mode now (DLC added or
+// removed) means the database must be rebuilt (any build does it).
+function dbState(mode) {
+  let last = null;
+  try { last = JSON.parse(fs.readFileSync(path.join(SONGS, ".db", "mode.json"), "utf8")); } catch { }
+  if (!fs.existsSync(path.join(OUT, "ZZCUSTOMDB"))) return { built: false, stale: false };
+  if (!last) return { built: true, stale: false, unknown: true };
+  return { built: true, stale: last.mode !== mode.mode || last.base !== mode.baseName, was: last.label, wasBase: last.base };
+}
+
 // ---------- chart checks (checks.js): the rules seen in the official charts ----------
 function readAudio(folder) { try { return JSON.parse(fs.readFileSync(path.join(songDir(folder), "build", "audio.json"), "utf8")); } catch { return null; } }
 function chartChecks(folder) {
@@ -336,9 +347,17 @@ async function route(req, res) {
     return fs.createReadStream(f).pipe(res);
   }
   const [, what, folder, extra] = p;
-  if (what === "meta" && M === "GET")
-    return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: settings.check().ok, audioExt: AUDIO_EXT, midiExt: MIDI_EXT });
+  if (what === "meta" && M === "GET") {
+    const c = settings.check();
+    return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: c.ok,
+      configured: c.configured, mode: c.mode, db: dbState(c.mode), audioExt: AUDIO_EXT, midiExt: MIDI_EXT });
+  }
   if (what === "setup" && M === "GET") return json(res, { ...settings.check(), file: settings.FILE });
+  if (what === "setup" && M === "POST") {  // check paths without saving them (onboarding); { redetect: true } looks for the game again
+    const b = await body(req);
+    if (b.redetect) settings.redetect();
+    return json(res, { ...settings.check(b.settings || {}), file: settings.FILE });
+  }
   if (what === "settings" && M === "PUT") { settings.save(await body(req)); return json(res, { ...settings.check(), file: settings.FILE }); }
   if (what === "songs" && M === "GET") {
     const list = fs.existsSync(SONGS) ? fs.readdirSync(SONGS).filter(d => FOLDER_RE.test(d) && fs.existsSync(path.join(SONGS, d, "song.json"))) : [];
@@ -500,6 +519,14 @@ function openWindow(url) {
 server.listen(PORT, "127.0.0.1", () => {
   const url = `http://localhost:${PORT}`;
   console.log(`Pocket Encore: ${url}  (close this window or press Ctrl+C to stop)`);
+  // the game mode is checked on every start (DLC can be added or removed between sessions)
+  try {
+    const c = settings.check();
+    if (!c.configured) console.log("  first start: the welcome and setup pages open in the window");
+    else console.log(`  game: ${c.mode.label} (chart container ${c.mode.donorName}, song list ${c.mode.baseName})${c.checks.game.ok ? "" : " - " + c.checks.game.detail}`);
+    const db = dbState(c.mode);
+    if (db.stale) console.log(`  the song database was built for "${db.was}"; build any song to update it`);
+  } catch (e) { console.log("  game check failed: " + e.message); }
   if (process.argv.includes("--open")) openWindow(url);
 });
 server.on("error", async e => {

@@ -33,8 +33,10 @@ async function route(ev) {
   lastHash = location.hash;
   if (window.editorClose) window.editorClose();
   document.body.classList.remove("editing");
+  document.body.classList.remove("onboarding");
   const h = location.hash.replace(/^#\/?/, "").split("/");
   try {
+    if (!META.configured || h[0] === "welcome") { if (h[0] !== "welcome") { skipRoute = true; location.hash = "#/welcome"; lastHash = location.hash; } return await showWelcome(); }
     if (h[0] === "song" && h[1]) await showSong(h[1], h[2] || "details");
     else if (h[0] === "new") showNew();
     else if (h[0] === "setup") await showSetup();
@@ -59,8 +61,9 @@ async function showLibrary() {
   const list = await api("GET", "/api/songs");
   const sort = localStorage.libSort || "folder";
   list.sort((a, b) => sort === "title" ? String(a.song?.title).localeCompare(String(b.song?.title)) : sort === "changed" ? (b.builtAt || 0) - (a.builtAt || 0) : a.folder.localeCompare(b.folder));
+  const dbNote = META.db && META.db.stale ? `<div class="panel warnline">The game mode changed to <b>${esc(META.mode.label)}</b> since the song database was built (for "${esc(META.db.was)}"). Build any song to update the database, then copy ZZCUSTOMDB to the memory stick again.</div>` : "";
   const setupNote = META.setupOk ? "" : `<div class="panel warnline">Setup is incomplete: builds will fail until the missing pieces are installed. <a href="#/setup">Open Setup</a>.</div>`;
-  $("#main").innerHTML = setupNote + `
+  $("#main").innerHTML = dbNote + setupNote + `
     <div class="libbar"><button class="primary" onclick="location.hash='#/new'">+ New song</button>
       <input id="filter" placeholder="Filter…" value="${esc(localStorage.libFilter || "")}">
       <select id="sort"><option value="folder">by folder</option><option value="title">by title</option><option value="changed">last built</option></select>
@@ -85,6 +88,115 @@ async function openFolder(folder, what) {
   try { await api("POST", `/api/open/${folder || "ZNONE"}?what=${what}`); } catch (e) { toast(e.message, true); }
 }
 
+// ---------- first-time setup (onboarding) ----------
+// Shown while rbu-tools/settings.json does not exist; finishing writes it. Nothing is saved before the last step.
+const OB = { step: 0, settings: null, check: null };
+const REQUIRED_NOTE = `<div class="obreq"><b>You need Rock Band Unplugged to use Pocket Encore</b>: the game (US version, ULUS10418) as a
+  UMD disc image (ISO or CSO), or the game plus its DLC. Pocket Encore builds custom songs from the game's own files on
+  your computer and does not include any of them.</div>`;
+function obCheckRow(c, label, extra = "") {
+  return `<div class="obrow"><span class="badge ${c.ok ? "ok" : "bad"}">${c.ok ? "found" : "missing"}</span><b>${label}</b>
+    <div class="small dim mono">${esc(c.detail)}</div>${!c.ok && c.url ? `<div class="small">${c.url.startsWith("http") ? `Get it: <a href="${esc(c.url)}" target="_blank">${esc(c.url)}</a>` : esc(c.url)}</div>` : ""}${extra}</div>`;
+}
+async function obCheck(redetect) {
+  const r = await api("POST", "/api/setup", { settings: OB.settings || {}, redetect: !!redetect });
+  OB.check = r;
+  if (!OB.settings || redetect) OB.settings = { ...r.settings };
+  return r;
+}
+async function showWelcome() {
+  document.body.classList.add("onboarding");
+  $("#crumb").textContent = "Welcome";
+  if (!OB.check) await obCheck();
+  const steps = ["Welcome", "Your game", "Tools", "Done"];
+  const head = `<div class="obsteps">${steps.map((n, i) => `<span class="${i === OB.step ? "on" : i < OB.step ? "done" : ""}">${i + 1}. ${n}</span>`).join("")}</div>`;
+  const c = OB.check, s = OB.settings, m = c.mode;
+  let body = "", next = "Next", canNext = true;
+  if (OB.step === 0) {
+    body = `<h2>Welcome to Pocket Encore</h2>
+      <p>Pocket Encore makes custom songs for <b>Rock Band Unplugged</b> on PSP (played with PPSSPP): pick the stems of a
+      song, let it chart the four parts, edit the gems and effects with the music playing, and build the files the game
+      loads, with no plugin and no cheats.</p>
+      ${REQUIRED_NOTE}
+      <p class="small dim">For personal use with your own copy of the game. Never share the game's files or songs built from
+      copyrighted audio. The next steps find your game and the tools Pocket Encore uses; nothing is saved until the end.</p>`;
+    next = "Find my game";
+  } else if (OB.step === 1) {
+    const g = c.checks.game;
+    const modeText = m.mode === "dlc" ? "Your DLC is installed: custom songs are built on it, and the game keeps listing every disc and DLC song."
+      : m.mode === "partial" ? `Some DLC is installed (${m.dlc} song folder${m.dlc > 1 ? "s" : ""}): custom songs are built on it, and your DLC songs stay listed.`
+      : "No official DLC was found: custom songs are built from the game disc, and the game lists the disc songs and yours.";
+    body = `<h2>Your game</h2>
+      ${REQUIRED_NOTE}
+      <div class="form" style="grid-template-columns:170px 1fr auto;margin-top:12px">
+        <label>Disc image (ISO/CSO)</label><input type="text" id="ob_iso" value="${esc(s.iso)}" placeholder="e.g. ...\\PSP\\GAME\\ULUS10418.iso"><button onclick="pickInto('#ob_iso')">Browse…</button>
+        <label>Game's MUSIC folder</label><input type="text" id="ob_music" value="${esc(s.music)}" placeholder="...\\memstick\\PSP\\GAME\\ULUS10418\\MUSIC"><button onclick="pickInto('#ob_music', null, true)">Browse…</button>
+      </div>
+      <p class="small dim">Found automatically from PPSSPP when possible. The MUSIC folder is where the game keeps DLC
+      (PSP/GAME/ULUS10418/MUSIC on PPSSPP's memory stick); it may not exist yet if you have no DLC. It is also where you
+      copy the songs you build.</p>
+      <div class="actions"><button id="ob_recheck">Check these paths</button><button id="ob_detect">Detect again</button></div>
+      ${obCheckRow(g, "Rock Band Unplugged", `<div class="obmode"><span class="badge ${g.ok ? "ok" : "warn"}">${esc(m.label)}</span> ${esc(modeText)}</div>`)}`;
+    canNext = g.ok;
+    if (!g.ok) body += `<p class="warnline">Pocket Encore can't continue without the game: set the disc image of your copy (or the MUSIC folder with its DLC).</p>`;
+  } else if (OB.step === 2) {
+    const k = c.checks;
+    body = `<h2>Tools</h2>
+      <p class="small dim">Pocket Encore uses these free tools to build songs. They are not ours, so they are not included:
+      install each one, then press <b>Check again</b>.</p>
+      ${obCheckRow(k.node, "Node.js", "")}
+      ${obCheckRow(k.python, "Python 3.12", `<div class="inline"><input type="text" id="ob_python" value="${esc(s.python)}" style="flex:1"><button onclick="pickInto('#ob_python')">Browse…</button></div>`)}
+      ${obCheckRow(k.packages, "Python packages: mido, numpy, miniaudio", `<div class="small">In a console: <span class="mono">"${esc(s.python)}" -m pip install mido numpy miniaudio</span></div>`)}
+      ${obCheckRow(k.mid2rbu, "mid2rbu", `<div class="inline"><input type="text" id="ob_mid2rbu" value="${esc(s.mid2rbu)}" style="flex:1"><button onclick="pickInto('#ob_mid2rbu')">Browse…</button></div>`)}
+      ${obCheckRow(k.at3tool, "at3tool.exe (with msvcr71.dll next to it)", `<div class="inline"><input type="text" id="ob_at3tool" value="${esc(s.at3tool)}" style="flex:1"><button onclick="pickInto('#ob_at3tool')">Browse…</button></div>`)}
+      <div class="actions"><button id="ob_recheck">Check again</button></div>`;
+    const missing = ["python", "packages", "mid2rbu", "at3tool"].filter(x => !k[x].ok);
+    if (missing.length) { next = "Finish anyway"; body += `<p class="warnline">Missing: ${missing.join(", ")}. You can finish now and add them later on the Setup page, but songs can't be built until everything is found.</p>`; }
+    else next = "Finish";
+  } else {
+    body = `<h2>All set</h2>
+      <p>Game: <b>${esc(m.label)}</b>. Chart container ${esc(m.donorName)}, song list ${esc(m.baseName)}.</p>
+      <p>${c.ok ? "Everything Pocket Encore needs was found." : "Some tools are still missing: songs can be created and edited, but not built until they are installed (Setup, top right)."}</p>
+      <p class="small dim">Settings saved in <span class="mono">${esc(c.file)}</span>. Pocket Encore checks the game every time it starts:
+      add or remove DLC and it switches mode by itself.</p>
+      <div class="actions"><button class="primary" onclick="location.hash='#/new'">Create my first song</button><button onclick="location.hash='#/'">Open the song library</button></div>`;
+  }
+  $("#main").innerHTML = `<div class="onboard">${head}<div class="panel">${body}
+    ${OB.step < 3 ? `<div class="actions obnav">${OB.step ? '<button id="ob_back">Back</button>' : ""}<span class="grow"></span><button class="primary" id="ob_next" ${canNext ? "" : "disabled"}>${next}</button></div>` : ""}</div></div>`;
+  const grab = () => {
+    for (const k of ["iso", "music", "python", "mid2rbu", "at3tool"]) { const el = $("#ob_" + k); if (el) OB.settings[k] = el.value.trim(); }
+  };
+  // Detect again: forget what was typed in and look for the game afresh
+  const recheck = async redetect => { if (redetect) OB.settings = null; else grab(); try { await obCheck(redetect); } catch (e) { toast(e.message, true); } showWelcome(); };
+  if ($("#ob_recheck")) $("#ob_recheck").onclick = () => recheck(false);
+  if ($("#ob_detect")) $("#ob_detect").onclick = () => recheck(true);
+  if ($("#ob_back")) $("#ob_back").onclick = () => { grab(); OB.step--; showWelcome(); };
+  if ($("#ob_next")) $("#ob_next").onclick = async () => {
+    grab();
+    try {
+      await obCheck();
+      if (OB.step === 1 && !OB.check.checks.game.ok) return showWelcome();
+      if (OB.step === 2) {  // finish: write settings.json
+        const r = await api("PUT", "/api/settings", OB.settings);
+        OB.check = { ...r };
+        META = await api("GET", "/api/meta");
+        renderModeBadge();
+      }
+      OB.step++;
+      showWelcome();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+function renderModeBadge() {
+  const el = $("#modeBadge");
+  if (!el || !META.mode) return;
+  const m = META.mode, stale = META.db && META.db.stale;
+  el.className = "badge " + (stale ? "warn" : m.mode === "disc" ? "" : "ok");
+  el.textContent = m.label + (stale ? " · rebuild needed" : "");
+  el.title = `Game mode: ${m.label}. Chart container ${m.donorName}; song list ${m.baseName}.` +
+    (stale ? ` The song database was built for "${META.db.was}": build any song to update it.` : "") + " Checked every time Pocket Encore starts.";
+}
+
 // ---------- setup ----------
 async function showSetup() {
   $("#crumb").innerHTML = `<a href="#/">Songs</a> / Setup`;
@@ -94,8 +206,10 @@ async function showSetup() {
     <p class="small dim">Pocket Encore and its scripts are ours; the pieces below are not, so they are not included. Install each one and set its path here (saved in <span class="mono">${esc(s.file)}</span>).</p>
     <table class="t setup"><tr><th></th><th>Piece</th><th>Found</th><th>Where to get it</th></tr>
       ${row("node", "Node.js (runs Pocket Encore and the scripts)")}${row("python", "Python 3.12 (charting, stem analysis, count-in, mid2rbu)")}${row("packages", "Python packages mido, numpy, miniaudio")}
-      ${row("mid2rbu", "mid2rbu (Rock Band MIDI → .rbu chart)")}${row("at3tool", "at3tool.exe (ATRAC3 encoder for the audio)")}${row("music", "The game's MUSIC folder with your official DLC (donor chart and song list)")}</table></div>
+      ${row("mid2rbu", "mid2rbu (Rock Band MIDI → .rbu chart)")}${row("at3tool", "at3tool.exe (ATRAC3 encoder for the audio)")}${row("game", `Rock Band Unplugged: <span class="badge ${s.mode.mode === "disc" ? "" : "ok"}">${esc(s.mode.label)}</span> <span class="small dim">chart container ${esc(s.mode.donorName)}, song list ${esc(s.mode.baseName)}</span>`)}</table>
+    <p class="small dim">The game mode is checked every time Pocket Encore starts: DLC folders in MUSIC → built on the DLC (all disc and DLC songs stay listed); no DLC → built from the disc image. <a href="#/welcome" onclick="OB.step=0;OB.check=null;OB.settings=null">Run the first-time setup again</a></p></div>
     <div class="panel"><h4>Paths</h4><div class="form" style="grid-template-columns:160px 1fr auto">
+      <label>Disc image (ISO/CSO)</label><input type="text" id="s_iso" value="${esc(s.settings.iso)}"><button onclick="pickInto('#s_iso')">Browse…</button>
       <label>MUSIC folder</label><input type="text" id="s_music" value="${esc(s.settings.music)}"><button onclick="pickInto('#s_music', null, true)">Browse…</button>
       <label>python.exe</label><input type="text" id="s_python" value="${esc(s.settings.python)}"><button onclick="pickInto('#s_python')">Browse…</button>
       <label>at3tool.exe</label><input type="text" id="s_at3tool" value="${esc(s.settings.at3tool)}"><button onclick="pickInto('#s_at3tool')">Browse…</button>
@@ -104,8 +218,8 @@ async function showSetup() {
       <span class="small dim">Python packages: open a console and run <span class="mono">pip install mido numpy miniaudio</span> (with the same python.exe).</span></div></div>`;
   $("#s_save").onclick = async () => {
     try {
-      const r = await api("PUT", "/api/settings", { music: $("#s_music").value, python: $("#s_python").value, at3tool: $("#s_at3tool").value, mid2rbu: $("#s_mid2rbu").value });
-      META.setupOk = r.ok; toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok); showSetup();
+      const r = await api("PUT", "/api/settings", { iso: $("#s_iso").value, music: $("#s_music").value, python: $("#s_python").value, at3tool: $("#s_at3tool").value, mid2rbu: $("#s_mid2rbu").value });
+      META = await api("GET", "/api/meta"); renderModeBadge(); $("#setupLink").classList.toggle("warn", !META.setupOk); toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok); showSetup();
     } catch (e) { toast(e.message, true); }
   };
 }
@@ -519,5 +633,6 @@ function followBuild() {
 (async () => {
   META = await api("GET", "/api/meta");
   $("#setupLink").classList.toggle("warn", !META.setupOk);
+  renderModeBadge();
   route();
 })();

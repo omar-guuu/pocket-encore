@@ -30,7 +30,8 @@
 //                                  (official songs' first notes come after ~3 s); 0 = none. song.json times stay in
 //                                  the original audio's seconds (solos, effects, preview, offset are shifted)
 //   "preview": { "start": 60 },    optional; default = loudest 30 s; false = no preview
-//   "donor": "SHESNOTTHERE",       chart used as the container: official MUSIC folder name or a file path (default SHESNOTTHERE)
+//   "donor": "SHESNOTTHERE",       chart used as the container: official MUSIC folder name or a file path
+//                                  (default from the game mode: SHESNOTTHERE with DLC, a disc chart without; game.js)
 //   "dropSolos": false,            true = remove solo sections (default: keep them, from MIDI note 103)
 //   "pitchedVocals": null,         mid2rbu PitchedVocals; default true for Rock Band MIDIs, false for autochart
 //   "mid2rbu": { "EnablePruning": true, ... }   optional extra [PostProcess] keys
@@ -61,7 +62,18 @@ const TOOLS = path.resolve(__dirname, "..");
 const SCRIPTS = __dirname;
 const SETTINGS = require("./settings.js").load();  // rbu-tools/settings.json: music folder, python, at3tool, mid2rbu
 const PY = SETTINGS.python, AT3TOOL = SETTINGS.at3tool, MID2RBU = SETTINGS.mid2rbu, DEFAULT_MUSIC = SETTINGS.music;
-const DB_FOLDER = "ZZCUSTOMDB", DB_BASE = "YOURENOROCKNROLLFUN";
+const DB_FOLDER = "ZZCUSTOMDB";
+// Chart container and song-list base come from the game mode (game.js): DLC (SHESNOTTHERE + YOURENOROCKNROLLFUN),
+// some DLC (one of its charts + its newest list) or disc only (a disc chart + the disc's list, read from the ISO).
+const game = require("./game.js");
+let GAME = null;
+function gameFiles(music) {
+  if (!GAME) {
+    GAME = game.resolve(music, SETTINGS.iso);
+    console.log(`  game: ${GAME.label} (chart container ${GAME.donorName}, song list ${GAME.baseName})`);
+  }
+  return GAME;
+}
 // JB number = days since 2008-03-07, the same scheme as the official packs (JB000427 = 2009-05-08 ... JB000571 =
 // 2009-09-29). The scanner reads the 6 digits after "JB" and keeps the highest, so today's number is always newer
 // than every official pack and every earlier custom build. Override with --jb <n>.
@@ -401,7 +413,7 @@ function stageChart(S, B, music) {
 
   // "donor": an official folder name in MUSIC, or a path to a BEATMATCH file (e.g. an on-disc chart extracted from the ISO)
   const donor = S.donor && /[\\/]|\.(STR|EDAT)$/i.test(S.donor) ? path.resolve(S._dir, S.donor)
-    : path.join(music, S.donor || "SHESNOTTHERE", "BEATMATCH.STR.EDAT");
+    : S.donor ? path.join(music, S.donor, "BEATMATCH.STR.EDAT") : gameFiles(music).donor;
   if (!fs.existsSync(donor)) throw new Error(`donor chart not found: ${donor}`);
   const args = ["build", donor, rbuPath, path.join(B, "BEATMATCH.STR.EDAT"), "--audio-seconds", audioSeconds.toFixed(3),
     "--atm", path.join(B, `${S.folder}.ATM`)];
@@ -456,7 +468,9 @@ function stageDb(songsDir, music, outRoot, number) {
   console.log(`  ${jsons.length} custom song(s): ${jsons.map(j => path.basename(j, ".json")).join(", ")}`);
   const dbOut = path.join(outRoot, DB_FOLDER);
   fs.rmSync(dbOut, { recursive: true, force: true });
-  node("mkjukebox.js", ["--base", path.join(music, DB_BASE), "--out", dbOut, "--number", String(number), ...jsons], { tail: 2 + jsons.length });
+  node("mkjukebox.js", ["--base", gameFiles(music).base, "--out", dbOut, "--number", String(number), ...jsons], { tail: 2 + jsons.length });
+  // which game mode this database was made for (Pocket Encore says when the mode changed and it needs rebuilding)
+  fs.writeFileSync(path.join(tmp, "mode.json"), JSON.stringify({ mode: GAME.mode, label: GAME.label, base: GAME.baseName, out: dbOut, at: new Date().toISOString() }));
 }
 
 function main() {

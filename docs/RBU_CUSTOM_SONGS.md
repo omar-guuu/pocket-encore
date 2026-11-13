@@ -165,7 +165,8 @@ Our scripts (`rbu-tools\scripts`), in pipeline order:
 | database | `mkjukebox.js` | official list + all customs → `ZZCUSTOMDB\JB<day>.STR.EDAT` + TEXT |
 | editing | `reaperpack.js` | chart + WAVs for REAPER (customs and official references) |
 | checks | `loudness.js`, `chartmap.js`, `stresspack.js` | loudness of decoded tracks, chart memory map, 300-song stress test |
-| config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, python, at3tool, mid2rbu) with defaults; `check()` = the Setup page |
+| config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, disc image, python, at3tool, mid2rbu) with detected defaults; `check()` = Setup and onboarding |
+| config | `game.js`, `iso.js` | finds the game (PPSSPP memory stick, disc image), picks the game mode (Disc + DLC / some DLC / disc only), reads disc files from the ISO/CSO |
 
 ### Pocket Encore: the all-in-one page (since 2026-11-11; named RBU Studio until 2026-11-12)
 Double-click `rbu-tools\pocketencore.cmd` (or `node rbu-tools\pocketencore\server.js --open`), or install it with the installer
@@ -173,7 +174,23 @@ Double-click `rbu-tools\pocketencore.cmd` (or `node rbu-tools\pocketencore\serve
 shortcuts). It opens in its own window (Edge or Chrome in app mode; otherwise the default browser) at
 http://localhost:8642. The server only listens on this PC (127.0.0.1); close the console window or press Ctrl+C to stop it.
 `song.json` stays the single source of truth: the page reads and writes it and runs `mksong.js` for builds.
-- **Setup** (top right): checks Node, Python and its packages, mid2rbu, at3tool and the game's MUSIC folder, with a
+- **First start (onboarding)**: while `rbu-tools\settings.json` does not exist (first launch, or the file was deleted),
+  Pocket Encore opens a welcome and first-time setup instead of the library: 1. Welcome, with the requirement that you
+  need Rock Band Unplugged (the game, or the game + its DLC); 2. Your game: the disc image (ISO/CSO) and the MUSIC
+  folder, detected from PPSSPP (its recent games list and memory stick), with the game mode it implies; it can't go on
+  without the game; 3. Tools (Node, Python + packages, mid2rbu, at3tool) with download links and **Check again**;
+  4. Done, which writes `settings.json`. Nothing is saved before the last step.
+- **Game mode**, checked every time Pocket Encore starts and shown at the top right:
+  - **Disc + DLC** (SHESNOTTHERE and YOURENOROCKNROLLFUN in MUSIC): built on SHESNOTTHERE's chart and
+    YOURENOROCKNROLLFUN's song list; the game lists every disc and DLC song plus yours.
+  - **Disc + some DLC** (other DLC packs only): built on one of your DLC charts and your newest pack's song list, so
+    your DLC songs stay listed.
+  - **Disc only** (no DLC): built on a disc chart (Mr. Brightside) and the disc's song list, read straight from the disc
+    image (cached in `rbu-tools\cache`); the game lists the 55 disc songs plus yours. (FINDINGS §34; not yet
+    tested in game.)
+  - When the mode changes (DLC added or removed), the badge and the library say the song database needs rebuilding:
+    build any song, then copy `ZZCUSTOMDB\` again.
+- **Setup** (top right): checks Node, Python and its packages, mid2rbu, at3tool and the game (disc image and DLC), with a
   download link or command for each missing piece, and lets you set the paths (`rbu-tools\settings.json`). Builds are
   refused until everything is found.
 - **Library**: every `songs\Z*\song.json`, with build state (built / changed since build / not built, from a hash of

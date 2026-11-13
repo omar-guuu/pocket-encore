@@ -13,10 +13,12 @@ For personal use with your own copy of the game and its DLC. No game files are i
    - [Python 3.12](https://www.python.org/downloads/windows/), then `pip install mido numpy miniaudio`
    - [mid2rbu](https://github.com/maodus/mid2rbu) (`git clone` it, e.g. into `rbu-tools\mid2rbu`)
    - `at3tool.exe`, Sony's ATRAC3 encoder (from the PSP SDK), e.g. into `rbu-tools\at3tool`
-   - the game's `MUSIC` folder on your PPSSPP memory stick, with the official DLC `SHESNOTTHERE` (donor chart) and
-     `YOURENOROCKNROLLFUN` (song list)
-2. Double-click `pocketencore.cmd` (or run the installer from `installer\`). Pocket Encore opens in its own window; its **Setup**
-   page shows what is found and where to set the paths (saved in `settings.json`).
+   - **Rock Band Unplugged** (US, ULUS10418): its disc image (ISO or CSO), and its DLC if you have it (in
+     `PSP/GAME/ULUS10418/MUSIC` on the PPSSPP memory stick). With the DLC, songs are built on it; without it, on the
+     disc's own files. Pocket Encore does not include any game files.
+2. Double-click `pocketencore.cmd` (or run the installer from `installer\`). Pocket Encore opens in its own window. The
+   first time, a welcome and setup finds your game and the tools (saved in `settings.json`; delete it to see the
+   setup again); later, **Setup** (top right) changes the paths.
 3. **New song** → pick the stems (WAV/MP3/FLAC/OGG) and optionally a MIDI → **Build**. Copy the song folder and
    `ZZCUSTOMDB\` from `out\MUSIC` to the memory stick's `MUSIC` folder.
 
