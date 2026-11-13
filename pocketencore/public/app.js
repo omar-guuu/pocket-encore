@@ -153,7 +153,7 @@ function checksHtml(c) {
 async function showDetails(folder) {
   const s = CUR, S = s.song, T = S.tiers || {}, src = S.stemSource || {};
   const tierSel = k => `<select data-tier="${k}">${opt([0, 1, 2, 3, 4, 5, 6].map(n => [n, n === 0 ? "0 (none)" : starStr(n).slice(0, n) + "  " + n]), T[k] ?? 0)}</select>`;
-  const stemLines = s.stems.map(st => `<div class="stemrow"><label>${st.part} ${tip(st.part)}</label><input type="text" data-stem="${st.part}" value="${esc(st.source || "")}" placeholder="(none)">
+  const stemLines = s.stems.map(st => `<div class="stemrow"><label>${st.part} ${tip(st.part)}</label><input type="text" data-stem="${st.part}" value="${esc(st.source || "")}" placeholder="${esc(st.part === "fill" ? PH.stem("fill") : st.part[0].toUpperCase() + st.part.slice(1) + " stem file: Browse…")}">
       <button onclick="pickInto('[data-stem=${st.part}]','${folder}')">Browse…</button><div class="stemstat">${stemLine(st)}</div></div>`).join("");
   const bleed = s.bleed && s.bleed.length ? `<div class="small warnline" style="margin-top:6px">Possible bleed (stems that rise and fall together): ${s.bleed.map(b => `${b.a} ↔ ${b.b} (${(b.corr * 100).toFixed(0)}%)`).join(", ")}. Normal for a real band playing together; with AI stems it usually means one instrument leaked into another's track.</div>` : "";
   const B = s.built;
@@ -163,10 +163,10 @@ async function showDetails(folder) {
   const au = s.audio;
   $("#tab").innerHTML = `<div class="grid2"><div>
     <div class="panel"><h4>Song</h4><div class="form">
-      <label>Title</label><input type="text" id="f_title" value="${esc(S.title)}">
-      <label>Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}">
-      <label>Album</label><input type="text" id="f_album" value="${esc(S.album)}">
-      <label>Year</label><input type="number" id="f_year" value="${esc(S.year)}">
+      <label>Title</label><input type="text" id="f_title" value="${esc(S.title)}" placeholder="${esc(PH.title)}">
+      <label>Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}" placeholder="${esc(PH.artist)}">
+      <label>Album</label><input type="text" id="f_album" value="${esc(S.album)}" placeholder="${esc(PH.album)}">
+      <label>Year</label><input type="number" id="f_year" value="${esc(S.year)}" placeholder="${esc(PH.year)}" style="width:100%">
       <label>Genre</label><select id="f_genre">${opt(META.genres.map(g => [g, g]), S.genre)}</select>
       <label>Lead vocals</label><select id="f_vocals">${opt([["", "(not set)"], [1, "male"], [2, "female"]], S.vocals)}</select>
     </div></div>
@@ -185,13 +185,13 @@ async function showDetails(folder) {
   </div><div>
     <div class="panel"><h4>Stems</h4>${stemLines}${bleed}
       <div class="form" style="margin-top:10px">
-        <label>Source</label><select id="f_srcType">${opt([["unknown", "unknown"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["ai", "AI separation"]], src.type || "unknown")}</select>
-        <label>Tool</label><input type="text" id="f_srcTool" value="${esc(src.tool || "")}" placeholder="e.g. fadr, demucs">
+        <label>Stems origin</label><select id="f_srcType">${opt([["unknown", "unknown"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["ai", "AI separation"]], src.type || "unknown")}</select>
+        <label>Stem tool</label><input type="text" id="f_srcTool" value="${esc(src.tool || "")}" placeholder="${esc(PH.tool)}">
         <label>Quality</label><select id="f_srcQuality">${opt([["", "(not rated)"], ["low", "low"], ["medium", "medium"], ["high", "high"]], src.quality || "")}</select>
         <label>Notes</label><input type="text" id="f_srcNotes" value="${esc(src.notes || "")}" placeholder="bleed, missing parts…">
       </div></div>
     <div class="panel"><h4>Chart</h4><div class="form">
-      <label>Source MIDI</label><span class="inline"><input type="text" id="f_midi" value="${esc(S.midi || "")}" placeholder="(none: charted from the stems)" style="flex:1"><button onclick="pickInto('#f_midi','${folder}')">Browse…</button></span>
+      <label>Source MIDI</label><span class="inline"><input type="text" id="f_midi" value="${esc(S.midi || "")}" placeholder="${esc(PH.midi)}" style="flex:1"><button onclick="pickInto('#f_midi','${folder}')">Browse…</button></span>
       <label>Gems</label><span>${s.chartSource === "edited" ? `edited in Pocket Encore (<span class="mono">${esc(S.chart)}</span>) <button class="danger" onclick="revertChart('${folder}')">Back to automatic chart</button><div class="warnline">The edited chart is in game time: changing the lead-in, the count-in or the stems' start moves the audio but not the gems.</div>` : "automatic (autochart from " + (S.midi ? "the MIDI" : "the stems") + ")"}</span>
       <label>Audio</label><span class="small">${au ? `length ${fmtTime(au.audioSeconds)}, lead-in ${au.lead ?? 0} s, music starts at ${au.musicStart ?? "–"} s` : "not built"}</span>
     </div></div>
@@ -362,37 +362,67 @@ function setupDrop() {
   zone.dataset.html = zone.innerHTML;
 }
 
+// Placeholders shared by the New song form and the Details tab (they say what each field is for).
+const PH = {
+  folder: "e.g. ZMYSONG: Z + capital letters/digits, the song's folder on the memory stick",
+  title: "Song name, as shown in the game's song list",
+  artist: "Band or artist name",
+  album: "Album the song is from",
+  year: "Release year, e.g. 1999 (sets the song's era)",
+  midi: "None: will auto-generate chart from stems",
+  tool: "eg: Fadr, Moises.ai, Lalal.ai",
+  stem: k => k === "fill" ? "Backing: everything else in the song (optional)" : `${k[0].toUpperCase() + k.slice(1)} stem (required): drop a file or Browse…`,
+};
+const REQUIRED_STEMS = ["drums", "bass", "guitar", "vocals"];
 function showNew() {
   $("#crumb").innerHTML = `<a href="#/">Songs</a> / New song`;
+  const thisYear = new Date().getFullYear();
+  const req = ' <span class="req">*</span>';
+  const stemRow = k => `<div class="stemrow" data-slot="${k}"><label>${k}${REQUIRED_STEMS.includes(k) ? req : ""} ${tip(k)}</label>`
+    + `<input type="text" id="n_stem_${k}" placeholder="${esc(PH.stem(k))}"${REQUIRED_STEMS.includes(k) ? ` data-req="${k} stem"` : ""}>`
+    + `<button onclick="pickInto('#n_stem_${k}')">Browse…</button></div>`;
   $("#main").innerHTML = `<div class="grid2"><div class="panel"><h4>New song</h4><div class="form">
-      <label>Folder</label><span class="inline"><input type="text" id="n_folder" placeholder="ZMYSONG" style="text-transform:uppercase"><span class="small dim">Z + capital letters/digits</span></span>
-      <label>Title</label><input type="text" id="n_title">
-      <label>Artist</label><input type="text" id="n_artist">
-      <label>Album</label><input type="text" id="n_album">
-      <label>Year</label><input type="number" id="n_year">
-      <label>Genre</label><select id="n_genre">${opt(META.genres.map(g => [g, g]), "ROCK")}</select>
-      <label>Lead vocals</label><select id="n_vocals">${opt([[1, "male"], [2, "female"]], 1)}</select>
-    </div></div>
+      <label>Folder${req}</label><input type="text" id="n_folder" placeholder="${esc(PH.folder)}" style="text-transform:uppercase" data-req="Folder">
+      <label>Title${req}</label><input type="text" id="n_title" placeholder="${esc(PH.title)}" data-req="Title">
+      <label>Artist${req}</label><input type="text" id="n_artist" placeholder="${esc(PH.artist)}" data-req="Artist">
+      <label>Album${req}</label><input type="text" id="n_album" placeholder="${esc(PH.album)}" data-req="Album">
+      <label>Year${req}</label><input type="number" id="n_year" min="1900" max="${thisYear}" placeholder="${esc(PH.year)}" data-req="Year" style="width:100%">
+      <label>Genre${req}</label><select id="n_genre" data-req="Genre"><option value="">Choose the song list genre…</option>${opt(META.genres.map(g => [g, g]), "")}</select>
+      <label>Lead vocals${req}</label><select id="n_vocals" data-req="Lead vocals"><option value="">Choose the singer shown in game…</option>${opt([[1, "male"], [2, "female"]], "")}</select>
+    </div><p class="small dim"><span class="req">*</span> required</p></div>
     <div class="panel" id="dropPanel"><h4>Audio and chart</h4>
       <div class="dropzone" id="dropzone">Drop up to ${MAX_DROP} files here (stems and/or a MIDI). Each goes to the instrument its name mentions
         (drums, bass, guitar, vocals, backing…); the rest fill the empty slots in the order given.<br>
         <span class="small dim">Audio: ${META.audioExt.map(e => e.slice(1).toUpperCase()).join(", ")} (WAV: 16/24/32-bit or float, any rate, mono or stereo) · MIDI: ${META.midiExt.join(" ")}</span></div>
-      ${STEM_SLOTS.map(k => `<div class="stemrow" data-slot="${k}"><label>${k} ${tip(k)}</label><input type="text" id="n_stem_${k}" placeholder="${k === "fill" ? "backing / everything else (optional)" : "(none)"}"><button onclick="pickInto('#n_stem_${k}')">Browse…</button></div>`).join("")}
+      ${STEM_SLOTS.map(stemRow).join("")}
       <div class="form" style="margin-top:10px">
-        <label>MIDI (optional)</label><span class="inline"><input type="text" id="n_midi" placeholder="none: chart from the stems" style="flex:1"><button onclick="pickInto('#n_midi')">Browse…</button></span>
-        <label>Stems from</label><select id="n_srcType">${opt([["ai", "AI separation"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["unknown", "unknown"]], "ai")}</select>
-        <label>Tool</label><input type="text" id="n_srcTool" placeholder="e.g. fadr">
+        <label>MIDI</label><span class="inline"><input type="text" id="n_midi" placeholder="${esc(PH.midi)}" style="flex:1"><button onclick="pickInto('#n_midi')">Browse…</button></span>
+        <label>Stems origin</label><select id="n_srcType">${opt([["ai", "AI separation"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["unknown", "unknown"]], "ai")}</select>
+        <label>Stem tool</label><input type="text" id="n_srcTool" placeholder="${esc(PH.tool)}">
         <label>Quality</label><select id="n_srcQuality">${opt([["", "(not rated)"], ["low", "low"], ["medium", "medium"], ["high", "high"]], "")}</select>
         <label>Count-in</label><label class="inline"><input type="checkbox" id="n_countIn"> 4 stick clicks before the music</label>
       </div>
-      <p class="small dim">Stems: WAV, MP3, FLAC or OGG. Without a MIDI the chart is made from the stems (needs at least drums). Tiers start at 2; set them on the Details tab.</p>
-      <div class="actions"><button class="primary" id="n_create">Create</button><label class="small"><input type="checkbox" id="n_build" checked> and build now</label></div>
+      <p class="small dim">Without a MIDI the chart is made from the stems. Tiers start at 2; set them on the Details tab.</p>
+      <div class="actions"><button class="primary" id="n_create">Create</button><label class="small"><input type="checkbox" id="n_build" checked> and build now</label><span id="n_missing" class="small warnline"></span></div>
     </div></div>`;
   setupDrop();
+  // a field marked missing is cleared as soon as it gets a value (typed, picked, dropped)
+  document.querySelectorAll("[data-req]").forEach(el => ["input", "change"].forEach(t => el.addEventListener(t, () => { if (el.value.trim()) el.classList.remove("invalid"); if (!document.querySelector(".invalid")) $("#n_missing").textContent = ""; })));
   $("#n_create").onclick = async () => {
     const v = id => $(id).value.trim();
     const folder = v("#n_folder").toUpperCase();
-    const S = { folder, title: v("#n_title"), artist: v("#n_artist"), album: v("#n_album") || undefined, year: v("#n_year") ? Number(v("#n_year")) : undefined,
+    const bad = [];
+    document.querySelectorAll("[data-req]").forEach(el => { const ok = !!el.value.trim(); el.classList.toggle("invalid", !ok); if (!ok) bad.push(el.dataset.req); });
+    if (folder && !/^Z[A-Z0-9_]{1,30}$/.test(folder)) { $("#n_folder").classList.add("invalid"); bad.push("Folder (Z + capital letters/digits, e.g. ZMYSONG)"); }
+    const year = Number(v("#n_year"));
+    if (v("#n_year") && !(Number.isInteger(year) && year >= 1900 && year <= thisYear)) { $("#n_year").classList.add("invalid"); bad.push(`Year (1900–${thisYear})`); }
+    if (bad.length) {
+      $("#n_missing").textContent = "Missing or invalid: " + bad.join(", ");
+      document.querySelector(".invalid")?.focus();
+      return toast("Fill in the required fields first: " + bad.join(", "), true);
+    }
+    $("#n_missing").textContent = "";
+    const S = { folder, title: v("#n_title"), artist: v("#n_artist"), album: v("#n_album"), year,
       genre: v("#n_genre"), tiers: { drums: 2, guitar: 2, bass: 2, vocals: 2, band: 2 }, vocals: Number(v("#n_vocals")), stems: {} };
     for (const k of STEM_SLOTS) if (v("#n_stem_" + k)) S.stems[k] = v("#n_stem_" + k);
     if (v("#n_midi")) S.midi = v("#n_midi");
@@ -401,8 +431,6 @@ function showNew() {
     if (v("#n_srcQuality")) S.stemSource.quality = v("#n_srcQuality");
     if ($("#n_countIn").checked) S.countIn = true;
     try {
-      if (!S.title || !S.artist) throw new Error("title and artist are needed");
-      if (!Object.keys(S.stems).length) throw new Error("pick at least one stem");
       await api("POST", "/api/new", S);
       location.hash = `#/song/${folder}`;
       if ($("#n_build").checked) runBuild(folder, "audio");

@@ -417,6 +417,17 @@ async function route(req, res) {
     const S = await body(req);
     if (!FOLDER_RE.test(S.folder || "")) throw httpError(400, "folder: Z + capital letters/digits, e.g. ZMYSONG");
     if (fs.existsSync(path.join(SONGS, S.folder))) throw httpError(409, "that folder already exists");
+    // required on a new song: every detail and the four instrument stems (backing is optional)
+    const missing = ["title", "artist", "album", "genre"].filter(k => !String(S[k] || "").trim());
+    if (!(Number.isInteger(S.year) && S.year >= 1900 && S.year <= new Date().getFullYear())) missing.push("year");
+    if (S.vocals !== 1 && S.vocals !== 2) missing.push("lead vocals");
+    for (const k of ["drums", "bass", "guitar", "vocals"]) {
+      const f = S.stems && S.stems[k];
+      if (!f) missing.push(`${k} stem`);
+      else if (!fs.existsSync(path.resolve(f))) throw httpError(400, `${k} stem not found: ${f}`);
+    }
+    if (S.midi && !fs.existsSync(path.resolve(S.midi))) throw httpError(400, `MIDI not found: ${S.midi}`);
+    if (missing.length) throw httpError(400, "missing: " + missing.join(", "));
     const dir = songDir(S.folder);
     // dropped files sit in incoming/: move them into the song's own stems/ folder
     const own = f => {

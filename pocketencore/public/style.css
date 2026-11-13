@@ -120,3 +120,7 @@ button.small { padding: 1px 7px; font-size: 11px; }
 .tip { position: relative; display: inline-block; color: var(--dim); cursor: help; font-size: 11px; }
 .tip:hover::after { content: attr(data-tip); position: absolute; left: 0; top: 18px; z-index: 40; white-space: pre-wrap; width: max-content; max-width: 280px;
   background: #0e1014; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font-size: 12px; }
+.req { color: var(--bad); }
+input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
+.req { color: var(--bad); }
+input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
