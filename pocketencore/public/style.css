@@ -56,6 +56,10 @@ body.editing main { padding: 8px 12px; }
 .form { display: grid; grid-template-columns: 130px 1fr; gap: 6px 10px; align-items: center; }
 .form label { color: var(--dim); }
 .form input[type=text] { width: 100%; }
+.form .fieldhelp { margin-top: -4px; }  /* help text under a field (a row with an empty label) */
+.panel.empty { text-align: center; padding: 28px 16px; }
+.panel.empty p { max-width: 520px; margin: 8px auto 14px; }
+.panel.empty .actions { justify-content: center; }
 .inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 table.t { border-collapse: collapse; width: 100%; font-size: 12px; }
 table.t th, table.t td { border-bottom: 1px solid var(--line); padding: 3px 6px; text-align: right; }
@@ -89,6 +93,18 @@ table.t th { color: var(--dim); font-weight: 600; }
 .mixer .ch { display: flex; gap: 4px; align-items: center; }
 .mixer button { padding: 0 6px; font-size: 11px; }
 .mixer button.on { background: #7a4f10; }
+/* mute = purple, solo = red: the letter in that colour when off, filled when on */
+.mixer button[data-m] { color: #b48cff; border-color: #5b3f8f; }
+.mixer button[data-m].on { background: #7c4ddb; border-color: #9a72f0; color: #fff; }
+.mixer button[data-s] { color: #ff6b6b; border-color: #8a3434; }
+.mixer button[data-s].on { background: #d23c3c; border-color: #f06060; color: #fff; }
+#loopBtn.on { background: #1f4f86; border-color: #5aaaff; color: #fff; }
+.shapes { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 12px; min-height: 36px; }
+.shapes button.shape { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; cursor: grab; }
+.shapes button.shape span { font-size: 10px; color: var(--dim); }
+.shapes button.shape.on { border-color: #fff; background: #2c3442; }
+.shapes button.shape:disabled { opacity: .35; cursor: not-allowed; }
+.shapes svg { display: block; }
 .mixer input[type=range] { width: 70px; }
 .canvaswrap { position: relative; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #111318; }
 canvas { display: block; }

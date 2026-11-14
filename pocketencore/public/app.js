@@ -21,15 +21,79 @@ function toast(msg, bad) {
   document.body.appendChild(d);
   setTimeout(() => d.remove(), bad ? 6000 : 2500);
 }
+// error toast with context: "Couldn't save the pack: <server message>". Errors thrown with .user = true are already
+// written for the user and are shown as they are.
+const fail = ctx => e => toast(e && e.user ? e.message : `${ctx}: ${e && e.message || e}`, true);
+const userError = msg => Object.assign(new Error(msg), { user: true });
+// a confirmation in the app's own modal, with buttons named after their action (not OK/Cancel).
+// buttons: [{ label, value, kind: "primary" | "danger" }]; resolves to the clicked value, or null on Escape/backdrop.
+let askPending = null;  // the open ask()'s close function: a new ask (e.g. the Back button pressed meanwhile) closes it as "no"
+function ask(title, body, buttons) {
+  if (askPending) askPending(null);
+  return new Promise(resolve => {
+    const modal = $("#modal");
+    $("#modalBox").innerHTML = `<b>${esc(title)}</b>${body ? `<p>${esc(body)}</p>` : ""}<div class="actions" style="margin-top:12px">`
+      + buttons.map((b, i) => `<button data-i="${i}"${b.kind ? ` class="${b.kind}"` : ""}>${esc(b.label)}</button>`).join("") + "</div>";
+    const done = v => { askPending = null; modal.classList.add("hidden"); modal.onclick = null; window.removeEventListener("keydown", onKey, true); resolve(v); };
+    askPending = done;
+    const onKey = e => { if (e.key === "Escape") { e.stopPropagation(); done(null); } };
+    $("#modalBox").querySelectorAll("button[data-i]").forEach(b => b.onclick = () => done(buttons[b.dataset.i].value));
+    modal.onclick = e => { if (e.target === modal) done(null); };
+    window.addEventListener("keydown", onKey, true);
+    modal.classList.remove("hidden");
+    ($("#modalBox .primary") || $("#modalBox button")).focus();
+  });
+}
+
+// ---------- unsaved changes ----------
+// The page on screen registers what leaving it would lose: GUARD = { what, dirty(), save() }. save() resolves to true
+// when saved (or throws); a page without save (New song) can only be discarded. route() asks before leaving, runBuild()
+// before building, and closing the window warns. The chart editor reports through window.editorDirty / editorSave.
+let GUARD = null;
+const formState = root => [...root.querySelectorAll("input, select, textarea")].map(e => e.type === "checkbox" ? e.checked : e.value).join("\u0001");
+// guard every field under root: dirty when any differs from when the page opened (or was last saved)
+function guardForm(root, what, save) {
+  let base = formState(root);
+  GUARD = { what, save, dirty: () => root.isConnected && formState(root) !== base, saved: () => { base = formState(root); } };
+}
+const markSaved = () => { if (GUARD && GUARD.saved) GUARD.saved(); };
+function pageGuard() {
+  if (window.editorDirty && window.editorDirty()) return { what: "the chart", save: window.editorSave };
+  return GUARD && GUARD.dirty() ? GUARD : null;
+}
+async function saveGuard(g) {
+  try { return !!(await g.save()); } catch (e) { fail(`Couldn't save ${g.what}`)(e); return false; }
+}
+// true when it is fine to leave the page: saved, or the changes discarded
+async function confirmLeave(g) {
+  if (!g.save) return await ask("Leave without creating the song?", "What you've filled in will be lost.", [
+    { label: "Discard new song", value: "discard", kind: "danger" },
+    { label: "Keep editing", value: null }]) === "discard";
+  const a = await ask(`Leave without saving ${g.what}?`, "Your changes are only kept if you save them.", [
+    { label: "Save and leave", value: "save", kind: "primary" },
+    { label: "Discard changes", value: "discard", kind: "danger" },
+    { label: "Keep editing", value: null }]);
+  return a === "discard" || (a === "save" && await saveGuard(g));
+}
 const fmtN = n => n == null ? "–" : Number(n).toLocaleString("en-US");
 const starStr = n => "★".repeat(n) + "☆".repeat(Math.max(0, 6 - n));
 const fmtTime = s => { if (s == null || !isFinite(s)) return "–"; const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`; };
 
 // ---------- routing ----------
-let skipRoute = false, lastHash = location.hash;
+let skipRoute = false, leaving = false, lastHash = location.hash;
 async function route(ev) {
   if (skipRoute) { skipRoute = false; return; }
-  if (ev && window.editorDirty && window.editorDirty() && !confirm("Leave the editor without saving?")) { skipRoute = true; location.hash = lastHash; return; }
+  const g = ev && !leaving ? pageGuard() : null;
+  if (g) {
+    // stay on the page while asking; go on to the new one only after Save and leave / Discard changes
+    const target = location.hash;
+    skipRoute = true; location.hash = lastHash;
+    if (!(await confirmLeave(g))) return;
+    leaving = true; location.hash = target;
+    return;
+  }
+  leaving = false;
+  GUARD = null;
   lastHash = location.hash;
   if (window.editorClose) window.editorClose();
   document.body.classList.remove("editing");
@@ -45,10 +109,10 @@ async function route(ev) {
     else if (h[0] === "help") showHelp(h[1]);
     else if (h[0] === "pack" && h[1]) await showPackEdit(h[1]);
     else await showLibrary();
-  } catch (e) { $("#main").innerHTML = `<div class="panel">Error: ${esc(e.message)}</div>`; }
+  } catch (e) { $("#main").innerHTML = `<div class="panel">Couldn't load this page: ${esc(e.message)}. Try again, or restart Pocket Encore if it keeps happening.</div>`; }
 }
 window.addEventListener("hashchange", route);
-window.addEventListener("beforeunload", e => { if (window.editorDirty && window.editorDirty()) { e.preventDefault(); e.returnValue = ""; } });
+window.addEventListener("beforeunload", e => { if (pageGuard()) { e.preventDefault(); e.returnValue = ""; } });
 
 // ---------- library ----------
 function qualityBadge(S) {
@@ -65,7 +129,7 @@ async function showLibrary() {
   const list = await api("GET", "/api/songs");
   const sort = localStorage.libSort || "folder";
   list.sort((a, b) => sort === "title" ? String(a.song?.title).localeCompare(String(b.song?.title)) : sort === "changed" ? (b.builtAt || 0) - (a.builtAt || 0) : a.folder.localeCompare(b.folder));
-  const dbNote = META.db && META.db.stale ? `<div class="panel warnline">The game mode changed to <b>${esc(META.mode.label)}</b> since the song database was built (for "${esc(META.db.was)}"). Build any song to update the database, then copy ZZCUSTOMDB to the memory stick again.</div>` : "";
+  const dbNote = META.db && META.db.stale ? `<div class="panel warnline">The game mode changed to <b>${esc(META.mode.label)}</b> since the song database was built (for "${esc(META.db.was)}"). Build any song to update it, then copy the song database (<span class="mono">ZZCUSTOMDB</span>) to the memory stick again.</div>` : "";
   const setupNote = META.setupOk ? "" : `<div class="panel warnline">Setup is incomplete: builds will fail until the missing pieces are installed. <a href="#/setup">Open Setup</a>.</div>`;
   $("#main").innerHTML = dbNote + setupNote + `
     <div class="libbar"><button class="primary" onclick="location.hash='#/new'">+ New song</button>
@@ -74,6 +138,10 @@ async function showLibrary() {
       <button onclick="openFolder('', 'out')" title="The built songs, ready to copy to the memory stick">Open output folder</button>
       <button onclick="location.hash='#/packs'" title="Sets of songs with their own song database, to switch on the memory stick">Packs</button>
       <span class="grow"></span><span class="dim">${list.length} songs in rbu-tools/songs</span></div>
+    ${list.length ? "" : `<div class="panel empty"><h3>No songs yet</h3>
+      <p>Pick a song's stems (and a MIDI if you have one), and Pocket Encore makes the audio, chart and song database the game needs.</p>
+      <div class="actions"><button class="primary" onclick="location.hash='#/new'">+ New song</button></div></div>`}
+    <div id="noMatch" class="panel dim hidden"></div>
     <div class="cards">${list.map(s => {
       if (s.error) return `<div class="card"><h3>${esc(s.folder)}</h3><div class="sub" style="color:var(--bad)">${esc(s.error)}</div></div>`;
       const S = s.song, ex = s.built && s.built[3];
@@ -85,12 +153,13 @@ async function showLibrary() {
     }).join("")}</div>`;
   $("#sort").value = sort;
   $("#sort").onchange = e => { localStorage.libSort = e.target.value; showLibrary(); };
-  const filt = () => { const q = $("#filter").value.toLowerCase(); localStorage.libFilter = q; document.querySelectorAll(".card[data-q]").forEach(c => c.classList.toggle("hidden", !c.dataset.q.includes(q))); };
+  const filt = () => { const q = $("#filter").value.toLowerCase(); localStorage.libFilter = q; let shown = 0; document.querySelectorAll(".card[data-q]").forEach(c => { const hit = c.dataset.q.includes(q); c.classList.toggle("hidden", !hit); shown += hit; });
+    const nm = $("#noMatch"); nm.textContent = `No songs match "${$("#filter").value}".`; nm.classList.toggle("hidden", !q || shown > 0 || !list.length); };
   $("#filter").oninput = filt; filt();
   document.querySelectorAll(".card[data-f]").forEach(c => c.onclick = () => location.hash = `#/song/${c.dataset.f}`);
 }
 async function openFolder(folder, what) {
-  try { await api("POST", `/api/open/${folder || "ZNONE"}?what=${what}`); } catch (e) { toast(e.message, true); }
+  try { await api("POST", `/api/open/${folder || "ZNONE"}?what=${what}`); } catch (e) { fail("Couldn't open the folder")(e); }
 }
 
 // ---------- first-time setup (onboarding) ----------
@@ -161,7 +230,7 @@ async function showWelcome() {
     else next = "Finish";
   } else {
     body = `<h2>All set</h2>
-      <p>Game: <b>${esc(m.label)}</b>. Chart container ${esc(m.donorName)}, song list ${esc(m.baseName)}.</p>
+      <p>Game: <b>${esc(m.label)}</b>. Songs are built on ${esc(m.donorName)}.</p>
       <p>${c.ok ? "Everything Pocket Encore needs was found." : "Some tools are still missing: songs can be created and edited, but not built until they are installed (Setup, top right)."}</p>
       <p class="small dim">Settings saved in <span class="mono">${esc(c.file)}</span>. Pocket Encore checks the game every time it starts:
       add or remove DLC and it switches mode by itself.</p>
@@ -173,7 +242,7 @@ async function showWelcome() {
     for (const k of ["iso", "music", "python", "mid2rbu", "at3tool"]) { const el = $("#ob_" + k); if (el) OB.settings[k] = el.value.trim(); }
   };
   // Detect again: forget what was typed in and look for the game afresh
-  const recheck = async redetect => { if (redetect) OB.settings = null; else grab(); try { await obCheck(redetect); } catch (e) { toast(e.message, true); } showWelcome(); };
+  const recheck = async redetect => { if (redetect) OB.settings = null; else grab(); try { await obCheck(redetect); } catch (e) { fail("Couldn't check the setup")(e); } showWelcome(); };
   if ($("#ob_recheck")) $("#ob_recheck").onclick = () => recheck(false);
   if ($("#ob_detect")) $("#ob_detect").onclick = () => recheck(true);
   if ($("#ob_back")) $("#ob_back").onclick = () => { grab(); OB.step--; showWelcome(); };
@@ -190,7 +259,7 @@ async function showWelcome() {
       }
       OB.step++;
       showWelcome();
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { fail("Couldn't save the setup")(e); }
   };
 }
 function renderModeBadge() {
@@ -199,7 +268,7 @@ function renderModeBadge() {
   const m = META.mode, stale = META.db && META.db.stale;
   el.className = "badge " + (stale ? "warn" : m.mode === "disc" ? "" : "ok");
   el.textContent = m.label + (stale ? " · rebuild needed" : "");
-  el.title = `Game mode: ${m.label}. Chart container ${m.donorName}; song list ${m.baseName}.` +
+  el.title = `Game: ${m.label}. Songs are built on ${m.donorName}.` +
     (stale ? ` The song database was built for "${META.db.was}": build any song to update it.` : "") + " Checked every time Pocket Encore starts.";
 }
 
@@ -222,12 +291,14 @@ async function showSetup() {
       <label>mid2rbu.py</label><input type="text" id="s_mid2rbu" value="${esc(s.settings.mid2rbu)}"><button onclick="pickInto('#s_mid2rbu')">Browse…</button>
     </div><div class="actions" style="margin-top:10px"><button class="primary" id="s_save">Save and check again</button>
       <span class="small dim">Python packages: open a console and run <span class="mono">pip install mido numpy miniaudio</span> (with the same python.exe).</span></div></div>`;
-  $("#s_save").onclick = async () => {
-    try {
-      const r = await api("PUT", "/api/settings", { iso: $("#s_iso").value, music: $("#s_music").value, python: $("#s_python").value, at3tool: $("#s_at3tool").value, mid2rbu: $("#s_mid2rbu").value });
-      META = await api("GET", "/api/meta"); renderModeBadge(); $("#setupLink").classList.toggle("warn", !META.setupOk); toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok); showSetup();
-    } catch (e) { toast(e.message, true); }
+  const saveSetup = async () => {
+    const r = await api("PUT", "/api/settings", { iso: $("#s_iso").value, music: $("#s_music").value, python: $("#s_python").value, at3tool: $("#s_at3tool").value, mid2rbu: $("#s_mid2rbu").value });
+    markSaved();
+    META = await api("GET", "/api/meta"); renderModeBadge(); $("#setupLink").classList.toggle("warn", !META.setupOk); toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok);
+    return true;
   };
+  $("#s_save").onclick = () => saveSetup().then(() => showSetup(), fail("Couldn't save the setup"));
+  guardForm($("#main"), "the Setup paths", saveSetup);
 }
 
 // ---------- packs: sets of songs with their own song database, to switch on the memory stick ----------
@@ -238,6 +309,7 @@ function packState(p) {
   if (!p.built) return { cls: "bad", text: "not built" };
   const same = p.built.folders && p.built.folders.length === p.songs.length && p.built.folders.every(x => p.songs.includes(x.folder));
   if (!same || p.outdated.length) return { cls: "warn", text: "changed since build" };
+  if (p.renamed) return { cls: "warn", text: "renamed since build" };
   return { cls: "ok", text: "built" };
 }
 async function showPacks() {
@@ -256,6 +328,7 @@ async function showPacks() {
         <div class="row"><span class="badge ${st.cls}">${st.text}</span><span class="badge">${p.songs.length} song${p.songs.length === 1 ? "" : "s"}</span><span class="badge">${p.mb} MB</span>
           ${p.songs.length > PK.capacity ? `<span class="badge bad">over ${PK.capacity}</span>` : ""}${p.missing.length ? `<span class="badge bad">${p.missing.length} missing</span>` : ""}</div>
         <div class="row small dim">${p.built ? `built ${esc(fmtDate(p.built.at))} · ${esc(p.built.jb)} · ${esc(p.built.mode)}` : "never built"}${p.outdated.length ? ` · ${p.outdated.length} song${p.outdated.length > 1 ? "s" : ""} to rebuild` : ""}</div>
+        ${p.renamed ? `<div class="row small warnline">Its folder in out\\PACKS is still named "${esc(p.built.name)}": build the pack again to rename it.</div>` : ""}
         <div class="actions" style="margin-top:8px"><button data-a="edit">Edit</button><button class="primary" data-a="build" ${p.songs.length ? "" : "disabled"}>Build pack</button>
           <button data-a="open" ${p.built ? "" : "disabled"}>Open folder</button><span class="grow"></span><button class="danger" data-a="del">Delete</button></div></div>`; }).join("")}</div>`
       : `<div class="panel dim">No packs yet. A pack groups songs (for example by genre) so you can switch what the game lists without rebuilding them.</div>`}`;
@@ -268,14 +341,15 @@ async function showPacks() {
       else if (a === "build") await buildPack(id);
       else if (a === "open") await api("POST", `/api/packopen/${id}`);
       else if (a === "del") {
-        if (!confirm(`Delete the pack "${p.display}"? Its songs stay; only the pack${p.built ? " and its built folder" : ""} go.`)) return;
+        const keep = p.built ? "Its songs stay; only the pack and its built folder are deleted." : "Its songs stay; only the pack is deleted.";
+        if (await ask(`Delete the pack "${p.display}"?`, keep, [{ label: "Delete pack", value: true, kind: "danger" }, { label: "Keep pack", value: null }]) !== true) return;
         await savePacks(PK.packs.filter(x => x.id !== id)); showPacks(); toast("Pack deleted");
       }
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { fail({ open: "Couldn't open the pack folder", del: "Couldn't delete the pack" }[a] || "Couldn't update the pack")(err); }
   });
 }
 async function buildPack(id) {
-  try { await api("POST", `/api/packbuild/${id}`); } catch (e) { toast(e.message, true); return; }
+  try { await api("POST", `/api/packbuild/${id}`); } catch (e) { fail("Pack build couldn't start")(e); return; }
   showBuildPanel(true);
   followBuild();
 }
@@ -311,25 +385,38 @@ async function showPackEdit(id) {
   $("#pk_genre").onchange = e => { const g = e.target.value; if (!g) return; songs.filter(s => s.genre === g).forEach(s => sel.add(s.folder)); e.target.value = ""; sync(); count(); toast(`Added the ${g} songs`); };
   $("#pk_all").onclick = () => { document.querySelectorAll(".pktable tr[data-f]:not(.hidden)").forEach(tr => sel.add(tr.dataset.f)); sync(); count(); };
   $("#pk_none").onclick = () => { sel.clear(); sync(); count(); };
-  $("#pk_cancel").onclick = () => { location.hash = "#/packs"; };
-  const save = async build => {
+  // Cancel is an explicit "discard": no question
+  $("#pk_cancel").onclick = () => { GUARD = null; location.hash = "#/packs"; };
+  // stay = called from the leave dialog, which goes on to the page that was clicked; true when saved
+  const save = async (build, stay) => {
     const name = $("#pk_name").value.trim();
-    if (!sel.size) return toast("Pick at least one song", true);
-    if (sel.size > PK.capacity) return toast(`The game holds ${PK.capacity} custom songs in this mode; this pack has ${sel.size}`, true);
-    if (name && PK.packs.some(x => x.id !== p.id && (x.name || "").toLowerCase() === name.toLowerCase())) return toast("Another pack has that name", true);
+    const no = msg => { toast(msg, true); return false; };
+    if (!sel.size) return no("Pick at least one song for the pack.");
+    if (sel.size > PK.capacity) return no(`This pack has ${sel.size} songs, but the game holds at most ${PK.capacity} custom songs in this mode. Remove ${sel.size - PK.capacity}.`);
+    if (name && PK.packs.some(x => x.id !== p.id && (x.name || "").toLowerCase() === name.toLowerCase())) return no("Another pack already has that name. Choose a different one.");
     const songsInOrder = songs.map(s => s.folder).filter(f => sel.has(f));
     const list = isNew ? [...PK.packs, { id: "", name, songs: songsInOrder }] : PK.packs.map(x => x.id === p.id ? { ...x, name, songs: songsInOrder } : x);
     try {
       const r = await savePacks(list);
       const saved = isNew ? r.packs[r.packs.length - 1] : r.packs.find(x => x.id === p.id);
       toast("Pack saved");
-      location.hash = "#/packs";
+      GUARD = null;
+      if (!stay) location.hash = "#/packs";
       if (build) await buildPack(saved.id);
-    } catch (e) { toast(e.message, true); }
+      // a built pack renamed by this save: its output folder still has the old name until it is built again
+      else if (!stay && saved.renamed && name !== (p.name || "").trim()
+        && await ask("Rebuild the pack under its new name?", `Its folder in out\\PACKS is still named "${saved.built.name}". Building the pack again names it "${saved.display}" and removes the old folder.`,
+          [{ label: "Rebuild pack", value: true, kind: "primary" }, { label: "Later", value: null }])) await buildPack(saved.id);
+      return true;
+    } catch (e) { fail("Couldn't save the pack")(e); return false; }
   };
   $("#pk_save").onclick = () => save(false);
   $("#pk_savebuild").onclick = () => save(true);
   count();
+  // unsaved = the name or the ticked songs differ from the saved pack (the filter and genre picker don't count)
+  const nameEl = $("#pk_name");
+  GUARD = { what: "the pack", save: () => save(false, true),
+    dirty: () => nameEl.isConnected && (nameEl.value.trim() !== (p.name || "") || sel.size !== p.songs.length || p.songs.some(f => !sel.has(f))) };
 }
 
 // ---------- help ----------
@@ -343,7 +430,7 @@ const HELP = [
       <li><b>+ New song</b>: fill in the details and drop the stems (or Browse). A MIDI is optional; without one the chart is
         made from the stems.</li>
       <li><b>Build</b>: makes the audio, the chart and the song database.</li>
-      <li>Copy the song folder and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span> (<b>Open output</b>)
+      <li>Copy the song folder and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span> (<b>Open output folder</b>)
         into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> on PPSSPP's memory stick, replacing the old
         <span class="mono">ZZCUSTOMDB</span>. Pocket Encore never copies to the memory stick itself.</li>
     </ol>`],
@@ -374,12 +461,18 @@ const HELP = [
       <tr><td>click a lane · drag · drag the right end</td><td>add a gem · move · make it a hold</td></tr>
       <tr><td><kbd>Del</kbd> · <kbd>←</kbd><kbd>→</kbd> · <kbd>↑</kbd><kbd>↓</kbd> · <kbd>T</kbd></td><td>delete · move by snap · change lane · tap/hold</td></tr>
       <tr><td><kbd>O</kbd> · <kbd>L</kbd></td><td>overdrive phrase · solo, on/off for the selection</td></tr>
+      <tr><td>drag on the ruler · <kbd>K</kbd> / ⟲ Loop</td><td>mark a section to repeat · loop on/off (with gems selected: loops their bars)</td></tr>
+      <tr><td>Shapes · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd></td><td>drag a shape onto its part, or click it then click the part · add shape n at the playhead</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> · <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>undo/redo · copy/paste at the playhead · save</td></tr>
       <tr><td>wheel · <kbd>Ctrl</kbd>+wheel</td><td>scroll · zoom</td></tr>
     </table>
     <h3>Chart rules</h3>
     <p>The bar above the time line warns when the chart leaves what the official charts do (too fast, too many chords, one
     thumb alternating, held drums…). It never blocks you: dismiss a warning with ×, or <b>go</b> to it.</p>
+    <h3>Loop and shapes</h3>
+    <p><b>Loop</b> repeats a section while you edit or record it: drag along the time ruler, or select gems and press
+    <kbd>K</kbd>. <b>Shapes</b> (above the chart) are the gem combinations the official charts use most: guitar and drums
+    chords (3-gem chords on Expert only), and for bass two gems in a row, since bass has no chords. Vocals have none.</p>
     <h3>Effects and tempo</h3>
     <p>Double-click the effects lane to add a screen effect, drag it to move or resize. <b>Tempo…</b> sets a steady BPM from the
     first beat, or shifts every gem against the audio.</p>`],
@@ -421,7 +514,7 @@ function showHelp(topic) {
       <span class="small dim" style="margin-top:10px">Pocket Encore ${META.version ? `v${esc(META.version.version)} ${esc(META.version.stage)}` : ""}</span></nav>
     <div class="panel helpbody"><h2>${t[1]}</h2>${t[2]}</div></div>`;
   const g = $("#openGuide");
-  if (g) g.onclick = () => api("POST", "/api/open/ZNONE?what=guide").catch(e => toast(e.message, true));
+  if (g) g.onclick = () => api("POST", "/api/open/ZNONE?what=guide").catch(fail("Couldn't open the guide"));
 }
 
 // ---------- song page ----------
@@ -439,8 +532,8 @@ async function showSong(folder, tab) {
 function buildButtons(folder) {
   return `<span class="actions">
     <button class="primary" onclick="runBuild('${folder}','audio')" title="Audio, preview, chart and song database (mksong.js)">Build</button>
-    <button onclick="runBuild('${folder}','chart')" title="Chart and database only: reuses the audio from the last build">Rebuild chart</button>
-    <button onclick="openFolder('${folder}','outsong')" title="The built song folder in out\\MUSIC">Open output</button>
+    <button onclick="runBuild('${folder}','chart')" title="Chart and song database only: reuses the audio from the last build">Rebuild chart</button>
+    <button onclick="openFolder('${folder}','outsong')" title="The built song folder in out\\MUSIC">Open output folder</button>
     ${CUR && CUR.buildLog ? `<button onclick="showStoredLog('${folder}')" title="The last build's log, from disk">Last log</button>` : ""}
   </span>`;
 }
@@ -481,6 +574,7 @@ async function showDetails(folder) {
       <label>Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}" placeholder="${esc(PH.artist)}">
       <label>Album</label><input type="text" id="f_album" value="${esc(S.album)}" placeholder="${esc(PH.album)}">
       <label>Year</label><input type="number" id="f_year" value="${esc(S.year)}" placeholder="${esc(PH.year)}" style="width:100%">
+      <label></label><span class="small dim fieldhelp">Sets the song's era in the game.</span>
       <label>Genre</label><select id="f_genre">${opt(META.genres.map(g => [g, g]), S.genre)}</select>
       <label>Lead vocals</label><select id="f_vocals">${opt([["", "(not set)"], [1, "male"], [2, "female"]], S.vocals)}</select>
     </div></div>
@@ -514,13 +608,14 @@ async function showDetails(folder) {
   </div></div>
   <div class="actions"><button class="primary" id="save">Save song.json</button><button id="saveBuild">Save and build</button><span class="dim small">Writes songs/${esc(folder)}/song.json (the old one is kept as song.json.bak).</span></div>`;
   $("#f_nopreview").onchange = e => { $("#f_preview").disabled = e.target.checked; };
-  $("#save").onclick = () => saveDetails(folder).catch(e => toast(e.message, true));
-  $("#saveBuild").onclick = () => saveDetails(folder).then(() => runBuild(folder, "audio")).catch(e => toast(e.message, true));
+  $("#save").onclick = () => saveDetails(folder).catch(fail("Couldn't save song.json"));
+  $("#saveBuild").onclick = () => saveDetails(folder).then(() => runBuild(folder, "audio")).catch(fail("Couldn't save song.json"));
   $("#calib").onclick = () => calibrate(folder);
+  guardForm($("#tab"), "the song details", () => saveDetails(folder).then(() => true));
   try {
     const c = await api("GET", `/api/checks/${folder}`);
     if ($("#checks")) { $("#checks").innerHTML = checksHtml(c); $("#checks").querySelectorAll("[data-at]").forEach(a => a.onclick = e => { e.preventDefault(); sessionStorage.seekTo = a.dataset.at; location.hash = `#/song/${folder}/editor`; }); }
-  } catch (e) { if ($("#checks")) $("#checks").textContent = e.message; }
+  } catch (e) { if ($("#checks")) $("#checks").textContent = "Couldn't run the chart checks: " + e.message; }
 }
 // Stars calibration: the game shows gold about 5 phrases before the end of a well-played song. If gold came with
 // `left` of `total` phrases to go, the thresholds should move by (wanted fraction done) / (actual fraction done).
@@ -582,13 +677,20 @@ async function saveDetails(folder) {
   if ($("#f_nopreview").checked) S.preview = false;
   else if (v("#f_preview") !== "") S.preview = Object.assign(typeof S.preview === "object" ? S.preview : {}, { start: Number(v("#f_preview")) });
   else if (S.preview === false || (S.preview && S.preview.start != null)) delete S.preview;
-  if (!S.title || !S.artist) throw new Error("title and artist are needed");
+  if (!S.title || !S.artist) throw userError("Add a title and an artist to save the song.");
   CUR = await api("PUT", `/api/song/${folder}`, S);
+  markSaved();
   $("#crumb").innerHTML = `<a href="#/">Songs</a> / ${esc(S.title)} <span class="dim">(${esc(folder)})</span> ${statusBadge(CUR)}`;
   toast("song.json saved");
 }
 async function revertChart(folder) {
-  if (!confirm("Use the automatic chart again? Your chart.mid stays in the song folder, but the build will no longer use it.")) return;
+  // the page reloads afterwards, so unsaved Details changes would go: offer to save them first
+  const g = pageGuard();
+  const a = await ask("Use the automatic chart again?", "Your chart.mid stays in the song folder, but the build will no longer use it."
+    + (g ? " You also have unsaved changes on this page." : ""),
+    [...(g ? [{ label: "Save changes and use automatic chart", value: "save", kind: "danger" }, { label: "Discard changes and use automatic chart", value: "discard" }]
+           : [{ label: "Use automatic chart", value: "go", kind: "danger" }]), { label: "Keep my chart", value: null }]);
+  if (!a || (a === "save" && !(await saveGuard(g)))) return;
   await api("POST", `/api/chart-revert/${folder}`);
   toast("Back to the automatic chart: build to apply");
   route();
@@ -597,10 +699,9 @@ function showJson(folder) {
   $("#tab").innerHTML = `<div class="panel"><h4>songs/${esc(folder)}/song.json</h4>
     <textarea id="raw" rows="34" spellcheck="false">${esc(JSON.stringify(CUR.song, null, 2))}</textarea>
     <div class="actions" style="margin-top:8px"><button class="primary" id="saveRaw">Save</button><span class="dim small">Every option is listed at the top of scripts/mksong.js. Effect names: ${META.effects.filter(e => e !== "end").join(", ")}.</span></div></div>`;
-  $("#saveRaw").onclick = async () => {
-    try { const S = JSON.parse($("#raw").value); CUR = await api("PUT", `/api/song/${folder}`, S); toast("song.json saved"); }
-    catch (e) { toast(e.message, true); }
-  };
+  const saveRaw = async () => { const S = JSON.parse($("#raw").value); CUR = await api("PUT", `/api/song/${folder}`, S); markSaved(); toast("song.json saved"); return true; };
+  $("#saveRaw").onclick = () => saveRaw().catch(fail("Couldn't save song.json"));
+  guardForm($("#tab"), "song.json", saveRaw);
 }
 
 // ---------- new song ----------
@@ -662,9 +763,9 @@ function setupDrop() {
     e.preventDefault(); depth = 0; panel.classList.remove("dragging");
     const files = [...e.dataTransfer.files];
     if (!files.length) return;
-    if (files.length > MAX_DROP) return toast(`${files.length} files dropped; at most ${MAX_DROP} at a time`, true);
+    if (files.length > MAX_DROP) return toast(`You dropped ${files.length} files. Drop up to ${MAX_DROP} at a time.`, true);
     const bad = badFiles(files);
-    if (bad.length) return toast(`Not supported: ${bad.map(f => f.name).join(", ")}. Audio: ${META.audioExt.join(" ")}; MIDI: ${META.midiExt.join(" ")}`, true);
+    if (bad.length) return toast(`Can't use ${bad.map(f => f.name).join(", ")}: not a supported file type. Audio: ${META.audioExt.join(" ")}; MIDI: ${META.midiExt.join(" ")}`, true);
     // dropped on one instrument's row with a single file: that slot, whatever the name says
     const row = e.target.closest && e.target.closest("[data-slot]");
     let plan;
@@ -677,7 +778,7 @@ function setupDrop() {
       if (plan.midi) await uploadTo($("#n_midi"), plan.midi, batch);
       const placed = Object.entries(plan.out).map(([s, f]) => `${f.name} → ${s}`).concat(plan.midi ? [`${plan.midi.name} → MIDI`] : []);
       toast(placed.join(" · ") + (plan.unplaced.length ? ` · no free slot for ${plan.unplaced.map(f => f.name).join(", ")}` : ""), !!plan.unplaced.length);
-    } catch (err) { toast(err.message, true); }
+    } catch (err) { fail("Couldn't add the files")(err); }
     zone.innerHTML = zone.dataset.html;
   });
   zone.dataset.html = zone.innerHTML;
@@ -685,11 +786,11 @@ function setupDrop() {
 
 // Placeholders shared by the New song form and the Details tab (they say what each field is for).
 const PH = {
-  folder: "e.g. ZMYSONG: Z + capital letters/digits, the song's folder on the memory stick",
-  title: "Song name, as shown in the game's song list",
-  artist: "Band or artist name",
-  album: "Album the song is from",
-  year: "Release year, e.g. 1999 (sets the song's era)",
+  folder: "ZMYSONG",
+  title: "Song name",
+  artist: "Band or artist",
+  album: "Album name",
+  year: "1999",
   midi: "None: will auto-generate chart from stems",
   tool: "eg: Fadr, Moises.ai, Lalal.ai",
   stem: k => k === "fill" ? "Backing: everything else in the song (optional)" : `${k[0].toUpperCase() + k.slice(1)} stem (required): drop a file or Browse…`,
@@ -704,10 +805,13 @@ function showNew() {
     + `<button onclick="pickInto('#n_stem_${k}')">Browse…</button></div>`;
   $("#main").innerHTML = `<div class="grid2"><div class="panel"><h4>New song</h4><div class="form">
       <label>Folder${req}</label><input type="text" id="n_folder" placeholder="${esc(PH.folder)}" style="text-transform:uppercase" data-req="Folder">
+      <label></label><span class="small dim fieldhelp">Z plus capital letters or digits. This is the song's folder name on the memory stick.</span>
       <label>Title${req}</label><input type="text" id="n_title" placeholder="${esc(PH.title)}" data-req="Title">
+      <label></label><span class="small dim fieldhelp">As shown in the game's song list.</span>
       <label>Artist${req}</label><input type="text" id="n_artist" placeholder="${esc(PH.artist)}" data-req="Artist">
       <label>Album${req}</label><input type="text" id="n_album" placeholder="${esc(PH.album)}" data-req="Album">
       <label>Year${req}</label><input type="number" id="n_year" min="1900" max="${thisYear}" placeholder="${esc(PH.year)}" data-req="Year" style="width:100%">
+      <label></label><span class="small dim fieldhelp">Release year, 1900–${thisYear}. Sets the song's era in the game.</span>
       <label>Genre${req}</label><select id="n_genre" data-req="Genre"><option value="">Choose the song list genre…</option>${opt(META.genres.map(g => [g, g]), "")}</select>
       <label>Lead vocals${req}</label><select id="n_vocals" data-req="Lead vocals"><option value="">Choose the singer shown in game…</option>${opt([[1, "male"], [2, "female"]], "")}</select>
     </div><p class="small dim"><span class="req">*</span> required</p></div>
@@ -753,10 +857,12 @@ function showNew() {
     if ($("#n_countIn").checked) S.countIn = true;
     try {
       await api("POST", "/api/new", S);
+      GUARD = null;  // created: nothing to lose any more
       location.hash = `#/song/${folder}`;
       if ($("#n_build").checked) runBuild(folder, "audio");
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { fail("Couldn't create the song")(e); }
   };
+  guardForm($("#main"), "the new song", null);  // no save: leaving can only discard it
 }
 
 // ---------- file picker ----------
@@ -765,7 +871,7 @@ async function pickInto(selector, folder, dirs) {
   let cur = localStorage.pickDir || "";
   const open = async dir => {
     let r;
-    try { r = await api("GET", "/api/ls?dir=" + encodeURIComponent(dir || "")); } catch (e) { toast(e.message, true); return; }
+    try { r = await api("GET", "/api/ls?dir=" + encodeURIComponent(dir || "")); } catch (e) { fail("Couldn't open that folder")(e); return; }
     localStorage.pickDir = r.dir;
     $("#modalBox").innerHTML = `<b>${dirs ? "Pick a folder" : "Pick a file"}</b><div class="mono small dim" style="margin-top:6px">${esc(r.dir)}</div>
       <div class="filelist">${r.parent ? `<div class="d" data-p="${esc(r.parent)}">..</div>` : ""}
@@ -792,8 +898,15 @@ function showBuildPanel(show = true) { $("#buildPanel").classList.toggle("hidden
 $("#buildToggle").onclick = () => { showBuildPanel($("#buildPanel").classList.contains("hidden")); followBuild(); };
 $("#buildClose").onclick = () => showBuildPanel(false);
 async function runBuild(folder, from) {
-  if (window.editorDirty && window.editorDirty() && !confirm("The editor has unsaved changes; build without them?")) return;
-  try { await api("POST", `/api/build/${folder}?from=${from}`); } catch (e) { toast(e.message, true); return; }
+  const g = pageGuard();
+  if (g && g.save) {
+    const a = await ask("Build without your unsaved changes?", `Your unsaved changes to ${g.what} won't be in this build.`, [
+      { label: "Save and build", value: "save", kind: "primary" },
+      { label: "Build without changes", value: "build" },
+      { label: "Cancel", value: null }]);
+    if (!a || (a === "save" && !(await saveGuard(g)))) return;
+  }
+  try { await api("POST", `/api/build/${folder}?from=${from}`); } catch (e) { fail("Build couldn't start")(e); return; }
   showBuildPanel(true);
   followBuild();
 }
@@ -829,7 +942,7 @@ function followBuild() {
       ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: delete the previous pack from the memory stick (its pack.txt lists it), then copy this pack\'s MUSIC contents</span>'
       : '<span class="badge ok">done</span> <span class="small dim">copy the song folder and ZZCUSTOMDB from out\\MUSIC to the memory stick</span>') : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
     log.scrollTop = log.scrollHeight;
-    if (code === "0" && !(window.editorDirty && window.editorDirty())) route();
+    if (code === "0" && !pageGuard()) route();  // refresh the page, unless that would lose unsaved changes
   });
 }
 

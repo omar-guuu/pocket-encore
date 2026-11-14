@@ -12,8 +12,8 @@
 
 #define MyAppName "Pocket Encore"
 ; keep in step with pocketencore\version.json
-#define MyAppVersion "0.1 Beta"
-#define MyAppVersionFile "0.1-beta"
+#define MyAppVersion "0.2 Beta"
+#define MyAppVersionFile "0.2-beta"
 #define MyAppPublisher "Pocket Encore"
 #define MyAppExeName "pocketencore.cmd"
 

@@ -10,6 +10,19 @@ const TRACKS = ["drums", "bass_guitar", "lead_guitar", "vocals", "fill"];
 const TRACK_NAME = { drums: "Drums", bass_guitar: "Bass", lead_guitar: "Guitar", vocals: "Vocals", fill: "Backing" };
 const BASE = [60, 72, 84, 96], OD = 116, SOLO = 103, TAP_MAX = 160, TAP_LEN = 60;
 const LANE_COL = ["#e65050", "#e8c440", "#4a94ec", "#4cc466"];
+const LANE_NAME = ["Red", "Yellow", "Blue", "Green"];
+// Gem shapes to drop onto a part: [lane, step] pairs, step = snap steps after the first gem. From the official charts
+// (Expert, 57 songs): guitar chords Y+G 3175, Y+B 3076, R+B 2630, R+G 1226, B+G 1195, then Y+B+G 165, R+B+G 96 (every other
+// chord <= 20); drums R+G 4510, R+B 4464, Y+G 3028, Y+B 1345, Y+B+G 263, R+B+G 165. Bass has no chords: two gems in a row,
+// the most common lane changes Y>B 4604, B>Y 3886, B>R 3721, R>B 3564, Y>G 2399, G>Y 2235. 3-gem chords are Expert only.
+// Vocals have none: their gems follow the singer.
+const chordShape = (...lanes) => ({ gems: lanes.map(l => [l, 0]), name: lanes.map(l => LANE_NAME[l]).join(" + ") });
+const runShape = (a, b) => ({ gems: [[a, 0], [b, 1]], name: `${LANE_NAME[a]} then ${LANE_NAME[b]}` });
+const SHAPES = {
+  guitar: [chordShape(0, 3), chordShape(1, 2), chordShape(0, 2), chordShape(1, 3), chordShape(2, 3), chordShape(1, 2, 3), chordShape(0, 2, 3)],
+  drums: [chordShape(0, 3), chordShape(0, 2), chordShape(1, 3), chordShape(1, 2), chordShape(1, 2, 3), chordShape(0, 2, 3)],
+  bass: [runShape(1, 2), runShape(2, 1), runShape(2, 0), runShape(0, 2), runShape(1, 3), runShape(3, 1)],
+};
 const PART_COL = { drums: "#c86464", bass: "#6488d8", guitar: "#d89a48", vocals: "#58b078" };
 const GUT = 78, RULER = 30, FXH = 30, HEAD = 14, LANE = 22, PART_H = HEAD + 4 * LANE, PAD = 6;
 const H = RULER + FXH + 4 * (PART_H + PAD) + 4;
@@ -26,7 +39,7 @@ window.openEditor = async (root, folder, details) => {
   root.innerHTML = `<div class="panel">Loading chart…</div>`;
   let chart;
   try { chart = await api("GET", `/api/chart/${folder}`); }
-  catch (e) { root.innerHTML = `<div class="panel">${esc(e.message)}</div>`; return; }
+  catch (e) { root.innerHTML = `<div class="panel">Couldn't open the editor: ${esc(e.message)}</div>`; return; }
   const S = details.song;
   E = {
     folder, S, midi: chart.midi, source: chart.source, hasAuto: chart.hasAuto, tpb: chart.midi.tpb, lead: (chart.audio && chart.audio.lead) || 0,
@@ -120,6 +133,13 @@ function shiftAll(ms) {
 // ---------- notes ----------
 const gemsOf = (p, d = E.diff) => p.tr.notes.filter(n => n.n >= BASE[d] + p.off && n.n < BASE[d] + p.off + 4);
 const laneOf = (p, n) => n.n - BASE[E.diff] - p.off;
+// chords of a part (2+ gems at the same tick): [tick, lowest lane, highest lane], for the orange line that marks them
+function chordsOf(p) {
+  const by = new Map();
+  for (const n of gemsOf(p)) { const l = laneOf(p, n), c = by.get(n.t); if (c) { c[1] = Math.min(c[1], l); c[2] = Math.max(c[2], l); c[3]++; } else by.set(n.t, [n.t, l, l, 1]); }
+  return [...by.values()].filter(c => c[3] > 1);
+}
+const CHORD_COL = "#f0a030";
 const partOf = n => E.parts.find(p => p.tr.notes.includes(n));
 const focusPart = () => E.parts.find(p => p.key === E.focus);
 function snapshot() { return { notes: E.parts.map(p => p.tr.notes.map(n => ({ ...n }))), fx: JSON.parse(JSON.stringify(E.fx)), tempo: null }; }
@@ -154,7 +174,7 @@ async function runChecks() {
     // warnings this edit introduced (not on the first check) flash once
     E.fresh = before ? new Set(E.checks.map(ruleKey).filter(k => !before.has(k))) : new Set();
     renderRules();
-  } catch (e) { const el = $("#rules"); if (el) el.innerHTML = `<span class="dim small">rule check failed: ${esc(e.message)}</span>`; }
+  } catch (e) { const el = $("#rules"); if (el) el.innerHTML = `<span class="dim small">couldn't run the chart checks: ${esc(e.message)}</span>`; }
 }
 function renderRules() {
   const el = $("#rules");
@@ -269,7 +289,7 @@ async function loadAudio() {
     }
     st.textContent = "";
     applyGains();
-  } catch (e) { st.textContent = "audio: " + e.message; }
+  } catch (e) { st.textContent = "Couldn't load the audio: " + e.message; }
 }
 function peaks(buf) {  // max |sample| per 1/200 s
   const x = buf.getChannelData(0), hop = buf.sampleRate / 200, n = Math.floor(x.length / hop), p = new Float32Array(n);
@@ -281,20 +301,30 @@ function applyGains() {
   const anySolo = TRACKS.some(t => E.solo[t]);
   for (const t of TRACKS) E.gains[t].gain.value = E.mute[t] || (anySolo && !E.solo[t]) ? 0 : E.vol[t];
 }
-const pos = () => E.playing ? E.off + (E.ctx.currentTime - E.t0) * E.rate : E.off;
+// Loop: E.loop = { a, b, on } in seconds. While playing, E.playLoop is the loop the audio sources were started with (they
+// loop by themselves, gaplessly). rawPos counts on past the loop end; pos is where that is in the song.
+const rawPos = () => E.playing ? E.off + (E.ctx.currentTime - E.t0) * E.rate : E.off;
+const songAt = r => { const L = E.playLoop; return L && r >= L.b ? L.a + (r - L.a) % (L.b - L.a) : r; };
+const pos = () => E.playing ? songAt(rawPos()) : E.off;
+const loopOn = () => !!(E.loop && E.loop.on && E.loop.b > E.loop.a);
 function play() {
   if (!E.ctx || E.playing) return;
   E.ctx.resume();
+  const L = loopOn() ? { a: E.loop.a, b: E.loop.b } : null;
+  if (L && E.off >= L.b) E.off = L.a;  // starting before the loop plays into it; after it, from its start
   E.srcs = TRACKS.filter(t => E.bufs[t]).map(t => {
-    const s = E.ctx.createBufferSource(); s.buffer = E.bufs[t]; s.playbackRate.value = E.rate; s.connect(E.gains[t]); s.start(0, Math.max(0, E.off)); return s;
+    const s = E.ctx.createBufferSource(); s.buffer = E.bufs[t]; s.playbackRate.value = E.rate; s.connect(E.gains[t]);
+    if (L) { s.loop = true; s.loopStart = L.a; s.loopEnd = L.b; }
+    s.start(0, Math.max(0, E.off)); return s;
   });
+  E.playLoop = L;
   E.t0 = E.ctx.currentTime; E.playing = true; E.clickNext = E.off;
   $("#play").textContent = "❚❚ Pause";
   loop();
 }
 function stop() {
   if (!E || !E.playing) return;
-  E.off = pos(); E.srcs.forEach(s => { try { s.stop(); } catch { } }); E.srcs = []; E.playing = false;
+  E.off = pos(); E.srcs.forEach(s => { try { s.stop(); } catch { } }); E.srcs = []; E.playing = false; E.playLoop = null;
   $("#play").textContent = "▶ Play";
   draw();
 }
@@ -311,21 +341,90 @@ function loop() {
   draw();
   E.raf = requestAnimationFrame(loop);
 }
+// ticks for the next 0.2 s, counted in raw play time (so a loop's wrap is a jump in song time, not a gap)
 function scheduleClicks() {
   if (!E || !E.playing || !E.ticks) return;
-  const p = focusPart(), now = pos(), until = now + 0.2 * E.rate;
-  if (E.clickNext < now - 0.05) E.clickNext = now;
-  for (const n of gemsOf(p)) {
-    const s = t2s(n.t);
-    if (s < E.clickNext || s >= until) continue;
-    const when = E.t0 + (s - E.off) / E.rate;
-    if (when < E.ctx.currentTime) continue;
-    const o = E.ctx.createOscillator(), g = E.ctx.createGain();
-    o.frequency.value = 1500 + 300 * laneOf(p, n); o.connect(g); g.connect(E.clickGain);
-    g.gain.setValueAtTime(0.9, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.04);
-    o.start(when); o.stop(when + 0.05);
+  const p = focusPart(), L = E.playLoop, rnow = rawPos(), r1 = rnow + 0.2 * E.rate;
+  if (E.clickNext < rnow - 0.05 || E.clickNext > r1) E.clickNext = rnow;
+  let r = E.clickNext;
+  while (r < r1) {
+    const s = songAt(r), end = L ? Math.max(r + 1e-6, Math.min(r1, r + (L.b - s))) : r1, s1 = s + (end - r);
+    for (const n of gemsOf(p)) {
+      const gs = t2s(n.t);
+      if (gs < s || gs >= s1) continue;
+      const when = E.t0 + (r + (gs - s) - E.off) / E.rate;
+      if (when < E.ctx.currentTime) continue;
+      const o = E.ctx.createOscillator(), g = E.ctx.createGain();
+      o.frequency.value = 1500 + 300 * laneOf(p, n); o.connect(g); g.connect(E.clickGain);
+      g.gain.setValueAtTime(0.9, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.04);
+      o.start(when); o.stop(when + 0.05);
+    }
+    r = end;
   }
-  E.clickNext = until;
+  E.clickNext = r1;
+}
+// ---------- loop ----------
+const snapS = s => t2s(snapT(s2t(s)));
+const downbeats = (t0, t1) => beatList(t0, t1).filter(b => b.down).map(b => b.t);
+const barStart = t => { const d = downbeats(0, t); return d.length ? d[d.length - 1] : 0; };
+const barAfter = (t, n = 1) => { const d = downbeats(t, t + E.tpb * 64).filter(x => x > t); return d[n - 1] ?? t + n * 4 * E.tpb; };
+// Loop button / K: off -> on over the selected gems (whole bars), else the last section, else 2 bars from the playhead
+function toggleLoop() {
+  if (loopOn()) E.loop.on = false;
+  else if (E.sel.size) {
+    const sel = [...E.sel], a = barStart(Math.min(...sel.map(n => n.t))), b = barAfter(Math.max(...sel.map(n => n.t + (n.l > TAP_MAX ? n.l : 0))));
+    E.loop = { a: t2s(a), b: t2s(b), on: true };
+  } else if (E.loop) E.loop.on = true;
+  else { const a = barStart(s2t(pos())); E.loop = { a: t2s(a), b: t2s(barAfter(a, 2)), on: true }; }
+  applyLoop();
+}
+// the audio sources hold the loop: restart them when it changes
+function applyLoop() {
+  const b = $("#loopBtn");
+  if (b) { b.classList.toggle("on", loopOn()); b.title = loopOn() ? `Looping ${fmtTime(E.loop.a)}–${fmtTime(E.loop.b)} (K turns it off)` : LOOP_TIP; }
+  if (E.playing) { stop(); play(); } else draw();
+}
+function loopEdgeAt(x, y) {
+  if (!E.loop || y >= RULER || x < GUT) return null;
+  return Math.abs(xOf(E.loop.a) - x) <= 5 ? "a" : Math.abs(xOf(E.loop.b) - x) <= 5 ? "b" : null;
+}
+const LOOP_TIP = "Loop a section (K): drag along the time ruler to mark it, or select gems first. Drag its edges on the ruler to change it.";
+
+// ---------- gem shapes ----------
+const shapeStep = () => E.snap ? step() : E.tpb / 4;
+// put a shape's gems at tick t in part p; they replace what that part had at the same times (a gem becomes a chord)
+function placeShape(p, sh, t) {
+  if (t < 0 || !sh) return false;
+  if (sh.gems.length > 2 && E.diff !== 3) { toast("3-gem chords are Expert only, like in the official charts.", true); return false; }
+  const st = shapeStep(), base = BASE[E.diff] + p.off, times = new Set(sh.gems.map(([, k]) => t + k * st));
+  pushUndo();
+  p.tr.notes = p.tr.notes.filter(n => !(times.has(n.t) && n.n >= base && n.n < base + 4));
+  E.sel.clear();
+  for (const [l, k] of sh.gems) { const g = addGem(p, l, t + k * st); if (g) E.sel.add(g); }
+  fixOverlaps(p); markDirty();
+  return true;
+}
+function shapeSvg(sh) {
+  const steps = Math.max(...sh.gems.map(([, k]) => k)) + 1, w = 8 + steps * 10;
+  return `<svg width="${w}" height="30" viewBox="0 0 ${w} 30">${[0, 1, 2, 3].map(l => `<rect x="0" y="${l * 7 + 1}" width="${w}" height="6" fill="#1c2028"/>`).join("")}`
+    + sh.gems.map(([l, k]) => `<rect x="${4 + k * 10}" y="${l * 7 + 1}" width="7" height="6" rx="1" fill="${LANE_COL[l]}"/>`).join("") + "</svg>";
+}
+function renderShapes() {
+  const el = $("#shapes");
+  if (!el) return;
+  const list = SHAPES[E.focus];
+  if (E.stamp && (!list || !list.includes(E.stamp) || (E.stamp.gems.length > 2 && E.diff !== 3))) E.stamp = null;
+  if (!list) { el.innerHTML = `<b>Shapes</b><span class="dim">none for vocals: its gems follow the singer.</span>`; return; }
+  el.innerHTML = `<b>Shapes · ${E.focus}</b>` + list.map((sh, i) => {
+    const off = sh.gems.length > 2 && E.diff !== 3;
+    return `<button class="shape${E.stamp === sh ? " on" : ""}" data-i="${i}" ${off ? "disabled" : ""} title="${esc(sh.name)}${off ? ": Expert only, like in the official charts"
+      : `: drag onto the ${E.focus} part, or click it and then click the chart (Shift+${i + 1} at the playhead)`}">${shapeSvg(sh)}<span>${i + 1}</span></button>`;
+  }).join("") + `<span class="dim">${E.stamp ? `placing ${esc(E.stamp.name)}: click the ${E.focus} part · Esc to stop` : E.focus === "bass" ? "two gems in a row, one snap step apart" : "drag onto the chart, or click one to place it with each click"}</span>`;
+  el.querySelectorAll("button.shape").forEach(b => b.onmousedown = e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    E.drag = { mode: "shape", sh: list[b.dataset.i], sx: e.clientX, sy: e.clientY, moved: false, cx: -1, cy: -1 };
+  });
 }
 
 // ---------- layout ----------
@@ -418,6 +517,10 @@ function draw() {
         c.strokeStyle = LANE_COL[l]; c.setLineDash([2, 2]); c.strokeRect(a + .5, y + 3.5, 9, LANE - 7); c.setLineDash([]);
       }
     }
+    for (const [t, lo, hi] of chordsOf(p)) {
+      const x = Math.round(xOf(t2s(t)) + 4.5) + .5; if (x < GUT || x > W) continue;
+      c.strokeStyle = CHORD_COL; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y0 + HEAD + lo * LANE + LANE / 2); c.lineTo(x, y0 + HEAD + hi * LANE + LANE / 2); c.stroke(); c.lineWidth = 1;
+    }
     for (const n of gemsOf(p)) {
       const a = xOf(t2s(n.t));
       const sus = n.l > TAP_MAX, b = sus ? xOf(t2s(n.t + n.l)) : a;
@@ -435,6 +538,31 @@ function draw() {
     for (let l = 0; l < 4; l++) { c.fillStyle = LANE_COL[l]; c.fillRect(GUT - 14, y0 + HEAD + l * LANE + 5, 8, LANE - 10); if (p.key === E.focus) { c.fillStyle = "#9aa1ad"; c.font = "9px Segoe UI"; c.fillText(String(l + 1), GUT - 24, y0 + HEAD + l * LANE + 15); } }
     c.fillStyle = "#6c7380"; c.font = "10px Segoe UI"; c.fillText(`${gemsOf(p).length} gems`, 8, y0 + 30);
   });
+  // loop region: shaded over everything, edges as handles on the ruler
+  if (E.loop) {
+    const a = xOf(E.loop.a), b = xOf(E.loop.b), on = loopOn();
+    if (b > GUT && a < W) {
+      const xa = Math.max(GUT, a);
+      c.fillStyle = on ? "rgba(90,170,255,.09)" : "rgba(90,170,255,.035)"; c.fillRect(xa, 0, b - xa, H);
+      c.fillStyle = on ? "rgba(90,170,255,.45)" : "rgba(90,170,255,.2)"; c.fillRect(xa, RULER - 6, b - xa, 5);
+      c.strokeStyle = on ? "#5aaaff" : "#5aaaff70"; c.setLineDash(on ? [] : [3, 3]);
+      for (const x of [a, b]) if (x >= GUT && x <= W) { c.beginPath(); c.moveTo(Math.round(x) + .5, 0); c.lineTo(Math.round(x) + .5, H); c.stroke(); c.fillStyle = c.strokeStyle; c.fillRect(Math.round(x) - 3, 0, 7, 10); }
+      c.setLineDash([]);
+    }
+  }
+  // shape being dragged or placed: where its gems would go
+  const pv = E.drag && E.drag.mode === "shape" && E.drag.moved ? [E.drag.sh, E.drag.cx, E.drag.cy] : E.stamp && E.hover ? [E.stamp, ...E.hover] : null;
+  if (pv) {
+    const [sh, x, y] = pv, h = hit(x, y);
+    if (x >= GUT && h.zone === "lane" && h.part.key === E.focus) {
+      const y0 = partY(E.parts.indexOf(h.part)), t = snapT(s2t(sOf(x)));
+      for (const [l, k] of sh.gems) {
+        const gx = xOf(t2s(t + k * shapeStep())), gy = y0 + HEAD + l * LANE;
+        c.globalAlpha = .6; c.fillStyle = LANE_COL[l]; c.fillRect(gx, gy + 3, 9, LANE - 6); c.globalAlpha = 1;
+        c.strokeStyle = "#fff"; c.setLineDash([2, 2]); c.strokeRect(gx - 1.5, gy + 1.5, 12, LANE - 3); c.setLineDash([]);
+      }
+    }
+  }
   c.fillStyle = "#1e2128"; c.fillRect(0, 0, GUT - 2, RULER + FXH);
   c.fillStyle = "#9aa1ad"; c.font = "11px Segoe UI"; c.fillText("bar / time", 8, 18); c.fillText("effects", 8, RULER + 18);
   // rubber band
@@ -495,6 +623,10 @@ function drawHighway() {
     c.fillStyle = n.n === OD ? "rgba(111,216,255,.08)" : "rgba(240,160,48,.08)"; c.fillRect(24, Math.max(20, a), Wd - 48, Math.min(strike + 20, b) - Math.max(20, a));
   }
   const od = p.tr.notes.filter(n => n.n === OD), inOd = n => od.some(o => n.t >= o.t && n.t < o.t + o.l);
+  for (const [t, lo, hi] of chordsOf(p)) {
+    const s = t2s(t), y = yOf(s); if (y < 20 || y > strike + 20) continue;
+    c.strokeStyle = s < now ? CHORD_COL + "60" : CHORD_COL; c.lineWidth = 2; c.beginPath(); c.moveTo(xAt(lo, y), y); c.lineTo(xAt(hi, y), y); c.stroke(); c.lineWidth = 1;
+  }
   for (const n of gemsOf(p)) {
     const s = t2s(n.t), e = t2s(n.t + n.l), y = yOf(s);
     if (y < 10 || yOf(n.l > TAP_MAX ? e : s) > strike + 30) continue;
@@ -518,7 +650,7 @@ function renderShell(root, details) {
   const opts = (list, cur) => list.map(([v, n]) => `<option value="${v}" ${String(v) === String(cur) ? "selected" : ""}>${n}</option>`).join("");
   root.innerHTML = `
   <div class="edbar">
-    <button id="play" class="primary" style="min-width:86px">▶ Play</button><button id="toStart" title="Home">⏮</button>
+    <button id="play" class="primary" style="min-width:86px">▶ Play</button><button id="toStart" title="Home">⏮</button><button id="loopBtn">⟲ Loop</button>
     <span id="time"></span>
     <select id="rate" title="Playback speed (changes pitch)">${opts([[1, "100%"], [0.75, "75%"], [0.5, "50%"]], 1)}</select>
     <span class="sep"></span>
@@ -538,6 +670,7 @@ function renderShell(root, details) {
   </div>
   <div class="mixer">${TRACKS.map(t => `<span class="ch"><b>${TRACK_NAME[t]}</b><button data-m="${t}" title="mute">M</button><button data-s="${t}" title="solo">S</button><input type="range" min="0" max="1.5" step="0.05" value="1" data-v="${t}"></span>`).join("")}
     <span class="ch"><b>Ticks</b><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol"></span><span id="audioState" class="dim"></span></div>
+  <div id="shapes" class="shapes"></div>
   <div id="rules" class="rules ok"><span class="dim small">checking the chart against the official charts' rules…</span></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
   <div class="edfoot">
@@ -546,8 +679,9 @@ function renderShell(root, details) {
       <div id="diffBox" class="diffbox" style="margin-top:6px"></div></div>
     <div class="panel" id="fxPanel" style="width:340px"></div>
     <div class="panel keys" style="width:390px">
-      <kbd>Space</kbd> play/pause · click ruler = seek · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
-      <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane of the part at the playhead (also while playing)<br>
+      <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
+      <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane of the part at the playhead (also while playing) · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd> add that shape<br>
+      shapes: drag one onto its part, or click it then click the part; <kbd>Esc</kbd> stops placing<br>
       click a lane = add gem · drag = move · drag the right end = hold length<br>
       drag on empty space or a part's title = select area · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click = add to selection<br>
       <kbd>Del</kbd> delete · <kbd>←</kbd><kbd>→</kbd> move by snap · <kbd>↑</kbd><kbd>↓</kbd> lane · <kbd>T</kbd> tap/hold<br>
@@ -570,12 +704,13 @@ function renderShell(root, details) {
   $("#play").onclick = () => E.playing ? stop() : play();
   $("#toStart").onclick = () => { seek(0); E.x0 = 0; draw(); };
   $("#rate").onchange = e => { const was = E.playing; stop(); E.rate = Number(e.target.value); if (was) play(); };
-  $("#diff").onchange = e => { E.diff = Number(e.target.value); E.sel.clear(); renderDiff(); renderRules(); draw(); };
+  $("#diff").onchange = e => { E.diff = Number(e.target.value); E.sel.clear(); renderDiff(); renderRules(); renderShapes(); draw(); };
   $("#snap").onchange = e => { E.snap = Number(e.target.value); draw(); };
   $("#zoomIn").onclick = () => zoom(1.5, GUT + (E.W - GUT) / 2);
   $("#zoomOut").onclick = () => zoom(1 / 1.5, GUT + (E.W - GUT) / 2);
-  $("#focus").onchange = e => { E.focus = e.target.value; E.clickNext = pos(); draw(); };
-  $("#ticks").onchange = e => { E.ticks = e.target.checked; E.clickNext = pos(); };
+  $("#focus").onchange = e => { E.focus = e.target.value; E.clickNext = rawPos(); renderShapes(); draw(); };
+  $("#loopBtn").onclick = toggleLoop; $("#loopBtn").title = LOOP_TIP;
+  $("#ticks").onchange = e => { E.ticks = e.target.checked; E.clickNext = rawPos(); };
   $("#rec").onclick = toggleRec;
   $("#clickVol").oninput = e => { if (E.clickGain) E.clickGain.gain.value = Number(e.target.value); };
   $("#undo").onclick = undo; $("#redo").onclick = redo;
@@ -591,13 +726,19 @@ function renderShell(root, details) {
   window.addEventListener("mouseup", onUp);
   E.cv.addEventListener("dblclick", onDbl);
   E.cv.addEventListener("wheel", onWheel, { passive: false });
-  E.cv.addEventListener("mousemove", e => { if (!E.drag) { const r = E.cv.getBoundingClientRect(), g = gemAt(e.clientX - r.left, e.clientY - r.top); E.cv.style.cursor = g && g.edge ? "ew-resize" : fxAt(e.clientX - r.left, e.clientY - r.top)?.edge ? "ew-resize" : "default"; } });
+  E.cv.addEventListener("mousemove", e => {
+    if (E.drag) return;
+    const [x, y] = local(e), g = gemAt(x, y);
+    E.cv.style.cursor = g && g.edge || fxAt(x, y)?.edge || loopEdgeAt(x, y) ? "ew-resize" : E.stamp && hit(x, y).zone === "lane" ? "copy" : "default";
+    if (E.stamp) { E.hover = [x, y]; draw(); }
+  });
+  E.cv.addEventListener("mouseleave", () => { if (E.hover) { E.hover = null; draw(); } });
   const ovNav = e => { const r = E.ov.getBoundingClientRect(), s = (e.clientX - r.left) / E.W * E.length; E.x0 = Math.max(0, s - (E.W - GUT) / E.pps / 2); draw(); };
   E.ov.addEventListener("mousedown", e => { ovNav(e); const mv = ev => ovNav(ev), up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); });
   E.hw.addEventListener("mousedown", e => { const r = E.hw.getBoundingClientRect(); const l = Math.floor((e.clientX - r.left - 24) / ((HW_W - 48) / 4)); if (l >= 0 && l < 4) recordGem(l); });
   E.onKey = onKey;
   window.addEventListener("keydown", E.onKey);
-  updateButtons(); renderFxPanel(); renderDiff(); runChecks();
+  updateButtons(); renderFxPanel(); renderDiff(); renderShapes(); runChecks();
 }
 function toggleRec() { E.recording = !E.recording; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
 function recordGem(lane) {
@@ -648,14 +789,14 @@ function tempoDialog() {
   $("#t_cancel").onclick = () => $("#modal").classList.add("hidden");
   $("#t_apply").onclick = () => {
     const b = Number($("#t_bpm").value), f = Number($("#t_first").value);
-    if (!(b > 20 && b < 400) || !(f >= 0)) return toast("BPM 20-400 and a first beat ≥ 0", true);
+    if (!(b >= 20 && b <= 400) || !(f >= 0)) return toast("Enter a tempo between 20 and 400 BPM and a first beat at 0 s or later.", true);
     pushUndo(true); setConstantTempo(b, f); E.sel.clear(); markDirty(); $("#modal").classList.add("hidden"); toast(`Grid set to ${b} BPM from ${f} s`);
   };
   $("#t_shiftBtn").onclick = () => {
     const ms = Number($("#t_shift").value);
     if (!ms) return;
     pushUndo(true);
-    if (!shiftAll(ms)) { E.undo.pop(); return toast("That would move gems before the start", true); }
+    if (!shiftAll(ms)) { E.undo.pop(); return toast("Can't shift that far: some gems would land before the song starts. Try a smaller shift.", true); }
     E.sel.clear(); markDirty(); $("#modal").classList.add("hidden"); toast(`All gems shifted by ${ms} ms`);
   };
 }
@@ -674,8 +815,18 @@ function onDown(e) {
   if (e.button !== 0) return;
   const [x, y] = local(e), h = hit(x, y);
   e.preventDefault();
-  if (x < GUT) { if (h.zone === "lane" || h.zone === "head") { E.focus = h.part.key; $("#focus").value = E.focus; draw(); } return; }
-  if (h.zone === "ruler") { seek(sOf(x)); E.drag = { mode: "seek" }; return; }
+  if (x < GUT) { if (h.zone === "lane" || h.zone === "head") { E.focus = h.part.key; $("#focus").value = E.focus; renderShapes(); draw(); } return; }
+  if (h.zone === "ruler") {
+    // an edge of the loop: resize it; else click = seek, drag = mark a new loop
+    const edge = loopEdgeAt(x, y);
+    if (edge) { E.drag = { mode: "loopEdge", edge }; return; }
+    seek(sOf(x)); E.drag = { mode: "ruler", x }; return;
+  }
+  if (E.stamp && h.zone === "lane") {
+    if (h.part.key !== E.focus) toast(`These are ${E.focus} shapes: click the ${E.focus} part.`, true);
+    else placeShape(h.part, E.stamp, snapT(s2t(sOf(x))));
+    return;
+  }
   if (h.zone === "fx") {
     const f = fxAt(x, y);
     E.fxSel = f ? f.i : -1; renderFxPanel();
@@ -696,7 +847,18 @@ function onDown(e) {
 function onMove(e) {
   if (!E || !E.drag) return;
   const [x, y] = local(e), d = E.drag;
-  if (d.mode === "seek") { seek(sOf(x)); return; }
+  if (d.mode === "shape") { d.moved = d.moved || Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4; d.cx = x; d.cy = y; if (d.moved) { document.body.style.cursor = "copy"; draw(); } return; }
+  if (d.mode === "ruler") {
+    if (Math.abs(x - d.x) < 4) return;
+    const a = snapS(sOf(Math.min(d.x, x))), b = snapS(sOf(Math.max(d.x, x)));
+    if (b > a) { E.loop = { a, b, on: true }; d.made = true; draw(); }
+    return;
+  }
+  if (d.mode === "loopEdge") {
+    const s = snapS(sOf(x)), min = t2s(shapeStep()) - t2s(0);
+    if (d.edge === "a") E.loop.a = Math.max(0, Math.min(s, E.loop.b - min)); else E.loop.b = Math.max(s, E.loop.a + min);
+    d.made = true; draw(); return;
+  }
   if (d.mode === "fx") {
     const f = E.fx[d.i], ds = (x - d.x) / E.pps, r = v => Math.round(v * 100) / 100;
     if (d.edge === "from") f.from = r(Math.max(-E.lead, Math.min(d.orig.to != null ? d.orig.to - 0.1 : 1e9, d.orig.from + ds)));
@@ -725,6 +887,17 @@ function onMove(e) {
 function onUp() {
   if (!E || !E.drag) return;
   const d = E.drag; E.drag = null;
+  if (d.mode === "shape") {
+    document.body.style.cursor = "";
+    if (!d.moved) { E.stamp = E.stamp === d.sh ? null : d.sh; renderShapes(); draw(); return; }  // a click: pick it up / put it down
+    const h = hit(d.cx, d.cy), inside = d.cx >= GUT && d.cx <= E.W && d.cy >= 0 && d.cy <= H;
+    if (inside && h.zone === "lane") {
+      if (h.part.key !== E.focus) toast(`These are ${E.focus} shapes: drop them on the ${E.focus} part.`, true);
+      else placeShape(h.part, d.sh, snapT(s2t(sOf(d.cx))));
+    }
+    draw(); return;
+  }
+  if (d.mode === "ruler" || d.mode === "loopEdge") { if (d.made) applyLoop(); return; }
   if (d.mode === "band" && d.noAdd && Math.abs(d.cx - d.x) < 4 && Math.abs(d.cy - d.y) < 4) { E.sel = d.base; draw(); return; }
   if (d.mode === "band" && Math.abs(d.cx - d.x) < 4 && Math.abs(d.cy - d.y) < 4) {
     // a click on an empty lane: new gem
@@ -778,7 +951,13 @@ function onKey(e) {
   if (!E || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && e.key !== "Escape") return;
   if (!$("#modal").classList.contains("hidden")) return;
   const k = e.key, ctrl = e.ctrlKey || e.metaKey;
+  if (e.shiftKey && !ctrl && /^Digit[1-9]$/.test(e.code)) {  // Shift+n: shape n of the part, at the playhead
+    const sh = (SHAPES[E.focus] || [])[Number(e.code.slice(5)) - 1];
+    if (sh) { e.preventDefault(); placeShape(focusPart(), sh, snapT(s2t(pos()))); }
+    return;
+  }
   if (k >= "1" && k <= "4" && !ctrl) { e.preventDefault(); recordGem(Number(k) - 1); return; }
+  if ((k === "k" || k === "K") && !ctrl) { toggleLoop(); return; }
   if (k === " ") { e.preventDefault(); E.playing ? stop() : play(); return; }
   if (k === "Home") { seek(0); E.x0 = 0; draw(); return; }
   if (ctrl && k.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -788,7 +967,7 @@ function onKey(e) {
   if (ctrl && k.toLowerCase() === "c") { copy(); return; }
   if (ctrl && k.toLowerCase() === "v") { paste(); return; }
   if (k === "r" || k === "R") { toggleRec(); return; }
-  if (k === "Escape") { if (E.recording) toggleRec(); E.sel.clear(); E.fxSel = -1; renderFxPanel(); draw(); return; }
+  if (k === "Escape") { if (E.recording) toggleRec(); if (E.stamp) { E.stamp = null; renderShapes(); } E.sel.clear(); E.fxSel = -1; renderFxPanel(); draw(); return; }
   if (k === "Delete" || k === "Backspace") {
     e.preventDefault();
     if (E.fxSel >= 0 && !E.sel.size) { pushUndo(); E.fx.splice(E.fxSel, 1); E.fxSel = -1; fxChanged(); return; }
@@ -831,7 +1010,7 @@ function toggleSpan(note) {
     const spans = p.tr.notes.filter(n => n.n === note && n.t < b && n.t + n.l > a);
     if (spans.length) p.tr.notes = p.tr.notes.filter(n => !spans.includes(n));
     else {
-      if (note === SOLO && p.tr.notes.filter(n => n.n === SOLO).length >= 4) { toast("a part can have at most 4 solos", true); continue; }
+      if (note === SOLO && p.tr.notes.filter(n => n.n === SOLO).length >= 4) { toast("This part already has 4 solos, the most the game allows. Remove one to add another.", true); continue; }
       p.tr.notes.push({ t: a, l: Math.max(note === SOLO ? E.tpb + 1 : 1, b - a), n: note, v: 100, c: 0 });
     }
   }
@@ -892,6 +1071,8 @@ async function save(rebuild) {
     updateButtons();
     toast(rebuild ? "Saved; rebuilding the chart…" : "Saved to songs/" + E.folder);
     if (rebuild) runBuild(E.folder, "chart");
-  } catch (e) { toast(e.message, true); }
+    return true;
+  } catch (e) { fail("Couldn't save the chart")(e); return false; }
 }
+window.editorSave = () => save(false);  // used by app.js before leaving the editor or building; resolves to true when saved
 })();

@@ -350,8 +350,12 @@ function packsView() {
   return {
     mode, official, capacity: 300 - official,
     songs: list.map(d => { const s = status[d]; return s ? { folder: d, title: s.song.title, artist: s.song.artist, genre: s.song.genre || "", status: s.status, mb: +songFolderMb(d).toFixed(1) } : { folder: d, error: true }; }),
-    packs: readPacks().map(p => { const last = readBuilt()[p.id]; return { ...p, display: packName(p), missing: p.songs.filter(f => !status[f]), outdated: p.songs.filter(f => status[f] && status[f].status !== "built"),
-      mb: +p.songs.reduce((n, f) => n + songFolderMb(f), 0).toFixed(1), built: last && last.dir && fs.existsSync(last.dir) ? last : null }; }),
+    packs: readPacks().map(p => {
+      const last = readBuilt()[p.id], built = last && last.dir && fs.existsSync(last.dir) ? last : null, name = (p.name || "").trim();
+      // renamed: built under another name (an unnamed pack keeps the "Pocket Encore <code>" it was built with)
+      const renamed = !!built && (name ? built.name !== name : !/^Pocket Encore \d{6}$/.test(built.name || ""));
+      return { ...p, display: !name && built && !renamed ? built.name : packName(p), renamed, missing: p.songs.filter(f => !status[f]), outdated: p.songs.filter(f => status[f] && status[f].status !== "built"),
+        mb: +p.songs.reduce((n, f) => n + songFolderMb(f), 0).toFixed(1), built }; }),
   };
 }
 function startPack(id) {
