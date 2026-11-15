@@ -14,6 +14,10 @@ What changed in each version of Pocket Encore. The newest version is first.
 - Chart editor: in the light theme, gems have a thin outline so the pale lane colors (yellow) stay readable; the
   dimmer texts in the dark chart and the highway are lighter.
 
+### Fixes
+- The Help page didn't open ("Couldn't load this page: Cannot set properties of null") since 0.4: its Check for
+  updates button expected the daily-check setting, which is only on the Setup page.
+
 ## 0.4.1 Beta (2026-11-15)
 
 ### Uninstall

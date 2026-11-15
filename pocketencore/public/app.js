@@ -1044,7 +1044,7 @@ function updatePanel() {
 }
 function bindUpdatePanel() {
   if (!$("#updCheck")) return;
-  $("#updAuto").onchange = e => api("PUT", "/api/update", { auto: e.target.checked }).then(s => { UPD = s; toast(e.target.checked ? "Automatic update check on" : "Automatic update check off"); }).catch(fail("Couldn't save the setting"));
+  if ($("#updAuto")) $("#updAuto").onchange = e => api("PUT", "/api/update", { auto: e.target.checked }).then(s => { UPD = s; toast(e.target.checked ? "Automatic update check on" : "Automatic update check off"); }).catch(fail("Couldn't save the setting"));
   $("#updCheck").onclick = async () => {
     $("#updState").textContent = "Checking…";
     try {
