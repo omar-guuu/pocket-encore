@@ -32,7 +32,7 @@ let E = null;  // editor state
 
 window.editorDirty = () => !!(E && (E.dirty || E.fxDirty));
 window.editorState = () => E;  // for tests and the console
-window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); if (E.ctx) E.ctx.close(); E = null; };
+window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); clearInterval(E.padTimer); window.removeEventListener("keyup", E.onKeyUp); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); if (E.ctx) E.ctx.close(); E = null; };
 
 window.openEditor = async (root, folder, details) => {
   window.editorClose();
@@ -46,7 +46,7 @@ window.openEditor = async (root, folder, details) => {
     diff: 3, snap: 4, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, fxDirty: false, saved: false,
     fx: JSON.parse(JSON.stringify(details.effects || [])), fxSel: -1, reduce: S.chart ? !!S.reduce : true,
     ctx: null, bufs: {}, peaks: {}, gains: {}, vol: {}, mute: {}, solo: {}, srcs: [], playing: false, t0: 0, off: 0, rate: 1,
-    focus: "guitar", ticks: false, clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
+    focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
   };
   E.parts = PART_TRACKS.map(([key, names]) => {
     let tr = E.midi.tracks.find(t => names.includes(t.name));
@@ -58,6 +58,7 @@ window.openEditor = async (root, folder, details) => {
   E.length = Math.max(E.length, ...E.parts.flatMap(p => p.tr.notes.map(n => t2s(n.t + n.l)))) || 60;
   renderShell(root, details);
   E.timer = setInterval(scheduleClicks, 25);
+  E.padTimer = setInterval(padPoll, 8);  // the controller (8 ms: timing comes from its time stamps anyway)
   if (sessionStorage.seekTo) { const s = Number(sessionStorage.seekTo); delete sessionStorage.seekTo; E.off = Math.max(0, s - 1); E.x0 = Math.max(0, s - 2); }
   draw();
   loadAudio();
@@ -139,7 +140,22 @@ function chordsOf(p) {
   for (const n of gemsOf(p)) { const l = laneOf(p, n), c = by.get(n.t); if (c) { c[1] = Math.min(c[1], l); c[2] = Math.max(c[2], l); c[3]++; } else by.set(n.t, [n.t, l, l, 1]); }
   return [...by.values()].filter(c => c[3] > 1);
 }
-const CHORD_COL = "#f0a030";
+const CHORD_COL = "#f0a030";  // the highway's (dark in both themes); the chart uses pal().chord
+// Chart colours per theme (the lane colours are the game's and stay). The highway keeps its dark colours in both.
+const PAL = {
+  dark: { bg: "#111318", grid: "#1c2028", beatDown: "#3c4352", beat: "#262b35", barNum: "#9aa1ad", secs: "#6c7380", fxLane: "#181b21", fxWave: "#2c3140",
+    fx: "rgba(180,110,240,.38)", fxLine: "#b46ef0", fxSel: "rgba(240,160,48,.55)", fxSelLine: "#f0a030", fxText: "#ffffff", ovFx: "rgba(180,110,240,.5)",
+    partFocus: "#1a1d24", part: "#171a20", laneLine: "#20242c", soloFill: "rgba(240,160,48,.10)", soloBar: "#f0a030", od: "#6fd8ff", sel: "#ffffff",
+    gutFocus: "#262a33", gut: "#1e2128", gutText: "#9aa1ad", gutDim: "#6c7380", chord: "#f0a030", band: "#f0a030", playhead: "#ffffff", ovBg: "#0e1014",
+    loopFill: "rgba(90,170,255,.09)", loopFillOff: "rgba(90,170,255,.035)", loopBand: "rgba(90,170,255,.45)", loopBandOff: "rgba(90,170,255,.2)", loopLine: "#5aaaff", waveA: "40" },
+  light: { bg: "#fbfbfc", grid: "#eceef1", beatDown: "#aeb5c1", beat: "#dde1e7", barNum: "#3f4652", secs: "#5f6673", fxLane: "#eff1f4", fxWave: "#cfd4dc",
+    fx: "rgba(150,80,220,.28)", fxLine: "#8a4fd0", fxSel: "rgba(240,160,48,.45)", fxSelLine: "#b86a00", fxText: "#1d2026", ovFx: "rgba(150,80,220,.5)",
+    partFocus: "#ffffff", part: "#f5f6f8", laneLine: "#e4e7eb", soloFill: "rgba(240,160,48,.14)", soloBar: "#c87800", od: "#0a8cbc", sel: "#1d2026",
+    gutFocus: "#e2e7ef", gut: "#eceff3", gutText: "#3f4652", gutDim: "#5f6673", chord: "#d97400", band: "#b86a00", playhead: "#1d2026", ovBg: "#eceff3",
+    loopFill: "rgba(40,120,220,.10)", loopFillOff: "rgba(40,120,220,.04)", loopBand: "rgba(40,120,220,.45)", loopBandOff: "rgba(40,120,220,.2)", loopLine: "#2a78d8", waveA: "55" },
+};
+const pal = () => PAL[document.documentElement.dataset.theme === "light" ? "light" : "dark"];
+window.addEventListener("themechange", () => { if (E) draw(); });
 const partOf = n => E.parts.find(p => p.tr.notes.includes(n));
 const focusPart = () => E.parts.find(p => p.key === E.focus);
 function snapshot() { return { notes: E.parts.map(p => p.tr.notes.map(n => ({ ...n }))), fx: JSON.parse(JSON.stringify(E.fx)), tempo: null }; }
@@ -406,7 +422,7 @@ function placeShape(p, sh, t) {
 }
 function shapeSvg(sh) {
   const steps = Math.max(...sh.gems.map(([, k]) => k)) + 1, w = 8 + steps * 10;
-  return `<svg width="${w}" height="30" viewBox="0 0 ${w} 30">${[0, 1, 2, 3].map(l => `<rect x="0" y="${l * 7 + 1}" width="${w}" height="6" fill="#1c2028"/>`).join("")}`
+  return `<svg width="${w}" height="30" viewBox="0 0 ${w} 30">${[0, 1, 2, 3].map(l => `<rect class="ln" x="0" y="${l * 7 + 1}" width="${w}" height="6"/>`).join("")}`
     + sh.gems.map(([l, k]) => `<rect x="${4 + k * 10}" y="${l * 7 + 1}" width="7" height="6" rx="1" fill="${LANE_COL[l]}"/>`).join("") + "</svg>";
 }
 function renderShapes() {
@@ -459,44 +475,45 @@ function draw() {
   if (!E || !E.cv) return;
   const c = E.g, W = E.W;
   c.clearRect(0, 0, W, H);
-  c.fillStyle = "#111318"; c.fillRect(0, 0, W, H);
+  const K = pal();
+  c.fillStyle = K.bg; c.fillRect(0, 0, W, H);
   const s0 = E.x0, s1 = sOf(W), t0 = s2t(Math.max(0, s0)), t1 = s2t(s1);
   // grid
   const beats = beatList(t0 - E.tpb, t1 + E.tpb);
   const stepPx = E.pps * (seg(t0).us / 1e6) / (E.snap || 4);
   if (E.snap > 1 && stepPx > 7) {
-    c.strokeStyle = "#1c2028"; c.beginPath();
+    c.strokeStyle = K.grid; c.beginPath();
     for (let t = Math.floor(t0 / step()) * step(); t <= t1; t += step()) { const x = Math.round(xOf(t2s(t))) + .5; c.moveTo(x, RULER); c.lineTo(x, H); }
     c.stroke();
   }
   for (const b of beats) {
     const x = Math.round(xOf(t2s(b.t))) + .5;
     if (x < GUT) continue;
-    c.strokeStyle = b.down ? "#3c4352" : "#262b35"; c.beginPath(); c.moveTo(x, RULER - (b.down ? 12 : 5)); c.lineTo(x, H); c.stroke();
-    if (b.down && E.pps * 2 > 40) { c.fillStyle = "#9aa1ad"; c.font = "11px Segoe UI"; c.fillText(String(b.bar), x + 3, 12); }
+    c.strokeStyle = b.down ? K.beatDown : K.beat; c.beginPath(); c.moveTo(x, RULER - (b.down ? 12 : 5)); c.lineTo(x, H); c.stroke();
+    if (b.down && E.pps * 2 > 40) { c.fillStyle = K.barNum; c.font = "11px Segoe UI"; c.fillText(String(b.bar), x + 3, 12); }
   }
   // ruler seconds
-  c.fillStyle = "#6c7380"; c.font = "10px Segoe UI";
+  c.fillStyle = K.secs; c.font = "10px Segoe UI";
   const secStep = [1, 2, 5, 10, 15, 30, 60].find(v => v * E.pps > 60) || 60;
   for (let s = Math.ceil(s0 / secStep) * secStep; s < s1; s += secStep) { const x = xOf(s); if (x > GUT) c.fillText(fmtTime(s).replace(/\.0$/, ""), x + 2, RULER - 3); }
   // effects lane
   const fy = RULER;
-  c.fillStyle = "#181b21"; c.fillRect(GUT, fy, W - GUT, FXH - 2);
-  wave("fill", fy, FXH - 2, "#2c3140");
+  c.fillStyle = K.fxLane; c.fillRect(GUT, fy, W - GUT, FXH - 2);
+  wave("fill", fy, FXH - 2, K.fxWave);
   E.fx.forEach((f, i) => {
     const a = xOf(f.from + E.lead), b = f.to != null ? xOf(f.to + E.lead) : xOf(E.length);
     if (b < GUT || a > W) return;
-    c.fillStyle = i === E.fxSel ? "rgba(240,160,48,.55)" : "rgba(180,110,240,.38)";
+    c.fillStyle = i === E.fxSel ? K.fxSel : K.fx;
     c.fillRect(a, fy + 3, Math.max(3, b - a), FXH - 8);
-    c.strokeStyle = i === E.fxSel ? "#f0a030" : "#b46ef0"; c.strokeRect(a + .5, fy + 3.5, Math.max(3, b - a) - 1, FXH - 9);
-    c.fillStyle = "#fff"; c.font = "11px Segoe UI"; c.fillText((f.effect || "cmd " + f.cmd) + (f.to == null ? " →" : ""), Math.max(a, GUT) + 4, fy + 18);
+    c.strokeStyle = i === E.fxSel ? K.fxSelLine : K.fxLine; c.strokeRect(a + .5, fy + 3.5, Math.max(3, b - a) - 1, FXH - 9);
+    c.fillStyle = K.fxText; c.font = "11px Segoe UI"; c.fillText((f.effect || "cmd " + f.cmd) + (f.to == null ? " →" : ""), Math.max(a, GUT) + 4, fy + 18);
   });
   // parts
   E.parts.forEach((p, i) => {
     const y0 = partY(i);
-    c.fillStyle = p.key === E.focus ? "#1a1d24" : "#171a20"; c.fillRect(GUT, y0, W - GUT, PART_H);
-    wave(STEM_OF[p.key], y0 + HEAD, 4 * LANE, PART_COL[p.key] + "40");
-    for (let l = 1; l < 4; l++) { c.strokeStyle = "#20242c"; c.beginPath(); c.moveTo(GUT, y0 + HEAD + l * LANE + .5); c.lineTo(W, y0 + HEAD + l * LANE + .5); c.stroke(); }
+    c.fillStyle = p.key === E.focus ? K.partFocus : K.part; c.fillRect(GUT, y0, W - GUT, PART_H);
+    wave(STEM_OF[p.key], y0 + HEAD, 4 * LANE, PART_COL[p.key] + K.waveA);
+    for (let l = 1; l < 4; l++) { c.strokeStyle = K.laneLine; c.beginPath(); c.moveTo(GUT, y0 + HEAD + l * LANE + .5); c.lineTo(W, y0 + HEAD + l * LANE + .5); c.stroke(); }
     // overdrive and solo markers (shared by every difficulty)
     const od = [];
     for (const n of p.tr.notes) {
@@ -504,8 +521,8 @@ function draw() {
       const a = xOf(t2s(n.t)), b = xOf(t2s(n.t + n.l));
       if (n.n === OD) od.push(n);
       if (b < GUT || a > W) continue;
-      if (n.n === SOLO) { c.fillStyle = "rgba(240,160,48,.10)"; c.fillRect(a, y0 + HEAD, b - a, 4 * LANE); c.fillStyle = "#f0a030"; c.fillRect(a, y0 + 1, b - a, 4); c.font = "9px Segoe UI"; c.fillText("solo", Math.max(a, GUT) + 2, y0 + 12); }
-      else { c.fillStyle = "#6fd8ff"; c.fillRect(a, y0 + 7, Math.max(2, b - a), 4); }
+      if (n.n === SOLO) { c.fillStyle = K.soloFill; c.fillRect(a, y0 + HEAD, b - a, 4 * LANE); c.fillStyle = K.soloBar; c.fillRect(a, y0 + 1, b - a, 4); c.font = "9px Segoe UI"; c.fillText("solo", Math.max(a, GUT) + 2, y0 + 12); }
+      else { c.fillStyle = K.od; c.fillRect(a, y0 + 7, Math.max(2, b - a), 4); }
     }
     const inOd = n => od.some(o => n.t >= o.t && n.t < o.t + o.l);
     if (E.showGhost && E.ghost) {  // removed gems of the automatic chart, as outlines
@@ -519,7 +536,7 @@ function draw() {
     }
     for (const [t, lo, hi] of chordsOf(p)) {
       const x = Math.round(xOf(t2s(t)) + 4.5) + .5; if (x < GUT || x > W) continue;
-      c.strokeStyle = CHORD_COL; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y0 + HEAD + lo * LANE + LANE / 2); c.lineTo(x, y0 + HEAD + hi * LANE + LANE / 2); c.stroke(); c.lineWidth = 1;
+      c.strokeStyle = K.chord; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y0 + HEAD + lo * LANE + LANE / 2); c.lineTo(x, y0 + HEAD + hi * LANE + LANE / 2); c.stroke(); c.lineWidth = 1;
     }
     for (const n of gemsOf(p)) {
       const a = xOf(t2s(n.t));
@@ -529,23 +546,23 @@ function draw() {
       c.fillStyle = LANE_COL[l];
       if (sus) { c.globalAlpha = .55; c.fillRect(a, y + LANE / 2 - 3, b - a, 6); c.globalAlpha = 1; }
       c.fillRect(a, y + 3, 9, LANE - 6);
-      if (inOd(n)) { c.strokeStyle = "#6fd8ff"; c.lineWidth = 2; c.strokeRect(a - 1, y + 2, 11, LANE - 4); c.lineWidth = 1; }
-      if (sel) { c.strokeStyle = "#fff"; c.lineWidth = 2; c.strokeRect(a - 2, y + 1, Math.max(13, b - a + 4), LANE - 2); c.lineWidth = 1; }
+      if (inOd(n)) { c.strokeStyle = K.od; c.lineWidth = 2; c.strokeRect(a - 1, y + 2, 11, LANE - 4); c.lineWidth = 1; }
+      if (sel) { c.strokeStyle = K.sel; c.lineWidth = 2; c.strokeRect(a - 2, y + 1, Math.max(13, b - a + 4), LANE - 2); c.lineWidth = 1; }
     }
     // gutter label
-    c.fillStyle = p.key === E.focus ? "#262a33" : "#1e2128"; c.fillRect(0, y0, GUT - 2, PART_H);
+    c.fillStyle = p.key === E.focus ? K.gutFocus : K.gut; c.fillRect(0, y0, GUT - 2, PART_H);
     c.fillStyle = PART_COL[p.key]; c.font = "bold 12px Segoe UI"; c.fillText(p.key, 8, y0 + 12);
-    for (let l = 0; l < 4; l++) { c.fillStyle = LANE_COL[l]; c.fillRect(GUT - 14, y0 + HEAD + l * LANE + 5, 8, LANE - 10); if (p.key === E.focus) { c.fillStyle = "#9aa1ad"; c.font = "9px Segoe UI"; c.fillText(String(l + 1), GUT - 24, y0 + HEAD + l * LANE + 15); } }
-    c.fillStyle = "#6c7380"; c.font = "10px Segoe UI"; c.fillText(`${gemsOf(p).length} gems`, 8, y0 + 30);
+    for (let l = 0; l < 4; l++) { c.fillStyle = LANE_COL[l]; c.fillRect(GUT - 14, y0 + HEAD + l * LANE + 5, 8, LANE - 10); if (p.key === E.focus) { c.fillStyle = K.gutText; c.font = "9px Segoe UI"; c.fillText(String(l + 1), GUT - 24, y0 + HEAD + l * LANE + 15); } }
+    c.fillStyle = K.gutDim; c.font = "10px Segoe UI"; c.fillText(`${gemsOf(p).length} gems`, 8, y0 + 30);
   });
   // loop region: shaded over everything, edges as handles on the ruler
   if (E.loop) {
     const a = xOf(E.loop.a), b = xOf(E.loop.b), on = loopOn();
     if (b > GUT && a < W) {
       const xa = Math.max(GUT, a);
-      c.fillStyle = on ? "rgba(90,170,255,.09)" : "rgba(90,170,255,.035)"; c.fillRect(xa, 0, b - xa, H);
-      c.fillStyle = on ? "rgba(90,170,255,.45)" : "rgba(90,170,255,.2)"; c.fillRect(xa, RULER - 6, b - xa, 5);
-      c.strokeStyle = on ? "#5aaaff" : "#5aaaff70"; c.setLineDash(on ? [] : [3, 3]);
+      c.fillStyle = on ? K.loopFill : K.loopFillOff; c.fillRect(xa, 0, b - xa, H);
+      c.fillStyle = on ? K.loopBand : K.loopBandOff; c.fillRect(xa, RULER - 6, b - xa, 5);
+      c.strokeStyle = on ? K.loopLine : K.loopLine + "70"; c.setLineDash(on ? [] : [3, 3]);
       for (const x of [a, b]) if (x >= GUT && x <= W) { c.beginPath(); c.moveTo(Math.round(x) + .5, 0); c.lineTo(Math.round(x) + .5, H); c.stroke(); c.fillStyle = c.strokeStyle; c.fillRect(Math.round(x) - 3, 0, 7, 10); }
       c.setLineDash([]);
     }
@@ -559,20 +576,24 @@ function draw() {
       for (const [l, k] of sh.gems) {
         const gx = xOf(t2s(t + k * shapeStep())), gy = y0 + HEAD + l * LANE;
         c.globalAlpha = .6; c.fillStyle = LANE_COL[l]; c.fillRect(gx, gy + 3, 9, LANE - 6); c.globalAlpha = 1;
-        c.strokeStyle = "#fff"; c.setLineDash([2, 2]); c.strokeRect(gx - 1.5, gy + 1.5, 12, LANE - 3); c.setLineDash([]);
+        c.strokeStyle = K.sel; c.setLineDash([2, 2]); c.strokeRect(gx - 1.5, gy + 1.5, 12, LANE - 3); c.setLineDash([]);
       }
     }
   }
-  c.fillStyle = "#1e2128"; c.fillRect(0, 0, GUT - 2, RULER + FXH);
-  c.fillStyle = "#9aa1ad"; c.font = "11px Segoe UI"; c.fillText("bar / time", 8, 18); c.fillText("effects", 8, RULER + 18);
+  c.fillStyle = K.gut; c.fillRect(0, 0, GUT - 2, RULER + FXH);
+  c.fillStyle = K.gutText; c.font = "11px Segoe UI"; c.fillText("bar / time", 8, 18); c.fillText("effects", 8, RULER + 18);
   // rubber band
   if (E.drag && E.drag.mode === "band") {
-    const d = E.drag; c.strokeStyle = "#f0a030"; c.setLineDash([4, 3]);
+    const d = E.drag; c.strokeStyle = K.band; c.setLineDash([4, 3]);
     c.strokeRect(Math.min(d.x, d.cx) + .5, Math.min(d.y, d.cy) + .5, Math.abs(d.cx - d.x), Math.abs(d.cy - d.y)); c.setLineDash([]);
+  }
+  if (E.odStart != null && E.odPart) {
+    const i = E.parts.indexOf(E.odPart), a = xOf(t2s(E.odStart)), b = xOf(pos());
+    c.fillStyle = K.od; c.globalAlpha = .6; c.fillRect(Math.max(GUT, Math.min(a, b)), partY(i) + 7, Math.abs(b - a), 4); c.globalAlpha = 1;
   }
   // playhead
   const px = xOf(pos());
-  if (px >= GUT && px <= W) { c.strokeStyle = "#fff"; c.beginPath(); c.moveTo(px + .5, 0); c.lineTo(px + .5, H); c.stroke(); }
+  if (px >= GUT && px <= W) { c.strokeStyle = K.playhead; c.beginPath(); c.moveTo(px + .5, 0); c.lineTo(px + .5, H); c.stroke(); }
   drawOverview();
   drawHighway();
   updateStatus();
@@ -591,17 +612,17 @@ function wave(track, y, h, col) {
   }
 }
 function drawOverview() {
-  const c = E.og, W = E.W, h = 34;
-  c.fillStyle = "#0e1014"; c.fillRect(0, 0, W, h);
+  const c = E.og, W = E.W, h = 34, K = pal();
+  c.fillStyle = K.ovBg; c.fillRect(0, 0, W, h);
   const L = E.length || 1, k = W / L;
   for (const p of E.parts) {
     c.fillStyle = PART_COL[p.key] + "90";
     const i = E.parts.indexOf(p);
     for (const n of gemsOf(p)) c.fillRect(Math.floor(t2s(n.t) * k), 3 + i * 7, 1, 6);
   }
-  E.fx.forEach(f => { c.fillStyle = "rgba(180,110,240,.5)"; const a = (f.from + E.lead) * k, b = (f.to != null ? f.to + E.lead : L) * k; c.fillRect(a, h - 4, Math.max(2, b - a), 3); });
-  c.strokeStyle = "#f0a030"; c.strokeRect(E.x0 * k + .5, .5, Math.max(4, (W - GUT) / E.pps * k), h - 1);
-  c.fillStyle = "#fff"; c.fillRect(pos() * k, 0, 1, h);
+  E.fx.forEach(f => { c.fillStyle = K.ovFx; const a = (f.from + E.lead) * k, b = (f.to != null ? f.to + E.lead : L) * k; c.fillRect(a, h - 4, Math.max(2, b - a), 3); });
+  c.strokeStyle = K.band; c.strokeRect(E.x0 * k + .5, .5, Math.max(4, (W - GUT) / E.pps * k), h - 1);
+  c.fillStyle = K.playhead; c.fillRect(pos() * k, 0, 1, h);
 }
 // Highway: the focus part as the game shows it, gems falling towards the strike line at the bottom.
 function drawHighway() {
@@ -660,7 +681,8 @@ function renderShell(root, details) {
     <span class="sep"></span>
     <label class="small dim">part</label><select id="focus" title="The part the highway shows, the ticks follow and keys 1-4 record into">${opts([["drums", "drums"], ["bass", "bass"], ["guitar", "guitar"], ["vocals", "vocals"]], "guitar")}</select>
     <label class="small"><input type="checkbox" id="ticks"> ticks</label>
-    <button id="rec" title="Record mode: while playing, keys 1-4 add gems to the part at the playhead (R)">● Record</button>
+    <button id="rec" title="Record mode: while playing, keys 1-4 (or the controller) add gems to the part at the playhead; hold for a held note (R)">● Record</button>
+    <button id="padBtn">🎮 Controller</button>
     <span class="sep"></span>
     <button id="undo" title="Ctrl+Z">Undo</button><button id="redo" title="Ctrl+Y">Redo</button>
     <button id="tempoBtn" title="Set a constant tempo or shift every gem">Tempo…</button>
@@ -680,12 +702,13 @@ function renderShell(root, details) {
     <div class="panel" id="fxPanel" style="width:340px"></div>
     <div class="panel keys" style="width:390px">
       <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
-      <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane of the part at the playhead (also while playing) · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd> add that shape<br>
+      <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane at the playhead (hold while playing = held note; together = chord) · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd> add that shape<br>
       shapes: drag one onto its part, or click it then click the part; <kbd>Esc</kbd> stops placing<br>
       click a lane = add gem · drag = move · drag the right end = hold length<br>
       drag on empty space or a part's title = select area · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click = add to selection<br>
       <kbd>Del</kbd> delete · <kbd>←</kbd><kbd>→</kbd> move by snap · <kbd>↑</kbd><kbd>↓</kbd> lane · <kbd>T</kbd> tap/hold<br>
       <kbd>O</kbd> overdrive phrase on/off · <kbd>L</kbd> solo on/off for the selection · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste at the playhead<br>
+      🎮 controller (Xbox / PlayStation): the game's layout; see <b>🎮 Controller</b> for every button<br>
       effects lane: double-click = new effect, drag body/edges, <kbd>Del</kbd> delete · wheel = scroll · <kbd>Ctrl</kbd>+wheel = zoom
     </div>
   </div>`;
@@ -704,11 +727,12 @@ function renderShell(root, details) {
   $("#play").onclick = () => E.playing ? stop() : play();
   $("#toStart").onclick = () => { seek(0); E.x0 = 0; draw(); };
   $("#rate").onchange = e => { const was = E.playing; stop(); E.rate = Number(e.target.value); if (was) play(); };
-  $("#diff").onchange = e => { E.diff = Number(e.target.value); E.sel.clear(); renderDiff(); renderRules(); renderShapes(); draw(); };
+  $("#diff").onchange = e => setDiff(Number(e.target.value));
+  $("#padBtn").onclick = padDialog;
   $("#snap").onchange = e => { E.snap = Number(e.target.value); draw(); };
   $("#zoomIn").onclick = () => zoom(1.5, GUT + (E.W - GUT) / 2);
   $("#zoomOut").onclick = () => zoom(1 / 1.5, GUT + (E.W - GUT) / 2);
-  $("#focus").onchange = e => { E.focus = e.target.value; E.clickNext = rawPos(); renderShapes(); draw(); };
+  $("#focus").onchange = e => setFocus(e.target.value);
   $("#loopBtn").onclick = toggleLoop; $("#loopBtn").title = LOOP_TIP;
   $("#ticks").onchange = e => { E.ticks = e.target.checked; E.clickNext = rawPos(); };
   $("#rec").onclick = toggleRec;
@@ -736,8 +760,10 @@ function renderShell(root, details) {
   const ovNav = e => { const r = E.ov.getBoundingClientRect(), s = (e.clientX - r.left) / E.W * E.length; E.x0 = Math.max(0, s - (E.W - GUT) / E.pps / 2); draw(); };
   E.ov.addEventListener("mousedown", e => { ovNav(e); const mv = ev => ovNav(ev), up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); });
   E.hw.addEventListener("mousedown", e => { const r = E.hw.getBoundingClientRect(); const l = Math.floor((e.clientX - r.left - 24) / ((HW_W - 48) / 4)); if (l >= 0 && l < 4) recordGem(l); });
-  E.onKey = onKey;
+  E.onKey = onKey; E.onKeyUp = onKeyUp;
   window.addEventListener("keydown", E.onKey);
+  window.addEventListener("keyup", E.onKeyUp);
+  renderPadBadge();
   updateButtons(); renderFxPanel(); renderDiff(); renderShapes(); runChecks();
 }
 function toggleRec() { E.recording = !E.recording; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
@@ -946,9 +972,215 @@ function onWheel(e) {
   else { E.x0 = Math.max(0, Math.min(E.length, E.x0 + (e.deltaY + e.deltaX) / E.pps * 0.8)); draw(); }
 }
 
+// ---------- playing gems in: keys 1-4 and the controller ----------
+// A press adds a gem at the playhead; lanes pressed within CHORD_MS of each other land on the same tick (a chord, one undo
+// step). Held while playing for HOLD_S or more, the gem becomes a held note as long as the press (snapped to the grid).
+// Press times are taken from the event / controller time stamps and the timing offset, not from when they are handled.
+const CHORD_MS = 50, HOLD_S = 0.25;
+const inputOffset = () => { try { const v = Number(localStorage["pe.padOffset"]); return isFinite(v) ? v : 0; } catch { return 0; } };
+// song time of an input that happened at performance time `ms`
+function songTimeAt(ms) {
+  if (!E.playing) return pos();
+  const lag = Math.max(0, performance.now() - (ms || performance.now())) / 1000;
+  return Math.max(0, pos() - lag * E.rate - inputOffset() / 1000 * E.rate);
+}
+function laneDown(lane, ms) {
+  if (E.calib) return calibPress(ms);
+  const p = focusPart(), s = songTimeAt(ms), now = performance.now(), lp = E.lastPress;
+  const chord = lp && lp.part === p && now - lp.ms < CHORD_MS;
+  const t = chord ? lp.t : snapT(s2t(s));
+  if (t < 0) return;
+  if (!chord) pushUndo();
+  const g = addGem(p, lane, t);
+  if (g) { if (!chord) E.sel.clear(); E.sel.add(g); fixOverlaps(p); markDirty(); }
+  else {  // a gem is already there: select it, nothing to undo
+    if (!chord) { E.undo.pop(); E.sel.clear(); }
+    const ex = p.tr.notes.find(x => x.n === BASE[E.diff] + p.off + lane && x.t === t);
+    if (ex) E.sel.add(ex);
+    draw();
+  }
+  E.lastPress = { ms: now, t, part: p };
+  E.held[lane] = g && E.playing ? { g, s } : null;
+}
+function laneUp(lane, ms) {
+  const h = E.held[lane]; E.held[lane] = null;
+  if (!h || !E || !E.playing) return;
+  let s = songTimeAt(ms);
+  if (s < h.s && E.playLoop) s = E.playLoop.b;  // the loop wrapped while held: up to the loop end
+  if (s - h.s < HOLD_S * E.rate) return;
+  const end = snapT(s2t(s));
+  if (end - h.g.t <= TAP_MAX) return;
+  h.g.l = end - h.g.t;
+  fixOverlaps(partOf(h.g) || focusPart()); markDirty();
+}
+// overdrive: while recording, the first press starts a phrase at the playhead and the second ends it; otherwise it
+// toggles a phrase over the selected gems (like O)
+function overdrivePress(ms) {
+  if (E.recording && E.playing) {
+    const t = snapT(s2t(songTimeAt(ms)));
+    if (E.odStart == null) { E.odStart = t; E.odPart = focusPart(); toast("Overdrive phrase started: press again to end it"); draw(); return; }
+    const p = E.odPart, a = Math.min(E.odStart, t), b = Math.max(E.odStart, t);
+    E.odStart = null; E.odPart = null;
+    if (b - a < E.tpb / 4) { draw(); return; }
+    pushUndo(); p.tr.notes.push({ t: a, l: b - a, n: OD, v: 100, c: 0 }); markDirty(); toast("Overdrive phrase added");
+    return;
+  }
+  if (!E.sel.size) { toast("Select gems first, or press it while recording to start and end a phrase.", true); return; }
+  toggleSpan(OD);
+}
+function setFocus(key) { E.focus = key; $("#focus").value = key; E.clickNext = rawPos(); E.odStart = null; renderShapes(); draw(); }
+function setDiff(d) { E.diff = d; $("#diff").value = d; E.sel.clear(); renderDiff(); renderRules(); renderShapes(); draw(); }
+
+// ---------- controller: Xbox and PlayStation (the browser's "standard" button layout is the same for both) ----------
+const PAD_ACTIONS = [  // key, what it does, default button (standard index); the first seven follow the game's layout
+  ["lane0", "Red gem", 14], ["lane1", "Yellow gem", 12], ["lane2", "Blue gem", 1], ["lane3", "Green gem", 3],
+  ["partPrev", "Part to the left", 4], ["partNext", "Part to the right", 5], ["od", "Overdrive", 0],
+  ["play", "Play / pause", 9], ["rec", "Record on/off", 8], ["loop", "Loop on/off", 2], ["undo", "Undo", 6], ["redo", "Redo", 7],
+  ["del", "Delete the selected gems", 13], ["home", "Back to the start", 10],
+];
+const PAD_NAMES = {
+  playstation: ["✕", "○", "□", "△", "L1", "R1", "L2", "R2", "Share", "Options", "L3", "R3", "D-pad ↑", "D-pad ↓", "D-pad ←", "D-pad →", "PS", "Touchpad"],
+  xbox: ["A", "B", "X", "Y", "LB", "RB", "LT", "RT", "View", "Menu", "LS", "RS", "D-pad ↑", "D-pad ↓", "D-pad ←", "D-pad →", "Xbox", "—"],
+};
+const PAD_STICKS = "Left stick ←/→: move the playhead by the snap · Right stick ↑/↓: difficulty · Right stick ←/→: zoom";
+function padKind(gp) {
+  const id = (gp && gp.id || "").toLowerCase();
+  if (/xbox|xinput|045e/.test(id)) return "xbox";
+  if (/playstation|dualshock|dualsense|054c|wireless controller/.test(id)) return "playstation";
+  return null;
+}
+function padMap() {
+  let m = {}; try { m = JSON.parse(localStorage["pe.padMap"] || "{}"); } catch { }
+  return Object.fromEntries(PAD_ACTIONS.map(([k, , d]) => [k, Number.isInteger(m[k]) ? m[k] : d]));
+}
+function savePadMap(m) { try { localStorage["pe.padMap"] = JSON.stringify(m); } catch { } }
+const padButtonName = (kind, i) => (PAD_NAMES[kind || "playstation"][i]) || `button ${i}`;
+function renderPadBadge() {
+  const b = $("#padBtn"); if (!b) return;
+  const st = E.padState;
+  b.textContent = st === "xbox" ? "🎮 Xbox" : st === "playstation" ? "🎮 PlayStation" : st === "unsupported" ? "🎮 Not supported" : "🎮 Controller";
+  b.classList.toggle("on", st === "xbox" || st === "playstation");
+  b.title = st === "unsupported" ? "This controller isn't supported: Pocket Encore supports Xbox and PlayStation controllers." : "Controller layout, timing offset and calibration";
+}
+function padPoll() {
+  if (!E) return;
+  const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter(Boolean) : [];
+  const gp = pads.find(padKind), state = gp ? padKind(gp) : pads.length ? "unsupported" : "";
+  if (state !== E.padState) { E.padState = state; renderPadBadge(); if ($("#modalBox .padtable") && !$("#modal").classList.contains("hidden")) padDialog(); }
+  if (!gp) { E.padPrev = null; return; }
+  const now = gp.buttons.map(b => b.pressed), prev = E.padPrev || now.map(() => false), ts = gp.timestamp || performance.now();
+  E.padPrev = now;
+  // remapping in the dialog: the first newly pressed button
+  if (E.padLearn && !$("#modalBox .padtable")) E.padLearn = null;  // the dialog was closed
+  if (E.padLearn) { const i = now.findIndex((v, k) => v && !prev[k]); if (i >= 0) learnPad(i); return; }
+  const modal = !$("#modal").classList.contains("hidden");
+  const map = padMap();
+  for (const [k] of PAD_ACTIONS) {
+    const i = map[k], down = now[i] && !prev[i], up = !now[i] && prev[i];
+    if (k.startsWith("lane")) {
+      if (down && (!modal || E.calib)) laneDown(Number(k[4]), ts);
+      if (up) laneUp(Number(k[4]), ts);
+      continue;
+    }
+    if (!down || modal) continue;
+    padAction(k, ts);
+  }
+  if (modal) return;
+  // sticks: left X moves the playhead (repeats while held), right Y difficulty (once per push), right X zoom
+  const ax = gp.axes || [], t = performance.now(), dead = 0.5;
+  const lx = ax[0] || 0, rx = ax[2] || 0, ry = ax[3] || 0;
+  if (Math.abs(lx) > dead && t >= (E.stickNext || 0)) {
+    const d = Math.sign(lx) * (E.snap ? step() : E.tpb / 4);
+    seek(Math.max(0, t2s(Math.max(0, s2t(pos()) + d))));
+    keepPlayheadInView();
+    E.stickNext = t + (Math.abs(lx) > 0.9 ? 70 : 160);
+  } else if (Math.abs(lx) <= dead && Math.abs(rx) <= dead) E.stickNext = 0;
+  if (Math.abs(rx) > dead && t >= (E.zoomNext || 0)) { zoom(rx > 0 ? 1.15 : 1 / 1.15, xOf(pos())); E.zoomNext = t + 90; }
+  if (Math.abs(ry) > 0.6) { if (!E.ryHeld) { E.ryHeld = true; setDiff(Math.max(0, Math.min(3, E.diff + (ry < 0 ? 1 : -1)))); } }
+  else E.ryHeld = false;
+}
+function keepPlayheadInView() {
+  const x = xOf(pos());
+  if (x < GUT + 20 || x > E.W - 40) { E.x0 = Math.max(0, pos() - (E.W - GUT) / E.pps * 0.3); draw(); }
+}
+function padAction(k, ts) {
+  const keys = ["drums", "bass", "guitar", "vocals"];
+  if (k === "partPrev" || k === "partNext") { const i = keys.indexOf(E.focus) + (k === "partNext" ? 1 : -1); if (i >= 0 && i < keys.length) setFocus(keys[i]); }
+  else if (k === "od") overdrivePress(ts);
+  else if (k === "play") E.playing ? stop() : play();
+  else if (k === "rec") toggleRec();
+  else if (k === "loop") toggleLoop();
+  else if (k === "undo") undo();
+  else if (k === "redo") redo();
+  else if (k === "home") { seek(0); E.x0 = 0; draw(); }
+  else if (k === "del" && E.sel.size) { pushUndo(); for (const p of E.parts) p.tr.notes = p.tr.notes.filter(n => !E.sel.has(n)); E.sel.clear(); markDirty(); }
+}
+function learnPad(i) {
+  const m = padMap(), k = E.padLearn, other = Object.keys(m).find(x => x !== k && m[x] === i);
+  if (other) m[other] = m[k];  // the button was used: the two actions swap buttons
+  m[k] = i; savePadMap(m); E.padLearn = null; padDialog();
+}
+// the Controller dialog: layout for both controllers, remapping, timing offset and its calibration
+function padDialog() {
+  E.padDialog = true;
+  const kind = E.padState === "xbox" || E.padState === "playstation" ? E.padState : null, m = padMap();
+  const row = ([k, label]) => `<tr><td>${esc(label)}</td><td>${esc(padButtonName("playstation", m[k]))}</td><td>${esc(padButtonName("xbox", m[k]))}</td>
+    <td>${E.padLearn === k ? `<b>press a button…</b>` : `<button class="small" data-learn="${k}" ${kind ? "" : "disabled"}>Change</button>`}</td></tr>`;
+  $("#modalBox").innerHTML = `<b>Controller</b>
+    <p class="small">${kind ? `Connected: <b>${kind === "xbox" ? "Xbox" : "PlayStation"} controller</b>.` : E.padState === "unsupported" ? `<span class="warnline">The connected controller isn't supported.</span>` : "No controller found: connect one and press any button."}
+      Pocket Encore supports Xbox and PlayStation controllers. The gem, part and overdrive buttons follow the game's layout.</p>
+    <table class="t padtable"><tr><th>Action</th><th>PlayStation</th><th>Xbox</th><th></th></tr>${PAD_ACTIONS.map(row).join("")}</table>
+    <p class="small dim">${PAD_STICKS}. Press gem buttons together for a chord; hold one while playing for a held note. Overdrive while recording: press to start a phrase, press again to end it.</p>
+    <div class="form" style="grid-template-columns:200px 1fr"><label>Timing offset (ms)</label><span class="inline"><input type="number" id="padOff" step="1" value="${inputOffset()}">
+      <button id="padCal">Calibrate…</button><span class="small dim">for the controller and keys 1–4: + if your presses land late</span></span></div>
+    <div id="calOut" class="small" style="margin-top:6px"></div>
+    <div class="actions" style="margin-top:12px"><button id="padReset">Reset to the default layout</button><span class="grow"></span><button class="primary" id="padClose">Close</button></div>`;
+  $("#modal").classList.remove("hidden");
+  $("#modalBox").querySelectorAll("[data-learn]").forEach(b => b.onclick = () => { E.padLearn = b.dataset.learn; padDialog(); });
+  $("#padOff").oninput = $("#padOff").onchange = e => { try { localStorage["pe.padOffset"] = String(Math.round(Number(e.target.value) || 0)); } catch { } };
+  $("#padReset").onclick = () => { savePadMap({}); E.padLearn = null; padDialog(); };
+  $("#padCal").onclick = calibrate;
+  $("#padClose").onclick = () => { E.padLearn = null; E.calib = null; E.padDialog = false; $("#modal").classList.add("hidden"); };
+}
+// calibration: 8 clicks at 100 BPM; press any gem button (or key 1-4) on each. The median lateness becomes the offset.
+function calibrate() {
+  if (!E.ctx) { toast("The audio isn't loaded yet: try again in a moment.", true); return; }
+  if (E.playing) stop();
+  E.ctx.resume();
+  const beat = 0.6, n = 8, t0 = E.ctx.currentTime + 1;
+  for (let i = 0; i < n; i++) {
+    const w = t0 + i * beat, o = E.ctx.createOscillator(), g = E.ctx.createGain();
+    o.frequency.value = i % 4 ? 1500 : 2000; o.connect(g); g.connect(E.ctx.destination);
+    g.gain.setValueAtTime(0.6, w); g.gain.exponentialRampToValueAtTime(0.001, w + 0.05); o.start(w); o.stop(w + 0.06);
+  }
+  // the clicks in performance time (where the presses' time stamps are)
+  const perfAt = w => performance.now() + (w - E.ctx.currentTime) * 1000;
+  E.calib = { clicks: Array.from({ length: n }, (_, i) => perfAt(t0 + i * beat)), hits: [] };
+  $("#calOut").textContent = "Listen: 8 clicks. Press a gem button (or key 1–4) on each click…";
+  setTimeout(() => {
+    if (!E || !E.calib) return;
+    const d = E.calib.hits.sort((a, b) => a - b); E.calib = null;
+    if (d.length < 4) { $("#calOut").textContent = `Only ${d.length} presses heard: try again and press on each click.`; return; }
+    const med = Math.round(d[d.length >> 1]);
+    try { localStorage["pe.padOffset"] = String(med); } catch { }
+    $("#padOff").value = med;
+    $("#calOut").textContent = `Your presses were ${Math.abs(med)} ms ${med >= 0 ? "late" : "early"} on average (${d.length} presses): offset set to ${med} ms.`;
+  }, (1 + n * beat + 0.6) * 1000);
+}
+function calibPress(ms) {
+  const c = E.calib, t = ms || performance.now();
+  const near = c.clicks.reduce((a, b) => Math.abs(b - t) < Math.abs(a - t) ? b : a);
+  if (Math.abs(t - near) < 300) c.hits.push(t - near);
+}
+
 // ---------- keys ----------
+function onKeyUp(e) {
+  if (!E) return;
+  if (e.key >= "1" && e.key <= "4") laneUp(Number(e.key) - 1, e.timeStamp);
+}
 function onKey(e) {
   if (!E || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && e.key !== "Escape") return;
+  if (E.calib && e.key >= "1" && e.key <= "4") { e.preventDefault(); if (!e.repeat) calibPress(e.timeStamp); return; }
   if (!$("#modal").classList.contains("hidden")) return;
   const k = e.key, ctrl = e.ctrlKey || e.metaKey;
   if (e.shiftKey && !ctrl && /^Digit[1-9]$/.test(e.code)) {  // Shift+n: shape n of the part, at the playhead
@@ -956,7 +1188,7 @@ function onKey(e) {
     if (sh) { e.preventDefault(); placeShape(focusPart(), sh, snapT(s2t(pos()))); }
     return;
   }
-  if (k >= "1" && k <= "4" && !ctrl) { e.preventDefault(); recordGem(Number(k) - 1); return; }
+  if (k >= "1" && k <= "4" && !ctrl) { e.preventDefault(); if (!e.repeat) laneDown(Number(k) - 1, e.timeStamp); return; }
   if ((k === "k" || k === "K") && !ctrl) { toggleLoop(); return; }
   if (k === " ") { e.preventDefault(); E.playing ? stop() : play(); return; }
   if (k === "Home") { seek(0); E.x0 = 0; draw(); return; }
@@ -967,7 +1199,7 @@ function onKey(e) {
   if (ctrl && k.toLowerCase() === "c") { copy(); return; }
   if (ctrl && k.toLowerCase() === "v") { paste(); return; }
   if (k === "r" || k === "R") { toggleRec(); return; }
-  if (k === "Escape") { if (E.recording) toggleRec(); if (E.stamp) { E.stamp = null; renderShapes(); } E.sel.clear(); E.fxSel = -1; renderFxPanel(); draw(); return; }
+  if (k === "Escape") { if (E.recording) toggleRec(); E.odStart = null; if (E.stamp) { E.stamp = null; renderShapes(); } E.sel.clear(); E.fxSel = -1; renderFxPanel(); draw(); return; }
   if (k === "Delete" || k === "Backspace") {
     e.preventDefault();
     if (E.fxSel >= 0 && !E.sel.size) { pushUndo(); E.fx.splice(E.fxSel, 1); E.fxSel = -1; fxChanged(); return; }

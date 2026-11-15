@@ -38,6 +38,7 @@ Everything can also be run from the command line: `node scripts\mksong.js songs\
 | `pocketencore\` | Pocket Encore (local web app: `server.js`, `public\`) |
 | `scripts\` | the pipeline: `mksong.js` runs everything; see the table in the guide |
 | `songs\<ZNAME>\song.json` | one file per song, the single source of truth (plus `chart.mid` when gems were edited) |
+| `CHANGELOG.md` | what changed in each version |
 | `docs\RBU_CUSTOM_SONGS.md` | the guide: file formats, pipeline, options, what was tested |
 | `docs\FINDINGS.md` | reverse-engineering notes on the game's formats and behaviour |
 | `installer\PocketEncore.iss` | Inno Setup script for the installer |

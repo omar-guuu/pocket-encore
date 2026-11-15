@@ -4,6 +4,11 @@
 <meta charset="utf-8">
 <title>Pocket Encore</title>
 <link rel="icon" href="/rbu.ico">
+<script>
+// theme before the first paint (no flash): the saved choice, or Auto = Windows' light/dark setting
+(function () { var p; try { p = localStorage.peTheme; } catch (e) {} p = p || "auto";
+  document.documentElement.dataset.theme = p === "auto" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : p; })();
+</script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -17,6 +22,7 @@
   <span id="modeBadge" class="badge"></span>
   <a href="#/setup" id="setupLink" class="navlink" title="Paths to Python, at3tool, mid2rbu and the game folder">Setup</a>
   <button id="buildToggle" title="Show the build output">Build log</button>
+  <select id="themeSel" title="Theme: Auto follows Windows' light or dark setting"><option value="auto">◐ Auto</option><option value="light">☀ Light</option><option value="dark">☾ Dark</option></select>
 </header>
 <main id="main"></main>
 <section id="buildPanel" class="hidden">

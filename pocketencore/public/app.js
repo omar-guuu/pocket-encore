@@ -17,7 +17,7 @@ function toast(msg, bad) {
   d.textContent = msg;
   d.className = "toast";
   const top = [...document.querySelectorAll(".toast")].reduce((y, t) => Math.max(y, t.offsetTop + t.offsetHeight + 6), 56);
-  Object.assign(d.style, { position: "fixed", right: "16px", top: top + "px", background: bad ? "#5a1f1f" : "#1f4a2c", padding: "8px 14px", borderRadius: "6px", zIndex: 30, maxWidth: "50vw" });
+  Object.assign(d.style, { position: "fixed", right: "16px", top: top + "px", background: bad ? "var(--toast-bad)" : "var(--toast-ok)", color: "var(--text)", border: "1px solid " + (bad ? "var(--bad-line)" : "var(--ok-line)"), padding: "8px 14px", borderRadius: "6px", zIndex: 30, maxWidth: "50vw" });
   document.body.appendChild(d);
   setTimeout(() => d.remove(), bad ? 6000 : 2500);
 }
@@ -78,6 +78,18 @@ async function confirmLeave(g) {
 const fmtN = n => n == null ? "–" : Number(n).toLocaleString("en-US");
 const starStr = n => "★".repeat(n) + "☆".repeat(Math.max(0, 6 - n));
 const fmtTime = s => { if (s == null || !isFinite(s)) return "–"; const m = Math.floor(s / 60); return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`; };
+
+// ---------- theme: Auto (follows Windows) / Light / Dark; index.html applies it before the first paint ----------
+const THEME_MQ = matchMedia("(prefers-color-scheme: light)");
+function themePref() { try { return localStorage.peTheme || "auto"; } catch { return "auto"; } }
+function applyTheme() {
+  const p = themePref();
+  document.documentElement.dataset.theme = p === "auto" ? (THEME_MQ.matches ? "light" : "dark") : p;
+  window.dispatchEvent(new Event("themechange"));  // the chart editor redraws its canvas
+}
+THEME_MQ.addEventListener("change", () => { if (themePref() === "auto") applyTheme(); });
+$("#themeSel").value = themePref();
+$("#themeSel").onchange = e => { try { localStorage.peTheme = e.target.value; } catch { } applyTheme(); };
 
 // ---------- routing ----------
 let skipRoute = false, leaving = false, lastHash = location.hash;
@@ -456,7 +468,7 @@ const HELP = [
     undoes that.</p>
     <table class="t"><tr><th>Key / action</th><th>Does</th></tr>
       <tr><td><kbd>Space</kbd></td><td>play / pause (click the ruler to jump)</td></tr>
-      <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>add a gem in that lane of the selected part at the playhead, also while playing</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>add a gem in that lane of the selected part at the playhead, also while playing; hold while playing = held note, together = chord</td></tr>
       <tr><td><kbd>R</kbd> / Record</td><td>play in record mode</td></tr>
       <tr><td>click a lane · drag · drag the right end</td><td>add a gem · move · make it a hold</td></tr>
       <tr><td><kbd>Del</kbd> · <kbd>←</kbd><kbd>→</kbd> · <kbd>↑</kbd><kbd>↓</kbd> · <kbd>T</kbd></td><td>delete · move by snap · change lane · tap/hold</td></tr>
@@ -473,6 +485,12 @@ const HELP = [
     <p><b>Loop</b> repeats a section while you edit or record it: drag along the time ruler, or select gems and press
     <kbd>K</kbd>. <b>Shapes</b> (above the chart) are the gem combinations the official charts use most: guitar and drums
     chords (3-gem chords on Expert only), and for bass two gems in a row, since bass has no chords. Vocals have none.</p>
+    <h3>Controller</h3>
+    <p>Xbox and PlayStation controllers work in the editor with the game's layout: <b>D-pad ←</b> red, <b>D-pad ↑</b> yellow,
+    <b>○ / B</b> blue, <b>△ / Y</b> green, <b>✕ / A</b> overdrive, <b>L1 / LB</b> and <b>R1 / RB</b> change the part. Press gem
+    buttons together for a chord; hold one while playing for a held note; while recording, overdrive starts and ends a phrase.
+    The other actions (play, record, loop, undo…) and the sticks are listed in the editor's <b>🎮 Controller</b> dialog, where
+    any button can be changed. If your presses land early or late, use its <b>Calibrate…</b>.</p>
     <h3>Effects and tempo</h3>
     <p>Double-click the effects lane to add a screen effect, drag it to move or resize. <b>Tempo…</b> sets a steady BPM from the
     first beat, or shifts every gem against the audio.</p>`],
