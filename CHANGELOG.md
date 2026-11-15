@@ -2,7 +2,7 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
-## Unreleased
+## 0.4 Beta (2026-11-15)
 
 ### Updates
 - Pocket Encore checks GitHub for a newer release once a day (only a request for the latest release; nothing about
