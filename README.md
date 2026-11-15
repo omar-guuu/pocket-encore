@@ -31,6 +31,13 @@ details, stems and their quality, builds, and a chart/effects editor with playba
 
 Everything can also be run from the command line: `node scripts\mksong.js songs\ZMYSONG\song.json`.
 
+## Uninstall
+
+Windows Settings → Apps → Installed apps → **Pocket Encore** → Uninstall. A running Pocket Encore is closed first, and
+you are asked whether to delete your songs, settings and built output too (No keeps them in the install folder, and a
+new install there finds them). Custom songs copied to the memory stick stay: delete their folders and `ZZCUSTOMDB`
+from `PSP\GAME\ULUS10418\MUSIC` by hand. A copy run from a git checkout is removed by deleting its folder.
+
 ## Layout
 
 | Folder | What |

@@ -523,6 +523,10 @@ const HELP = [
       <li><b>Stars too easy or hard</b>: Details → Stars scale → <b>Calibrate from a play…</b>, then Rebuild chart.</li>
       <li><b>Pocket Encore won't start</b>: the console window says why; if it's already running, starting it again just opens
         its window.</li>
+      <li><b>Uninstalling</b>: Windows Settings → Apps → Installed apps → Pocket Encore → Uninstall. It closes Pocket Encore
+        if it is running and asks whether to delete your songs, settings and built output too (No keeps them, so a new
+        install in the same folder finds them). Songs already copied to the memory stick stay there: delete their folders
+        and <span class="mono">ZZCUSTOMDB</span> by hand.</li>
     </ul>
     <p>Everything in detail (file formats, every option, what was tested): <button id="openGuide">Open the full guide</button></p>`],
 ];

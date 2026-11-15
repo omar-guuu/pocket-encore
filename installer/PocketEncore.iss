@@ -97,18 +97,19 @@ begin
   Result := ExpandConstant('{param:UPDATE|0}') = '1';
 end;
 
-// "0.3 Beta" -> 3, "1.12" -> 1012 (major * 1000 + minor)
+// "0.4.1 Beta" -> 4001, "1.12" -> 1012000 (major * 1000000 + minor * 1000 + patch)
 function VerNum(S: String): Integer;
-var P, Major: Integer;
+var P, I, N: Integer;
 begin
   S := Trim(S);
   P := Pos(' ', S); if P > 0 then S := Copy(S, 1, P - 1);
-  P := Pos('.', S);
-  if P = 0 then begin Result := StrToIntDef(S, 0) * 1000; exit; end;
-  Major := StrToIntDef(Copy(S, 1, P - 1), 0);
-  S := Copy(S, P + 1, Length(S));
-  P := Pos('.', S); if P > 0 then S := Copy(S, 1, P - 1);
-  Result := Major * 1000 + StrToIntDef(S, 0);
+  Result := 0;
+  for I := 1 to 3 do begin
+    P := Pos('.', S);
+    if P = 0 then begin N := StrToIntDef(S, 0); S := ''; end
+    else begin N := StrToIntDef(Copy(S, 1, P - 1), 0); S := Copy(S, P + 1, Length(S)); end;
+    Result := Result * 1000 + N;
+  end;
 end;
 
 // installing an older version over a newer one: ask first
@@ -141,25 +142,38 @@ begin
     else if Result <> '' then break;
 end;
 
-// a running Pocket Encore (from this folder) quits before its files are replaced
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-var Note: AnsiString; Pid, Port: String;
+// a Pocket Encore running from this folder: its process id and port, from the "running" note its server keeps
+function RunningCopy(var Pid, Port: String): Boolean;
+var Note: AnsiString;
 begin
-  Result := '';
+  Result := False;
   if not LoadStringFromFile(ExpandConstant('{app}\pocketencore\.running'), Note) then exit;
   Pid := NoteNumber(Note, 'pid'); Port := NoteNumber(Note, 'port');
   if (Pid = '') or (Port = '') then exit;
   // still running, and really Pocket Encore's server?
+  Result := RunPowerShell('$p = Get-CimInstance Win32_Process -Filter ''ProcessId=' + Pid + '''; if ($p -and $p.CommandLine -like ''*server.js*'') { exit 0 } else { exit 1 }') = 0;
+end;
+
+// ask it to quit (a clean exit closes its console window); if it doesn't within 8 s, stop it
+procedure QuitCopy(Pid, Port: String);
+begin
+  RunPowerShell('try { Invoke-RestMethod -Method Post -Uri http://127.0.0.1:' + Port + '/api/quit -TimeoutSec 3 | Out-Null } catch {}; ' +
+                'Wait-Process -Id ' + Pid + ' -Timeout 8 -ErrorAction SilentlyContinue; ' +
+                'if (Get-Process -Id ' + Pid + ' -ErrorAction SilentlyContinue) { Stop-Process -Id ' + Pid + ' -Force }');
+end;
+
+// a running Pocket Encore (from this folder) quits before its files are replaced
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var Pid, Port: String;
+begin
+  Result := '';
+  if not RunningCopy(Pid, Port) then exit;
   RunningPort := Port;
-  if RunPowerShell('$p = Get-CimInstance Win32_Process -Filter ''ProcessId=' + Pid + '''; if ($p -and $p.CommandLine -like ''*server.js*'') { exit 0 } else { exit 1 }') <> 0 then exit;
   if (not IsUpdate()) and (SuppressibleMsgBox('Pocket Encore is running. Close it and continue?' + #13#10 + 'Unsaved changes in Pocket Encore are lost.', mbConfirmation, MB_YESNO, IDYES) <> IDYES) then begin
     Result := 'Pocket Encore is still running. Close it, then run the installer again.';
     exit;
   end;
-  // ask it to quit; if it doesn't within 8 s, stop it
-  RunPowerShell('try { Invoke-RestMethod -Method Post -Uri http://127.0.0.1:' + Port + '/api/quit -TimeoutSec 3 | Out-Null } catch {}; ' +
-                'Wait-Process -Id ' + Pid + ' -Timeout 8 -ErrorAction SilentlyContinue; ' +
-                'if (Get-Process -Id ' + Pid + ' -ErrorAction SilentlyContinue) { Stop-Process -Id ' + Pid + ' -Force }');
+  QuitCopy(Pid, Port);
 end;
 
 // the port to start on again: /PORT= from Pocket Encore's update, else the one a running copy used (8642 = default)
@@ -184,4 +198,64 @@ begin
     SuppressibleMsgBox('Node.js was not found. Install it from https://nodejs.org/en/download (the LTS version), then start Pocket Encore.' + #13#10 +
            'Pocket Encore''s Setup page lists the other pieces it needs (Python 3.12 with mido/numpy/miniaudio, mid2rbu, at3tool, and your game''s MUSIC folder).',
            mbInformation, MB_OK, IDOK);
+end;
+
+// ---------- uninstall ----------
+var
+  DeleteUserData: Boolean;
+
+// once the removal is confirmed: a running Pocket Encore quits, and its window closes (it uses the window profile the
+// uninstall removes)
+procedure CloseRunningCopy();
+var Pid, Port, Dir: String;
+begin
+  if RunningCopy(Pid, Port) then QuitCopy(Pid, Port);
+  // its window: the Edge/Chrome processes that use this folder's window profile (and only those)
+  Dir := ExpandConstant('{app}\pocketencore\.window');
+  StringChangeEx(Dir, '''', '''''', True);
+  RunPowerShell('Get-CimInstance Win32_Process | Where-Object { ($_.Name -eq ''msedge.exe'' -or $_.Name -eq ''chrome.exe'') -and $_.CommandLine -and $_.CommandLine.Contains(''' + Dir + ''') } | ' +
+                'ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Wait-Process -Id $_.ProcessId -Timeout 5 -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 800');
+end;
+
+// what Pocket Encore itself creates next to the program: songs (with stems and edited charts), built output, settings
+function HasUserData(): Boolean;
+var App: String;
+begin
+  App := ExpandConstant('{app}');
+  Result := DirExists(App + '\songs') or DirExists(App + '\out') or DirExists(App + '\reaper') or DirExists(App + '\incoming') or
+            DirExists(App + '\cache') or FileExists(App + '\settings.json');
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var App, Msg: String; ResultCode: Integer;
+begin
+  App := ExpandConstant('{app}');
+  if CurUninstallStep = usUninstall then begin
+    CloseRunningCopy();
+    // a silent uninstall keeps them (the default answer, No)
+    DeleteUserData :=HasUserData() and (SuppressibleMsgBox('Also delete your songs, settings and built output?' + #13#10 + #13#10 +
+      'They are in ' + App + ' (songs, out, settings.json). If you keep them, installing Pocket Encore again in the same folder finds them.',
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES);
+  end;
+  if CurUninstallStep = usPostUninstall then begin
+    if DeleteUserData then begin
+      DelTree(App + '\songs', True, True, True);
+      DelTree(App + '\out', True, True, True);
+      DelTree(App + '\reaper', True, True, True);
+      DelTree(App + '\incoming', True, True, True);
+      DelTree(App + '\cache', True, True, True);
+      DeleteFile(App + '\settings.json');
+    end;
+    // the window profile once more: a closing browser can still write a few files into it after [UninstallDelete]
+    DelTree(App + '\pocketencore\.window', True, True, True);
+    // paths over 260 characters (an install folder deep in other folders): rd with the \\?\ prefix handles them
+    if DirExists(App + '\pocketencore\.window') then Exec(ExpandConstant('{cmd}'), '/c rd /s /q "\\?\' + App + '\pocketencore\.window"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    RemoveDir(App + '\pocketencore');
+    RemoveDir(App);  // only when nothing is left in it
+    Msg := 'Pocket Encore was removed.';
+    if HasUserData() then Msg := Msg + #13#10 + #13#10 + 'Your songs, settings and built output are still in ' + App + '. Delete that folder to remove them too.'
+    else if DirExists(App) then Msg := Msg + #13#10 + #13#10 + App + ' still holds files you put there yourself (for example at3tool or mid2rbu).';
+    Msg := Msg + #13#10 + #13#10 + 'Custom songs you copied to PPSSPP''s memory stick stay there: to remove them, delete their folders and ZZCUSTOMDB from PSP\GAME\ULUS10418\MUSIC.';
+    SuppressibleMsgBox(Msg, mbInformation, MB_OK, IDOK);
+  end;
 end;

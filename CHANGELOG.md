@@ -2,6 +2,19 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## 0.4.1 Beta (2026-11-15)
+
+### Uninstall
+- Uninstalling (Windows Settings → Apps → Pocket Encore) closes a running Pocket Encore and its window first, so its
+  files and the window's saved preferences are removed completely.
+- It asks whether to delete your songs, settings and built output too (`songs`, `out`, `settings.json` and Pocket
+  Encore's caches). The default is **No**: they stay in the install folder, and a new install there finds them. Files
+  you put there yourself (for example at3tool or mid2rbu) are never deleted.
+- The last message says where anything that was kept is, and reminds you that custom songs copied to the memory stick
+  stay there (delete their folders and `ZZCUSTOMDB` by hand).
+- Help → Troubleshooting and the README explain how to uninstall.
+- The installer's version check now counts the third number (0.4.1 is newer than 0.4).
+
 ## 0.4 Beta (2026-11-15)
 
 ### Updates
