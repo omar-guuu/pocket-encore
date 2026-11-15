@@ -208,3 +208,11 @@ body.onboarding a.navlink.help { display: inline; }
 #themeSel { padding: 2px 4px; font-size: 12px; }
 #padBtn.on { border-color: var(--ok-line); color: var(--ok); }
 .padtable td, .padtable th { text-align: left !important; }
+/* updates */
+#updBadge.update { padding: 1px 9px; font-size: 12px; border-color: var(--ok-line); color: var(--ok); margin-left: -6px; }
+#offline { position: sticky; top: 46px; z-index: 6; background: var(--toast-bad); border-bottom: 1px solid var(--bad-line); padding: 6px 16px; font-size: 13px; }
+.relnotes { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; font-size: 13px; }
+.relnotes h4 { margin: 12px 0 4px; font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.relnotes ul { padding-left: 20px; margin: 4px 0; }
+.relnotes table.t td, .relnotes table.t th { text-align: left; }
+progress { vertical-align: middle; width: 200px; }

@@ -2,6 +2,28 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## Unreleased
+
+### Updates
+- Pocket Encore checks GitHub for a newer release once a day (only a request for the latest release; nothing about
+  you is sent). When there is one, **Update available** appears next to the version, with the release notes and
+  **Download and install** / **Remind me later** / **Skip this version**.
+- **Download and install** is one click: Pocket Encore downloads the installer into Downloads, checks it against the
+  release's SHA-256, installs it without the wizard, starts again on the same port, and the open window reloads by
+  itself as the new version. A download that doesn't match the checksum is deleted and nothing is installed.
+- Setup → **Updates**: turn the daily check on or off, and **Check for updates** (also on the Help page). A copy run
+  from its git folder is told to `git pull` instead.
+- When Pocket Encore stops (closed, or restarting for an update), the window says so and reloads by itself when it is
+  back, unless that would lose unsaved changes.
+
+### Installer
+- Upgrading: a running Pocket Encore is asked to quit first (it closes cleanly); the program folders are emptied
+  before the new files are copied, so files a newer version dropped don't linger; songs, settings, output and the
+  window's saved preferences stay. Installing an older version over a newer one asks first.
+- `node scripts\mkinstaller.js` builds the installer with the version from `pocketencore\version.json` (the only place
+  it is set) and refuses when this changelog has no section for that version; `--publish` also creates the GitHub
+  release with the installer and the changelog section as notes.
+
 ## 0.3 Beta (2026-11-15)
 
 ### Themes

@@ -30,6 +30,7 @@ ATMTool-main/
 # per-machine
 settings.json
 pocketencore/.window/
+pocketencore/.running
 installer/Output/
 __pycache__/
 *.pyc

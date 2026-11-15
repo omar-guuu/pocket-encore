@@ -41,7 +41,7 @@ Everything can also be run from the command line: `node scripts\mksong.js songs\
 | `CHANGELOG.md` | what changed in each version |
 | `docs\RBU_CUSTOM_SONGS.md` | the guide: file formats, pipeline, options, what was tested |
 | `docs\FINDINGS.md` | reverse-engineering notes on the game's formats and behaviour |
-| `installer\PocketEncore.iss` | Inno Setup script for the installer |
+| `installer\PocketEncore.iss` | Inno Setup script for the installer; build it with `node scripts\mkinstaller.js` (`--publish` also creates the GitHub release) |
 | `out\`, `reaper\`, `songs\*\build\` | generated (not in the repo) |
 
 ## License

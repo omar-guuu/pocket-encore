@@ -13,7 +13,7 @@
 </head>
 <body>
 <header id="top">
-  <a href="#/" class="brand">Pocket Encore</a><span id="version" class="version"></span>
+  <a href="#/" class="brand">Pocket Encore</a><span id="version" class="version"></span><button id="updBadge" class="update hidden"></button>
   <a href="#/help" id="helpLink" class="navlink help" title="How Pocket Encore works">Help</a>
   <span class="tag">custom songs for the handheld Rock Band</span>
   <span id="crumb"></span>
@@ -24,6 +24,7 @@
   <button id="buildToggle" title="Show the build output">Build log</button>
   <select id="themeSel" title="Theme: Auto follows Windows' light or dark setting"><option value="auto">◐ Auto</option><option value="light">☀ Light</option><option value="dark">☾ Dark</option></select>
 </header>
+<div id="offline" class="hidden"></div>
 <main id="main"></main>
 <section id="buildPanel" class="hidden">
   <div class="bar"><b id="buildTitle">Build</b><span id="buildState"></span><span class="grow"></span><button id="buildClose">Hide</button></div>

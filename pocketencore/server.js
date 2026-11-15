@@ -22,6 +22,7 @@ const SCRIPTS = path.join(TOOLS, "scripts"), PUB = path.join(__dirname, "public"
 const { sections, Image, chartFromImage } = require(path.join(SCRIPTS, "beatmatch.js"));
 const { EFFECTS } = require(path.join(SCRIPTS, "fxchart.js"));
 const settings = require(path.join(SCRIPTS, "settings.js"));
+const { createUpdater } = require("./update.js");
 const PORT = Number((process.argv.find((a, i) => process.argv[i - 1] === "--port")) || 8642);
 const TRACKS = ["drums", "bass_guitar", "lead_guitar", "vocals", "fill"];
 const STEM_KEYS = { drums: "drums", bass: "bass_guitar", guitar: "lead_guitar", vocals: "vocals", fill: "fill" };
@@ -429,6 +430,21 @@ async function route(req, res) {
     return fs.createReadStream(f).pipe(res);
   }
   const [, what, folder, extra] = p;
+  // the window checks every few seconds that Pocket Encore still runs (and reloads when it is back after an update)
+  if (what === "ping" && M === "GET") { pinged = true; return json(res, { version: VERSION }); }
+  // quit cleanly (the installer asks this before replacing the files of a running copy)
+  if (what === "quit" && M === "POST") { json(res, { ok: true }); setTimeout(() => process.exit(0), 200); return; }
+  if (what === "update") {
+    if (!folder && M === "GET") return json(res, await updater.status(u.searchParams.get("force") === "1"));
+    if (!folder && M === "PUT") { updater.setPrefs(await body(req)); return json(res, await updater.status(false)); }
+    if (folder === "install" && M === "POST") return json(res, updater.install());
+    if (folder === "progress" && M === "GET") return json(res, updater.progress());
+    if (folder === "open" && M === "POST") {  // the release page in the default browser
+      const st = await updater.status(false), url = (st.latest && st.latest.page) || "https://github.com/omar-guuu/pocket-encore/releases/latest";
+      spawn("cmd", ["/c", "start", "", url], { detached: true, stdio: "ignore" }).unref();
+      return json(res, { url });
+    }
+  }
   if (what === "meta" && M === "GET") {
     const c = settings.check();
     return json(res, { genres: GENRES, effects: Object.keys(EFFECTS), tools: TOOLS, out: OUT, starFractions: STAR_FRACTIONS, setupOk: c.ok, version: VERSION,
@@ -607,6 +623,12 @@ async function route(req, res) {
   throw httpError(404, "unknown API call");
 }
 
+// "running" note for the installer (process id and port), removed when Pocket Encore stops
+const RUNNING = path.join(__dirname, ".running");
+let pinged = false;
+const updater = createUpdater({ tools: TOOLS, version: VERSION, port: PORT, quit: () => process.exit(0) });
+process.on("exit", () => { try { if (JSON.parse(fs.readFileSync(RUNNING, "utf8")).pid === process.pid) fs.rmSync(RUNNING, { force: true }); } catch { } });
+for (const sig of ["SIGINT", "SIGHUP", "SIGTERM", "SIGBREAK"]) process.on(sig, () => process.exit(0));
 const server = http.createServer((req, res) => {
   // local page only: refuse other hosts (DNS rebinding) and cross-site writes
   const host = (req.headers.host || "").replace(/:\d+$/, "");
@@ -638,7 +660,13 @@ server.listen(PORT, "127.0.0.1", () => {
     const db = dbState(c.mode);
     if (db.stale) console.log(`  the song database was built for "${db.was}"; build any song to update it`);
   } catch (e) { console.log("  game check failed: " + e.message); }
-  if (process.argv.includes("--open")) openWindow(url);
+  try { fs.writeFileSync(RUNNING, JSON.stringify({ pid: process.pid, port: PORT })); } catch { }
+  // --reconnect (started by the installer): a window that was already open reconnects by itself within a few seconds;
+  // open a new one only if none did
+  if (process.argv.includes("--open")) {
+    if (process.argv.includes("--reconnect")) setTimeout(() => { if (!pinged) openWindow(url); }, 4000);
+    else openWindow(url);
+  }
 });
 server.on("error", async e => {
   if (e.code === "EADDRINUSE") {

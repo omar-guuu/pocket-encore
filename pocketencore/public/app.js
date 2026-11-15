@@ -50,7 +50,7 @@ function ask(title, body, buttons) {
 // when saved (or throws); a page without save (New song) can only be discarded. route() asks before leaving, runBuild()
 // before building, and closing the window warns. The chart editor reports through window.editorDirty / editorSave.
 let GUARD = null;
-const formState = root => [...root.querySelectorAll("input, select, textarea")].map(e => e.type === "checkbox" ? e.checked : e.value).join("\u0001");
+const formState = root => [...root.querySelectorAll("input, select, textarea")].filter(e => !e.dataset.noguard).map(e => e.type === "checkbox" ? e.checked : e.value).join("\u0001");
 // guard every field under root: dirty when any differs from when the page opened (or was last saved)
 function guardForm(root, what, save) {
   let base = formState(root);
@@ -309,6 +309,7 @@ async function showSetup() {
     META = await api("GET", "/api/meta"); renderModeBadge(); $("#setupLink").classList.toggle("warn", !META.setupOk); toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok);
     return true;
   };
+  $("#main").insertAdjacentHTML("beforeend", updatePanel()); bindUpdatePanel();
   $("#s_save").onclick = () => saveSetup().then(() => showSetup(), fail("Couldn't save the setup"));
   guardForm($("#main"), "the Setup paths", saveSetup);
 }
@@ -529,10 +530,12 @@ function showHelp(topic) {
   const t = HELP.find(h => h[0] === topic) || HELP[0];
   $("#crumb").innerHTML = META.configured ? `<a href="#/">Songs</a> / Help` : `<a href="#/welcome">Welcome</a> / Help`;
   $("#main").innerHTML = `<div class="helpwrap"><nav class="helpnav">${HELP.map(([k, n]) => `<a href="#/help/${k}" class="${k === t[0] ? "on" : ""}">${n}</a>`).join("")}
-      <span class="small dim" style="margin-top:10px">Pocket Encore ${META.version ? `v${esc(META.version.version)} ${esc(META.version.stage)}` : ""}</span></nav>
+      <span class="small dim" style="margin-top:10px">Pocket Encore ${META.version ? `v${esc(META.version.version)} ${esc(META.version.stage)}` : ""}</span>
+      <button id="updCheck" class="small" style="justify-self:start">Check for updates</button><span id="updState" class="small dim">${updateStatusText(UPD)}</span></nav>
     <div class="panel helpbody"><h2>${t[1]}</h2>${t[2]}</div></div>`;
   const g = $("#openGuide");
   if (g) g.onclick = () => api("POST", "/api/open/ZNONE?what=guide").catch(fail("Couldn't open the guide"));
+  bindUpdatePanel();
 }
 
 // ---------- song page ----------
@@ -910,6 +913,128 @@ async function pickInto(selector, folder, dirs) {
   await open(cur);
 }
 
+// ---------- connection: notice when Pocket Encore stops (closed, or restarting for an update) and reload when it is back ----------
+let OFFLINE = false;
+async function heartbeat() {
+  try {
+    const r = await fetch("/api/ping", { cache: "no-store", signal: AbortSignal.timeout(2500) });
+    if (!r.ok) throw new Error();
+    const v = (await r.json()).version || {};
+    if (OFFLINE) {
+      OFFLINE = false;
+      // back: reload for the new version, unless that would lose unsaved changes
+      if (!pageGuard()) return location.reload();
+      $("#offline").innerHTML = `Pocket Encore is running again (v${esc(v.version)} ${esc(v.stage)}). Save your changes, then <button id="offReload">Reload</button>`;
+      $("#offReload").onclick = () => location.reload();
+    }
+  } catch {
+    if (!OFFLINE) {
+      OFFLINE = true;
+      $("#offline").classList.remove("hidden");
+      $("#offline").textContent = UPD_INSTALLING ? `Installing Pocket Encore ${UPD_INSTALLING}… this window reloads when it starts again.` : "Pocket Encore isn't running. Waiting for it to start again…";
+    }
+  }
+  setTimeout(heartbeat, OFFLINE ? 1000 : 3000);
+}
+
+// ---------- updates: badge in the header, dialog with the release notes, one-click install ----------
+let UPD = null, UPD_INSTALLING = null;
+async function checkUpdate(force) {
+  try { UPD = await api("GET", "/api/update" + (force ? "?force=1" : "")); } catch (e) { if (force) throw e; return null; }
+  const b = $("#updBadge"), show = UPD.available && !UPD.skipped;
+  b.classList.toggle("hidden", !show);
+  if (show) { b.textContent = `Update available: ${UPD.latest.label}`; b.onclick = () => updateDialog(); }
+  return UPD;
+}
+// release notes (GitHub Markdown) as simple HTML: headings, lists, tables, bold, code; links as plain text
+function mdLite(md) {
+  const inline = s => esc(s).replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, '<span class="mono">$1</span>').replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  const out = []; let list = false, table = null;
+  const flush = () => { if (list) { out.push("</ul>"); list = false; } if (table) { out.push(`<table class="t">${table.join("")}</table>`); table = null; } };
+  for (const raw of md.replace(/\r/g, "").split("\n")) {
+    const l = raw.trim();
+    if (/^\|/.test(l)) {
+      if (/^\|[\s|:-]+\|$/.test(l)) continue;
+      if (list) { out.push("</ul>"); list = false; }
+      const cells = l.replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
+      if (!table) table = [`<tr>${cells.map(c => `<th>${c}</th>`).join("")}</tr>`]; else table.push(`<tr>${cells.map(c => `<td>${c}</td>`).join("")}</tr>`);
+      continue;
+    }
+    if (table) { out.push(`<table class="t">${table.join("")}</table>`); table = null; }
+    const h = /^(#{1,4})\s+(.*)/.exec(l);
+    if (h) { flush(); out.push(`<h4>${inline(h[2])}</h4>`); continue; }
+    if (/^[-*]\s+/.test(l)) { if (!list) { out.push("<ul>"); list = true; } out.push(`<li>${inline(l.replace(/^[-*]\s+/, ""))}`); continue; }
+    if (!l) { flush(); continue; }
+    if (list) out.push(" " + inline(l)); else out.push(`<p>${inline(l)}</p>`);
+  }
+  flush();
+  return out.join("");
+}
+function updateDialog() {
+  const s = UPD, L = s.latest;
+  const how = s.mode === "installer" ? "" : s.mode === "git"
+    ? `<p class="warnline">This copy runs from its git folder: update it with <span class="mono">git pull</span>.</p>`
+    : `<p class="warnline">This copy wasn't installed with the installer: download the new installer from the release page.</p>`;
+  $("#modalBox").innerHTML = `<b>Pocket Encore ${esc(L.label)} is available</b>
+    <p class="small dim">You have ${esc(s.current)}.${L.published ? ` Released ${esc(new Date(L.published).toLocaleDateString())}.` : ""}</p>${how}
+    <div class="relnotes">${mdLite(L.notes)}</div>
+    <div id="updProg" class="small" style="margin-top:8px"></div>
+    <div class="actions" style="margin-top:12px">
+      ${s.mode === "installer" ? `<button class="primary" id="updGo">Download and install</button>` : `<button class="primary" id="updPage">Open the release page</button>`}
+      <button id="updLater">Remind me later</button><span class="grow"></span><button id="updSkip">Skip this version</button></div>`;
+  $("#modal").classList.remove("hidden");
+  const close = () => $("#modal").classList.add("hidden");
+  $("#updLater").onclick = close;
+  $("#updSkip").onclick = async () => { await api("PUT", "/api/update", { skip: L.tag }).catch(() => { }); close(); checkUpdate(); toast(`Version ${L.label} skipped. Help → Check for updates finds it again.`); };
+  if ($("#updPage")) $("#updPage").onclick = () => api("POST", "/api/update/open").catch(fail("Couldn't open the release page"));
+  if ($("#updGo")) $("#updGo").onclick = installUpdate;
+}
+async function installUpdate() {
+  if (pageGuard()) { toast("Save or discard your unsaved changes first: Pocket Encore restarts to update.", true); return; }
+  const prog = $("#updProg"), go = $("#updGo");
+  go.disabled = true; $("#updSkip").disabled = true;
+  try { await api("POST", "/api/update/install"); } catch (e) { go.disabled = false; return fail("Couldn't start the update")(e); }
+  const mb = n => (n / 1048576).toFixed(1);
+  const tick = async () => {
+    let j; try { j = await api("GET", "/api/update/progress"); } catch { return; }  // Pocket Encore has quit to install: heartbeat takes over
+    if (!j) return;
+    if (j.phase === "download") prog.innerHTML = `Downloading… ${mb(j.received)} of ${mb(j.total)} MB <progress max="${j.total}" value="${j.received}"></progress>`;
+    else if (j.phase === "verify") prog.textContent = "Checking the download…";
+    else if (j.phase === "install") { UPD_INSTALLING = j.version; prog.textContent = `Installing ${j.version}: Pocket Encore restarts and this window reloads by itself.`; $("#updLater").disabled = true; return; }
+    else if (j.phase === "error") { prog.innerHTML = `<span class="warnline">The update failed: ${esc(j.error)}</span> <button id="updPage2">Open the release page</button>`; $("#updPage2").onclick = () => api("POST", "/api/update/open"); go.disabled = false; return; }
+    setTimeout(tick, 400);
+  };
+  tick();
+}
+// Setup and Help: the automatic check and "Check for updates"
+function updateStatusText(s) {
+  if (!s) return "";
+  const when = s.checkedAt ? ` (checked ${new Date(s.checkedAt).toLocaleString()})` : "";
+  if (s.error) return `Couldn't reach GitHub: ${esc(s.error)}`;
+  if (!s.latest) return `No release found yet${when}.`;
+  return s.available ? `Pocket Encore ${esc(s.latest.label)} is available${when}.` : `You have the latest version, ${esc(s.current)}${when}.`;
+}
+function updatePanel() {
+  return `<div class="panel"><h4>Updates</h4>
+    <label class="small"><input type="checkbox" id="updAuto" data-noguard="1" ${!UPD || UPD.auto ? "checked" : ""}> Check for updates once a day</label>
+    <span class="small dim">(asks GitHub for the latest release; nothing about you is sent)</span>
+    <div class="actions" style="margin-top:8px"><button id="updCheck">Check for updates</button><span id="updState" class="small">${updateStatusText(UPD)}</span></div></div>`;
+}
+function bindUpdatePanel() {
+  if (!$("#updCheck")) return;
+  $("#updAuto").onchange = e => api("PUT", "/api/update", { auto: e.target.checked }).then(s => { UPD = s; toast(e.target.checked ? "Automatic update check on" : "Automatic update check off"); }).catch(fail("Couldn't save the setting"));
+  $("#updCheck").onclick = async () => {
+    $("#updState").textContent = "Checking…";
+    try {
+      // an explicit check also brings back a skipped version
+      const s = await checkUpdate(true);
+      if (s.skipped) { await api("PUT", "/api/update", { skip: null }); await checkUpdate(); }
+      $("#updState").innerHTML = updateStatusText(UPD);
+      if (UPD.available) updateDialog();
+    } catch (e) { $("#updState").textContent = "Couldn't check: " + e.message; }
+  };
+}
+
 // ---------- builds ----------
 let es = null;
 function showBuildPanel(show = true) { $("#buildPanel").classList.toggle("hidden", !show); }
@@ -970,4 +1095,6 @@ function followBuild() {
   if (META.version) { $("#version").textContent = `v${META.version.version} ${META.version.stage}`.trim(); document.title = `Pocket Encore v${META.version.version} ${META.version.stage}`.trim(); }
   renderModeBadge();
   route();
+  heartbeat();
+  checkUpdate();  // at most once a day it asks GitHub (when the automatic check is on); otherwise the last answer
 })();
