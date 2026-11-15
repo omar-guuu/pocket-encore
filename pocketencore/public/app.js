@@ -25,6 +25,25 @@ function toast(msg, bad) {
 // written for the user and are shown as they are.
 const fail = ctx => e => toast(e && e.user ? e.message : `${ctx}: ${e && e.message || e}`, true);
 const userError = msg => Object.assign(new Error(msg), { user: true });
+// accessible names for form fields: the forms are grids of <label>Name</label><field> without for=/id, so a screen
+// reader announced the fields with no name. Link each such label to the field right after it (or the first field
+// inside the element right after it). Runs on everything the app renders, so new pages and dialogs are covered too.
+let fieldSeq = 0;
+function linkLabels(root) {
+  root.querySelectorAll("label:not([for])").forEach(l => {
+    if (l.querySelector("input,select,textarea") || !l.textContent.trim()) return;  // wraps its field, or a help row
+    let f = l.nextElementSibling;
+    if (f && !f.matches("input,select,textarea")) f = f.matches("label") ? null : f.querySelector("input,select,textarea");
+    if (!f || (f.labels && f.labels.length) || f.hasAttribute("aria-label")) return;
+    if (!f.id) f.id = "fld" + ++fieldSeq;
+    l.htmlFor = f.id;
+  });
+}
+new MutationObserver(ms => {
+  const roots = new Set(); for (const m of ms) if (m.addedNodes.length && m.target.nodeType === 1) roots.add(m.target);
+  roots.forEach(linkLabels);
+}).observe(document.body, { childList: true, subtree: true });
+linkLabels(document.body);
 // a confirmation in the app's own modal, with buttons named after their action (not OK/Cancel).
 // buttons: [{ label, value, kind: "primary" | "danger" }]; resolves to the clicked value, or null on Escape/backdrop.
 let askPending = null;  // the open ask()'s close function: a new ask (e.g. the Back button pressed meanwhile) closes it as "no"
@@ -145,8 +164,8 @@ async function showLibrary() {
   const setupNote = META.setupOk ? "" : `<div class="panel warnline">Setup is incomplete: builds will fail until the missing pieces are installed. <a href="#/setup">Open Setup</a>.</div>`;
   $("#main").innerHTML = dbNote + setupNote + `
     <div class="libbar"><button class="primary" onclick="location.hash='#/new'">+ New song</button>
-      <input id="filter" placeholder="Filter…" value="${esc(localStorage.libFilter || "")}">
-      <select id="sort"><option value="folder">by folder</option><option value="title">by title</option><option value="changed">last built</option></select>
+      <input id="filter" aria-label="Filter songs" placeholder="Filter…" value="${esc(localStorage.libFilter || "")}">
+      <select id="sort" aria-label="Sort songs"><option value="folder">by folder</option><option value="title">by title</option><option value="changed">last built</option></select>
       <button onclick="openFolder('', 'out')" title="The built songs, ready to copy to the memory stick">Open output folder</button>
       <button onclick="location.hash='#/packs'" title="Sets of songs with their own song database, to switch on the memory stick">Packs</button>
       <span class="grow"></span><span class="dim">${list.length} songs in rbu-tools/songs</span></div>
@@ -158,7 +177,7 @@ async function showLibrary() {
       if (s.error) return `<div class="card"><h3>${esc(s.folder)}</h3><div class="sub" style="color:var(--bad)">${esc(s.error)}</div></div>`;
       const S = s.song, ex = s.built && s.built[3];
       return `<div class="card" data-f="${esc(s.folder)}" data-q="${esc((S.title + " " + S.artist + " " + s.folder).toLowerCase())}">
-        <h3>${esc(S.title)}</h3><div class="sub">${esc(S.artist)}${S.year ? " · " + esc(S.year) : ""}${S.genre ? " · " + esc(S.genre) : ""}</div>
+        <h3><a class="cardlink" href="#/song/${esc(s.folder)}">${esc(S.title)}</a></h3><div class="sub">${esc(S.artist)}${S.year ? " · " + esc(S.year) : ""}${S.genre ? " · " + esc(S.genre) : ""}</div>
         <div class="row">${statusBadge(s)}<span class="badge">chart: ${esc(s.chartSource)}</span>${qualityBadge(S)}</div>
         <div class="row small dim">${esc(s.folder)}${s.audio ? " · " + fmtTime(s.audio.audioSeconds) : ""}${ex ? " · Expert gold " + fmtN(ex.stars[5]) : ""}${S.effects ? " · FX" : ""}${S.countIn ? " · count-in" : ""}</div>
       </div>`;
@@ -168,7 +187,6 @@ async function showLibrary() {
   const filt = () => { const q = $("#filter").value.toLowerCase(); localStorage.libFilter = q; let shown = 0; document.querySelectorAll(".card[data-q]").forEach(c => { const hit = c.dataset.q.includes(q); c.classList.toggle("hidden", !hit); shown += hit; });
     const nm = $("#noMatch"); nm.textContent = `No songs match "${$("#filter").value}".`; nm.classList.toggle("hidden", !q || shown > 0 || !list.length); };
   $("#filter").oninput = filt; filt();
-  document.querySelectorAll(".card[data-f]").forEach(c => c.onclick = () => location.hash = `#/song/${c.dataset.f}`);
 }
 async function openFolder(folder, what) {
   try { await api("POST", `/api/open/${folder || "ZNONE"}?what=${what}`); } catch (e) { fail("Couldn't open the folder")(e); }
@@ -378,11 +396,11 @@ async function showPackEdit(id) {
       <label>Pack name</label><input type="text" id="pk_name" maxlength="60" value="${esc(p.name)}" placeholder="e.g. Metal, Alternative rock… (empty: Pocket Encore ${code}, the code of its song database)">
     </div></div>
     <div class="panel"><h4>Songs</h4>
-      <div class="libbar"><input id="pk_filter" placeholder="Filter…"><select id="pk_genre"><option value="">Add all songs with genre…</option>${genres.map(g => `<option>${esc(g)}</option>`).join("")}</select>
+      <div class="libbar"><input id="pk_filter" aria-label="Filter songs" placeholder="Filter…"><select id="pk_genre" aria-label="Add all songs with genre"><option value="">Add all songs with genre…</option>${genres.map(g => `<option>${esc(g)}</option>`).join("")}</select>
         <button id="pk_all">Select all</button><button id="pk_none">Clear</button><span class="grow"></span><span id="pk_count" class="small"></span></div>
       <table class="t pktable"><tr><th></th><th>Song</th><th>Artist</th><th>Genre</th><th>Build</th><th>MB</th></tr>
         ${songs.map(s => `<tr data-f="${esc(s.folder)}" data-q="${esc((s.title + " " + s.artist + " " + s.folder + " " + s.genre).toLowerCase())}">
-          <td><input type="checkbox" ${sel.has(s.folder) ? "checked" : ""}></td><td>${esc(s.title)} <span class="dim small">${esc(s.folder)}</span></td><td>${esc(s.artist)}</td><td>${esc(s.genre)}</td>
+          <td><input type="checkbox" aria-label="Include ${esc(s.title)} in the pack" ${sel.has(s.folder) ? "checked" : ""}></td><td>${esc(s.title)} <span class="dim small">${esc(s.folder)}</span></td><td>${esc(s.artist)}</td><td>${esc(s.genre)}</td>
           <td><span class="badge ${s.status === "built" ? "ok" : s.status === "not built" ? "bad" : "warn"}">${esc(s.status)}</span></td><td>${s.mb || "–"}</td></tr>`).join("")}</table>
       ${p.missing && p.missing.length ? `<p class="warnline small">Songs no longer in the library (dropped when you save): ${esc(p.missing.join(", "))}</p>` : ""}
     </div>
@@ -722,7 +740,7 @@ async function revertChart(folder) {
 }
 function showJson(folder) {
   $("#tab").innerHTML = `<div class="panel"><h4>songs/${esc(folder)}/song.json</h4>
-    <textarea id="raw" rows="34" spellcheck="false">${esc(JSON.stringify(CUR.song, null, 2))}</textarea>
+    <textarea id="raw" aria-label="song.json" rows="34" spellcheck="false">${esc(JSON.stringify(CUR.song, null, 2))}</textarea>
     <div class="actions" style="margin-top:8px"><button class="primary" id="saveRaw">Save</button><span class="dim small">Every option is listed at the top of scripts/mksong.js. Effect names: ${META.effects.filter(e => e !== "end").join(", ")}.</span></div></div>`;
   const saveRaw = async () => { const S = JSON.parse($("#raw").value); CUR = await api("PUT", `/api/song/${folder}`, S); markSaved(); toast("song.json saved"); return true; };
   $("#saveRaw").onclick = () => saveRaw().catch(fail("Couldn't save song.json"));
@@ -735,7 +753,7 @@ const STEM_SLOTS = ["drums", "bass", "guitar", "vocals", "fill"];
 const MAX_DROP = 5;
 // Hover text for each instrument (to be written).
 const STEM_TIPS = { drums: "placeholder", bass: "placeholder", guitar: "placeholder", vocals: "placeholder", fill: "placeholder" };
-const tip = k => `<span class="tip" data-tip="${esc(STEM_TIPS[k] || "")}">ⓘ</span>`;
+const tip = k => `<span class="tip" aria-hidden="true" data-tip="${esc(STEM_TIPS[k] || "")}">ⓘ</span>`;
 // Instrument from the file name only (no audio analysis). Checked in this order, so "drum bass" is drums,
 // "no_vocals"/"instrumental" is backing and "lead vocal" is vocals, not guitar.
 const NAME_RULES = [

@@ -2,6 +2,18 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## 0.4.2 Beta (2026-11-15)
+
+### Accessibility
+- Every form field has a name for screen readers: the labels are linked to their fields on every page and dialog, and
+  fields without a visible label (filters, sort, volume sliders, the editor's difficulty menu and ticks volume, the
+  pack's song checkboxes, song.json) have one.
+- Song cards open with Tab + Enter as well as a click, with a visible focus outline.
+- Links inside text are underlined, so they don't rely on color alone; navigation stays plain.
+- Field and button borders and placeholder text have stronger contrast (3:1 for borders) in both themes.
+- Chart editor: in the light theme, gems have a thin outline so the pale lane colors (yellow) stay readable; the
+  dimmer texts in the dark chart and the highway are lighter.
+
 ## 0.4.1 Beta (2026-11-15)
 
 ### Uninstall

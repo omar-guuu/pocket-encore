@@ -143,16 +143,17 @@ function chordsOf(p) {
 const CHORD_COL = "#f0a030";  // the highway's (dark in both themes); the chart uses pal().chord
 // Chart colours per theme (the lane colours are the game's and stay). The highway keeps its dark colours in both.
 const PAL = {
-  dark: { bg: "#111318", grid: "#1c2028", beatDown: "#3c4352", beat: "#262b35", barNum: "#9aa1ad", secs: "#6c7380", fxLane: "#181b21", fxWave: "#2c3140",
+  dark: { bg: "#111318", grid: "#1c2028", beatDown: "#3c4352", beat: "#262b35", barNum: "#9aa1ad", secs: "#8a919e", fxLane: "#181b21", fxWave: "#2c3140",
     fx: "rgba(180,110,240,.38)", fxLine: "#b46ef0", fxSel: "rgba(240,160,48,.55)", fxSelLine: "#f0a030", fxText: "#ffffff", ovFx: "rgba(180,110,240,.5)",
     partFocus: "#1a1d24", part: "#171a20", laneLine: "#20242c", soloFill: "rgba(240,160,48,.10)", soloBar: "#f0a030", od: "#6fd8ff", sel: "#ffffff",
-    gutFocus: "#262a33", gut: "#1e2128", gutText: "#9aa1ad", gutDim: "#6c7380", chord: "#f0a030", band: "#f0a030", playhead: "#ffffff", ovBg: "#0e1014",
-    loopFill: "rgba(90,170,255,.09)", loopFillOff: "rgba(90,170,255,.035)", loopBand: "rgba(90,170,255,.45)", loopBandOff: "rgba(90,170,255,.2)", loopLine: "#5aaaff", waveA: "40" },
+    gutFocus: "#262a33", gut: "#1e2128", gutText: "#9aa1ad", gutDim: "#8a919e", chord: "#f0a030", band: "#f0a030", playhead: "#ffffff", ovBg: "#0e1014",
+    loopFill: "rgba(90,170,255,.09)", loopFillOff: "rgba(90,170,255,.035)", loopBand: "rgba(90,170,255,.45)", loopBandOff: "rgba(90,170,255,.2)", loopLine: "#5aaaff", waveA: "40", gemLine: "" },
   light: { bg: "#fbfbfc", grid: "#eceef1", beatDown: "#aeb5c1", beat: "#dde1e7", barNum: "#3f4652", secs: "#5f6673", fxLane: "#eff1f4", fxWave: "#cfd4dc",
     fx: "rgba(150,80,220,.28)", fxLine: "#8a4fd0", fxSel: "rgba(240,160,48,.45)", fxSelLine: "#b86a00", fxText: "#1d2026", ovFx: "rgba(150,80,220,.5)",
     partFocus: "#ffffff", part: "#f5f6f8", laneLine: "#e4e7eb", soloFill: "rgba(240,160,48,.14)", soloBar: "#c87800", od: "#0a8cbc", sel: "#1d2026",
     gutFocus: "#e2e7ef", gut: "#eceff3", gutText: "#3f4652", gutDim: "#5f6673", chord: "#d97400", band: "#b86a00", playhead: "#1d2026", ovBg: "#eceff3",
-    loopFill: "rgba(40,120,220,.10)", loopFillOff: "rgba(40,120,220,.04)", loopBand: "rgba(40,120,220,.45)", loopBandOff: "rgba(40,120,220,.2)", loopLine: "#2a78d8", waveA: "55" },
+    loopFill: "rgba(40,120,220,.10)", loopFillOff: "rgba(40,120,220,.04)", loopBand: "rgba(40,120,220,.45)", loopBandOff: "rgba(40,120,220,.2)", loopLine: "#2a78d8", waveA: "55",
+    gemLine: "rgba(0,0,0,.55)" },  // the lane colors are pale on a light chart (yellow 1.6:1); an outline keeps the game colors readable
 };
 const pal = () => PAL[document.documentElement.dataset.theme === "light" ? "light" : "dark"];
 window.addEventListener("themechange", () => { if (E) draw(); });
@@ -546,6 +547,7 @@ function draw() {
       c.fillStyle = LANE_COL[l];
       if (sus) { c.globalAlpha = .55; c.fillRect(a, y + LANE / 2 - 3, b - a, 6); c.globalAlpha = 1; }
       c.fillRect(a, y + 3, 9, LANE - 6);
+      if (K.gemLine) { c.strokeStyle = K.gemLine; c.lineWidth = 1; if (sus) c.strokeRect(a + .5, y + LANE / 2 - 2.5, b - a, 5); c.strokeRect(a + .5, y + 3.5, 8, LANE - 7); }
       if (inOd(n)) { c.strokeStyle = K.od; c.lineWidth = 2; c.strokeRect(a - 1, y + 2, 11, LANE - 4); c.lineWidth = 1; }
       if (sel) { c.strokeStyle = K.sel; c.lineWidth = 2; c.strokeRect(a - 2, y + 1, Math.max(13, b - a + 4), LANE - 2); c.lineWidth = 1; }
     }
@@ -663,7 +665,7 @@ function drawHighway() {
   c.strokeStyle = "#e4e6eb"; c.lineWidth = 2; c.beginPath(); c.moveTo(20, strike); c.lineTo(Wd - 20, strike); c.stroke(); c.lineWidth = 1;
   for (let l = 0; l < 4; l++) { c.strokeStyle = LANE_COL[l]; c.beginPath(); c.ellipse(lx(l), strike, lw * 0.35, 6, 0, 0, Math.PI * 2); c.stroke(); c.fillStyle = "#9aa1ad"; c.font = "10px Segoe UI"; c.fillText(String(l + 1), lx(l) - 3, strike + 20); }
   c.fillStyle = PART_COL[p.key]; c.font = "bold 12px Segoe UI"; c.fillText(`${p.key} · ${DIFFS[E.diff]}`, 8, 14);
-  c.fillStyle = "#6c7380"; c.font = "10px Segoe UI"; c.fillText(E.recording ? "● REC: keys 1-4 add gems" : "keys 1-4 add gems here", 8, Hd - 8);
+  c.fillStyle = "#8a919e"; c.font = "10px Segoe UI"; c.fillText(E.recording ? "● REC: keys 1-4 add gems" : "keys 1-4 add gems here", 8, Hd - 8);
 }
 
 // ---------- shell ----------
@@ -675,7 +677,7 @@ function renderShell(root, details) {
     <span id="time"></span>
     <select id="rate" title="Playback speed (changes pitch)">${opts([[1, "100%"], [0.75, "75%"], [0.5, "50%"]], 1)}</select>
     <span class="sep"></span>
-    <select id="diff">${opts([[3, "Expert"], [2, "Hard"], [1, "Medium"], [0, "Easy"]], 3)}</select>
+    <select id="diff" aria-label="Difficulty">${opts([[3, "Expert"], [2, "Hard"], [1, "Medium"], [0, "Easy"]], 3)}</select>
     <label class="small dim">snap</label><select id="snap">${opts([[1, "1 beat"], [2, "1/2"], [3, "1/3"], [4, "1/4"], [6, "1/6"], [8, "1/8"], [0, "off"]], 4)}</select>
     <button id="zoomOut" title="Zoom out (Ctrl+wheel)">−</button><button id="zoomIn" title="Zoom in (Ctrl+wheel)">+</button>
     <span class="sep"></span>
@@ -690,8 +692,8 @@ function renderShell(root, details) {
     <span id="srcBadge"></span>
     <button id="saveEd" class="primary">Save</button><button id="saveBuildEd">Save + rebuild chart</button>
   </div>
-  <div class="mixer">${TRACKS.map(t => `<span class="ch"><b>${TRACK_NAME[t]}</b><button data-m="${t}" title="mute">M</button><button data-s="${t}" title="solo">S</button><input type="range" min="0" max="1.5" step="0.05" value="1" data-v="${t}"></span>`).join("")}
-    <span class="ch"><b>Ticks</b><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol"></span><span id="audioState" class="dim"></span></div>
+  <div class="mixer">${TRACKS.map(t => `<span class="ch"><b>${TRACK_NAME[t]}</b><button data-m="${t}" title="mute">M</button><button data-s="${t}" title="solo">S</button><input type="range" min="0" max="1.5" step="0.05" value="1" data-v="${t}" aria-label="${TRACK_NAME[t]} volume"></span>`).join("")}
+    <span class="ch"><b>Ticks</b><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span><span id="audioState" class="dim"></span></div>
   <div id="shapes" class="shapes"></div>
   <div id="rules" class="rules ok"><span class="dim small">checking the chart against the official charts' rules…</span></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>

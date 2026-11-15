@@ -8,6 +8,7 @@
   --toast-ok: #1f4a2c; --toast-bad: #5a1f1f;
   --mute: #b48cff; --mute-line: #5b3f8f; --solo: #ff6b6b; --solo-line: #8a3434;
   --shape-on-bg: #2c3442; --shape-on-line: #ffffff; --shape-lane: #1c2028;
+  --control-line: #6b7385;  /* field and button borders: 3:1 against the panels (WCAG 1.4.11) */
 }
 :root[data-theme="light"] {
   color-scheme: light;
@@ -18,11 +19,17 @@
   --toast-ok: #dcf2e3; --toast-bad: #fbe0e0;
   --mute: #6a3fc0; --mute-line: #c3b0ec; --solo: #c0282d; --solo-line: #e8a8a8;
   --shape-on-bg: #dfe7f3; --shape-on-line: #1d2026; --shape-lane: #e3e6eb;
+  --control-line: #7a828f;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
 a { color: var(--accent); text-decoration: none; }
-button, select, input, textarea { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; }
+/* links inside text are underlined: their color alone is too close to the text around them (WCAG 1.4.1).
+   Navigation (header, breadcrumbs, the Help menu) and the song cards stay plain. */
+#main a:not(.cardlink) { text-decoration: underline; text-underline-offset: 2px; }
+#main .helpnav a { text-decoration: none; }
+button, select, input, textarea { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--control-line); border-radius: 4px; }
+input::placeholder, textarea::placeholder { color: var(--dim); opacity: 1; }
 button { padding: 4px 10px; cursor: pointer; }
 button:hover { border-color: var(--dim); }
 button.primary { background: var(--primary); border-color: var(--accent); }
@@ -57,6 +64,12 @@ body.editing main { padding: 8px 12px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; cursor: pointer; }
 .card:hover { border-color: var(--accent); }
 .card h3 { margin: 0; font-size: 16px; }
+/* the title link covers the whole card, so the card opens with a click anywhere or with Tab + Enter */
+.card[data-f] { position: relative; }
+.card .cardlink { color: inherit; }
+.card .cardlink::after { content: ""; position: absolute; inset: 0; border-radius: 8px; }
+.card .cardlink:focus { outline: none; }
+.card:has(.cardlink:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .card .sub { color: var(--dim); margin-bottom: 8px; }
 .card .row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .tiers { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; font-size: 12px; margin-top: 8px; }
