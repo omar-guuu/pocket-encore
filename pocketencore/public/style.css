@@ -116,9 +116,23 @@ table.t th { color: var(--dim); font-weight: 600; }
 .filelist div.d { color: var(--accent); }
 
 /* editor */
-.edbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
-.edbar .sep { width: 1px; height: 22px; background: var(--line); }
-#time { font-family: Consolas, monospace; min-width: 150px; }
+.edbar { display: flex; gap: 6px 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-size: 13px; }
+/* toolbar groups (Playback, View, Edit, Save): each wraps as a whole */
+.edbar .grp { display: flex; gap: 4px; align-items: center; flex-wrap: nowrap; }
+.edbar .grp + .grp { border-left: 1px solid var(--line); padding-left: 8px; }
+.edbar .grow + .grp { border-left: 0; padding-left: 0; }
+.edbar .grp button { padding: 4px 7px; }
+.edbar .grp select { padding: 3px 2px; }
+#undo, #redo { font-size: 16px; line-height: 18px; }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; }
+.seg button + button { margin-left: -1px; }
+.seg button:first-child { border-radius: 4px 0 0 4px; }
+.seg button:last-child { border-radius: 0 4px 4px 0; }
+.seg button.on { background: var(--primary); border-color: var(--accent); position: relative; }
+#time { font-family: Consolas, monospace; min-width: 112px; font-size: 12px; }
+.rules .warnico { flex: none; width: 16px; height: 16px; color: var(--warn); }
+.rules .warnico.bad { color: var(--bad); }
 .mixer { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 12px; }
 .mixer .ch { display: flex; gap: 4px; align-items: center; }
 .mixer button { padding: 0 6px; font-size: 11px; }
@@ -129,6 +143,7 @@ table.t th { color: var(--dim); font-weight: 600; }
 .mixer button[data-s] { color: var(--solo); border-color: var(--solo-line); }
 .mixer button[data-s].on { background: #d23c3c; border-color: #f06060; color: #fff; }
 #loopBtn.on { background: #1f4f86; border-color: #5aaaff; color: #fff; }
+#odBtn.on { background: #0b5f80; border-color: #6fd8ff; color: #fff; }
 .shapes { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 12px; min-height: 36px; }
 .shapes button.shape { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; cursor: grab; }
 .shapes button.shape span { font-size: 10px; color: var(--dim); }
@@ -171,8 +186,14 @@ button.small { padding: 1px 7px; font-size: 11px; }
 input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
 
 /* live chart rules */
-.rules { border: 1px solid var(--warn-line); background: rgba(232,184,74,.07); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; }
-.rules.ok { border-color: var(--line); background: none; color: var(--ok); padding: 4px 10px; }
+/* one height in every state (header + two rows), so the chart below never moves; "Show all" opens over the chart */
+.rules { position: relative; height: 86px; box-sizing: border-box; overflow: hidden; border: 1px solid var(--warn-line); background: rgba(232,184,74,.07); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; }
+.rules.ok { display: flex; align-items: center; border-color: var(--line); background: none; color: var(--ok); }
+.rules.dis { display: flex; align-items: center; color: var(--warn); }
+.rules.dis .rhead { flex: 1; margin-bottom: 0; }
+.rules.open { overflow: visible; z-index: 5; }
+.rules.open .rlist { position: absolute; left: -1px; right: -1px; top: 34px; max-height: 50vh; overflow: auto; padding: 0 10px 6px;
+  background: var(--panel); border: 1px solid var(--warn-line); border-top: 0; border-radius: 0 0 6px 6px; box-shadow: 0 8px 18px rgba(0,0,0,.25); }
 .rules .rhead { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
 .rules .rrow { display: flex; gap: 6px; align-items: center; padding: 2px 0; border-top: 1px solid var(--soft-line); }
 .rules .rrow.fresh { animation: rulesflash 1.6s ease-out; }

@@ -205,7 +205,7 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   from a play…** (enter how many phrases were left when gold appeared; it computes the new scale), preview, loudness.
   **Chart checks** lists what differs from the official charts (first gem before 2.77 s, gems after the audio ends,
   3-gem chords, held drum gems, too many chords or holds, density above the official 90th percentile, overdrive phrases
-  too close, solos too short or too many; "go" opens the editor at that time). Also gem counts and star scores per
+  too close, solos too short, too many or overlapping another part's; "go" opens the editor at that time). Also gem counts and star scores per
   difficulty from the last build. **song.json** tab = the raw file; unknown effect names are refused on save.
   Every save keeps the old file as `song.json.bak`; saving without changes leaves the file (and build state) alone.
 - **Packs** (top right): sets of your songs, each with its own song database, to switch what the game lists without
@@ -224,8 +224,13 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   the **highway** on the right shows it the way the game does (gems falling to the strike line, overdrive and solo
   spans), **ticks** play a click on its gems to check sync, and keys **1–4** add a gem in that lane at the playhead,
   also while playing (**Record** / R starts playback in record mode; clicking a highway lane does the same).
-  Edit gems: add, move, change length (hold), delete, copy/paste, overdrive phrase (O) and solo (L) on/off for the
-  selection, undo/redo (also for effects and tempo changes); snap to the beat grid. Effects lane: add, move, resize,
+  The toolbar groups Playback (play, start, loop, record, time, speed), View (part, difficulty, **All / Focus /
+  Only**, zoom) and Edit (snap, Overdrive, Solo, undo/redo, Tempo…). **Focus** (F, or double-click a part's name)
+  enlarges the selected part and shrinks the others to thin strips (click one to switch); **Only** shows it alone.
+  Edit gems: add, move, change length (hold), delete, copy/paste, overdrive phrase (**Overdrive** / O) and solo
+  (**Solo** / L) on/off for the selection (while recording, O starts and ends a phrase at the playhead; a solo that
+  would overlap another part's solo is not added); drag an overdrive or solo bar to move it, or its ends to resize
+  it (it stops at the next phrase, and a solo at any part's next solo), undo/redo (also for effects and tempo changes); snap to the beat grid. Effects lane: add, move, resize,
   change or delete screen effects (song.json `effects`).
   - **Tempo…**: set a constant BPM from a first beat (for songs with a steady beat whose grid is off) or shift every gem
     by some ms against the audio. Both keep every gem, phrase and solo at its time in seconds; only the grid moves.
@@ -411,7 +416,8 @@ from REAPER's tempo map and ignores the BEAT track, so the two must agree (they 
   on import PART KEYS becomes the 4-lane vocal part. (Rock Band charts with real pitched vocals in PART VOCALS and no
   PART KEYS are also accepted.)
 - Overdrive: note 116 over the phrase; every note of the phrase must lie entirely inside it (sustains included).
-- Solo: note 103, longer than one beat, at most 4 per part. It must end on or before the part's last gem on every
+- Solo: note 103, longer than one beat, at most 4 per part, and only one part at a time (the editor refuses an
+  overlapping one; the chart checks warn about it). It must end on or before the part's last gem on every
   difficulty, or mid2rbu drops it without a message.
 - A note of 160 ticks or less is a tap; longer is a sustain. Chords = notes starting on the same tick.
 

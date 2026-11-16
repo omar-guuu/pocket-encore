@@ -491,7 +491,9 @@ const HELP = [
       <tr><td><kbd>R</kbd> / Record</td><td>play in record mode</td></tr>
       <tr><td>click a lane · drag · drag the right end</td><td>add a gem · move · make it a hold</td></tr>
       <tr><td><kbd>Del</kbd> · <kbd>←</kbd><kbd>→</kbd> · <kbd>↑</kbd><kbd>↓</kbd> · <kbd>T</kbd></td><td>delete · move by snap · change lane · tap/hold</td></tr>
-      <tr><td><kbd>O</kbd> · <kbd>L</kbd></td><td>overdrive phrase · solo, on/off for the selection</td></tr>
+      <tr><td>drag an overdrive or solo bar · drag its ends</td><td>move the phrase or solo · make it longer or shorter (snapped; it stops at the next phrase, and a solo at any part's next solo)</td></tr>
+      <tr><td><kbd>F</kbd> · All parts / Focus / Only</td><td>show all four parts · enlarge the selected part, the others as thin strips (click one to switch) · only the selected part; double-click a part's name to enlarge it or go back</td></tr>
+      <tr><td><kbd>O</kbd> / Overdrive · <kbd>L</kbd> / Solo</td><td>overdrive phrase · solo, on/off for the selected gems (one part has a solo at a time); while recording, <kbd>O</kbd> or Overdrive starts a phrase at the playhead and a second press ends it</td></tr>
       <tr><td>drag on the ruler · <kbd>K</kbd> / ⟲ Loop</td><td>mark a section to repeat · loop on/off (with gems selected: loops their bars)</td></tr>
       <tr><td>Shapes · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd></td><td>drag a shape onto its part, or click it then click the part · add shape n at the playhead</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> · <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>undo/redo · copy/paste at the playhead · save</td></tr>
@@ -506,7 +508,7 @@ const HELP = [
     chords (3-gem chords on Expert only), and for bass two gems in a row, since bass has no chords. Vocals have none.</p>
     <h3>Controller</h3>
     <p>Xbox and PlayStation controllers work in the editor with the game's layout: <b>D-pad ←</b> red, <b>D-pad ↑</b> yellow,
-    <b>○ / B</b> blue, <b>△ / Y</b> green, <b>✕ / A</b> overdrive, <b>L1 / LB</b> and <b>R1 / RB</b> change the part. Press gem
+    <b>△ / Y</b> blue, <b>○ / B</b> green, <b>✕ / A</b> overdrive, <b>L1 / LB</b> and <b>R1 / RB</b> change the part. Press gem
     buttons together for a chord; hold one while playing for a held note; while recording, overdrive starts and ends a phrase.
     The other actions (play, record, loop, undo…) and the sticks are listed in the editor's <b>🎮 Controller</b> dialog, where
     any button can be changed. If your presses land early or late, use its <b>Calibrate…</b>.</p>

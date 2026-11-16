@@ -26,12 +26,16 @@ const SHAPES = {
 const PART_COL = { drums: "#c86464", bass: "#6488d8", guitar: "#d89a48", vocals: "#58b078" };
 const GUT = 78, RULER = 30, FXH = 30, HEAD = 14, LANE = 22, PART_H = HEAD + 4 * LANE, PAD = 6;
 const H = RULER + FXH + 4 * (PART_H + PAD) + 4;
+const PARTS_TOP = RULER + FXH + 4, PARTS_H = 4 * (PART_H + PAD), STRIP = 18;
+// parts shown: all four, the focus part enlarged with the others as thin strips, or the focus part alone
+const VIEWS = [["all", "All", "Show all four parts"], ["focus", "Focus", "Enlarge the selected part; the others become thin strips (click one to switch)"], ["only", "Only", "Show only the selected part, at full height"]];
 const HW_W = 230, HW_AHEAD = 2.5;  // highway: width, seconds shown above the strike line
 
 let E = null;  // editor state
 
 window.editorDirty = () => !!(E && (E.dirty || E.fxDirty));
 window.editorState = () => E;  // for tests and the console
+window.editorFns = () => ({ partGeo, xOf, t2s, s2t, draw, undo });  // the same, for layout and timing
 window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); clearInterval(E.padTimer); window.removeEventListener("keyup", E.onKeyUp); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); if (E.ctx) E.ctx.close(); E = null; };
 
 window.openEditor = async (root, folder, details) => {
@@ -46,7 +50,7 @@ window.openEditor = async (root, folder, details) => {
     diff: 3, snap: 4, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, fxDirty: false, saved: false,
     fx: JSON.parse(JSON.stringify(details.effects || [])), fxSel: -1, reduce: S.chart ? !!S.reduce : true,
     ctx: null, bufs: {}, peaks: {}, gains: {}, vol: {}, mute: {}, solo: {}, srcs: [], playing: false, t0: 0, off: 0, rate: 1,
-    focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
+    focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, view: (() => { try { return VIEWS.some(v => v[0] === localStorage["pe.edView"]) ? localStorage["pe.edView"] : "all"; } catch { return "all"; } })(), padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
   };
   E.parts = PART_TRACKS.map(([key, names]) => {
     let tr = E.midi.tracks.find(t => names.includes(t.name));
@@ -193,6 +197,7 @@ async function runChecks() {
     renderRules();
   } catch (e) { const el = $("#rules"); if (el) el.innerHTML = `<span class="dim small">couldn't run the chart checks: ${esc(e.message)}</span>`; }
 }
+const warnIcon = bad => `<svg class="warnico${bad ? " bad" : ""}" viewBox="0 0 16 16" role="img" aria-label="${bad ? "Problem" : "Warning"}"><path d="M8 1.2c.4 0 .8.2 1 .6l6.6 11.6c.4.7-.1 1.6-1 1.6H1.4c-.9 0-1.4-.9-1-1.6L7 1.8c.2-.4.6-.6 1-.6z" fill="currentColor"/><rect x="7.1" y="5" width="1.8" height="5.2" rx=".9" fill="var(--bg)"/><circle cx="8" cy="12.4" r="1" fill="var(--bg)"/></svg>`;
 function renderRules() {
   const el = $("#rules");
   if (!el || !E.checks) return;
@@ -200,21 +205,27 @@ function renderRules() {
   const active = E.checks.filter(i => !dis.has(ruleKey(i)))
     .sort((a, b) => (a.level === "error" ? 0 : 1) - (b.level === "error" ? 0 : 1) || (a.diff === cur ? 0 : 1) - (b.diff === cur ? 0 : 1));
   const hidden = E.checks.length - active.length;
-  if (!active.length) {
+  // the banner keeps one height (header + two rows), so the chart below never moves; "Show all" opens over the chart
+  if (!active.length && !hidden) {
     el.className = "rules ok";
-    el.innerHTML = `<span>✓ Within the official charts' ranges${hidden ? ` (${hidden} dismissed)` : ""}.</span>${hidden ? ' <button class="small" id="rulesShow">Show dismissed</button>' : ""}`;
+    el.innerHTML = `<span>✓ Within the official charts' ranges.</span>`;
+  } else if (!active.length) {
+    el.className = "rules dis";
+    el.innerHTML = `<div class="rhead">${warnIcon(false)}<b>${hidden} dismissed rule${hidden > 1 ? "s" : ""} outside the official charts' style</b>
+      <span class="small dim">hidden for this song: the chart still saves and builds</span><span class="grow"></span><button class="small" id="rulesShow">Show dismissed</button></div>`;
   } else {
     const shown = E.rulesOpen ? active : active.slice(0, 2);
-    el.className = "rules";
-    el.innerHTML = `<div class="rhead"><b>${active.length} rule${active.length > 1 ? "s" : ""} outside the official charts' style</b>
+    el.className = "rules" + (E.rulesOpen ? " open" : "");
+    const bad = active.some(i => i.level === "error");
+    el.innerHTML = `<div class="rhead">${warnIcon(bad)}<b>${active.length} rule${active.length > 1 ? "s" : ""} outside the official charts' style</b>
       <span class="small dim">just a heads-up: the chart still saves and builds</span><span class="grow"></span>
       ${active.length > 2 ? `<button class="small" id="rulesMore">${E.rulesOpen ? "Show fewer" : `Show all ${active.length}`}</button>` : ""}
       <button class="small" id="rulesAll">Dismiss all</button>${hidden ? ` <button class="small" id="rulesShow">Show dismissed (${hidden})</button>` : ""}</div>
-      ${shown.map(i => `<div class="rrow ${E.fresh && E.fresh.has(ruleKey(i)) ? "fresh" : ""}" data-key="${esc(ruleKey(i))}">
+      <div class="rlist">${shown.map(i => `<div class="rrow ${E.fresh && E.fresh.has(ruleKey(i)) ? "fresh" : ""}" data-key="${esc(ruleKey(i))}">
         <span class="badge ${i.level === "error" ? "bad" : "warn"}">${i.level === "error" ? "problem" : "rule"}</span>
         ${i.part ? `<b>${esc(i.part)}</b>` : ""} <span>${esc(i.msg)}</span>
         ${i.at != null ? `<a href="#" data-at="${i.at}" class="small">go</a>` : ""}<span class="grow"></span>
-        <button class="small rx" title="Dismiss: hide this warning for this song">×</button></div>`).join("")}`;
+        <button class="small rx" title="Dismiss: hide this warning for this song">×</button></div>`).join("")}</div>`;
   }
   el.querySelectorAll("[data-at]").forEach(a => a.onclick = e => {
     e.preventDefault();
@@ -447,26 +458,54 @@ function renderShapes() {
 // ---------- layout ----------
 const xOf = s => GUT + (s - E.x0) * E.pps;
 const sOf = x => E.x0 + (x - GUT) / E.pps;
-const partY = i => RULER + FXH + i * (PART_H + PAD) + 4;
+// where each part is drawn: { y, h, lane (lane height), gw (gem width) }, { y, h, strip: true } or { hidden: true }
+function partGeo() {
+  const fi = E.parts.findIndex(p => p.key === E.focus), v = fi < 0 ? "all" : E.view;
+  if (v === "all") return E.parts.map((p, i) => ({ y: PARTS_TOP + i * (PART_H + PAD), h: PART_H, lane: LANE, gw: 9 }));
+  const big = v === "focus" ? PARTS_H - 3 * (STRIP + PAD) - PAD : PARTS_H - PAD;
+  let y = PARTS_TOP;
+  return E.parts.map((p, i) => {
+    if (i === fi) { const g = { y, h: big, lane: (big - HEAD) / 4, gw: 14 }; y += big + PAD; return g; }
+    if (v === "only") return { hidden: true };
+    const g = { y, h: STRIP, strip: true }; y += STRIP + PAD; return g;
+  });
+}
+const geoOf = p => partGeo()[E.parts.indexOf(p)];
+// a gem's box inside its lane: full height in the normal view, at most 30 px in an enlarged one
+const gemBox = (g, l) => { const gh = Math.min(g.lane - 6, 30), y = g.y + HEAD + l * g.lane; return { y, gy: y + (g.lane - gh) / 2, gh, mid: y + g.lane / 2 }; };
 function hit(x, y) {
   if (y < RULER) return { zone: "ruler" };
   if (y < RULER + FXH) return { zone: "fx" };
+  const geo = partGeo();
   for (let i = 0; i < 4; i++) {
-    const y0 = partY(i);
-    if (y >= y0 && y < y0 + HEAD) return { zone: "head", part: E.parts[i] };
-    if (y >= y0 + HEAD && y < y0 + PART_H) return { zone: "lane", part: E.parts[i], lane: Math.floor((y - y0 - HEAD) / LANE) };
+    const g = geo[i];
+    if (g.hidden || y < g.y || y >= g.y + g.h) continue;
+    if (g.strip) return { zone: "strip", part: E.parts[i] };
+    if (y < g.y + HEAD) return { zone: "head", part: E.parts[i] };
+    return { zone: "lane", part: E.parts[i], lane: Math.min(3, Math.floor((y - g.y - HEAD) / g.lane)) };
   }
   return { zone: "none" };
+}
+// overdrive phrase or solo bar under the mouse, in a part's title strip: { n, p, edge: "a" | "b" | null }
+function spanAt(x, y) {
+  const h = hit(x, y);
+  if (h.zone !== "head" || x < GUT) return null;
+  const g = geoOf(h.part), row = y - g.y < 7 ? SOLO : OD;
+  const near = h.part.tr.notes.filter(n => (n.n === OD || n.n === SOLO) && x >= xOf(t2s(n.t)) - 5 && x <= xOf(t2s(n.t + n.l)) + 5);
+  const n = near.find(n => n.n === row) || near[0];
+  if (!n) return null;
+  const a = xOf(t2s(n.t)), b = xOf(t2s(n.t + n.l)), da = Math.abs(x - a), db = Math.abs(x - b);
+  return { n, p: h.part, edge: Math.min(da, db) < 6 ? (da <= db ? "a" : "b") : null };
 }
 function gemAt(x, y) {
   const h = hit(x, y);
   if (h.zone !== "lane" || x < GUT) return null;
-  const p = h.part, base = BASE[E.diff] + p.off + h.lane;
+  const p = h.part, base = BASE[E.diff] + p.off + h.lane, gw = geoOf(p).gw;
   let best = null;
   for (const n of p.tr.notes) {
     if (n.n !== base) continue;
-    const a = xOf(t2s(n.t)), b = n.l > TAP_MAX ? xOf(t2s(n.t + n.l)) : a + 9;
-    if (x >= a - 4 && x <= Math.max(b, a + 9) + 2) { best = { n, p, edge: n.l > TAP_MAX ? x > b - 6 : x > a + 5 }; }
+    const a = xOf(t2s(n.t)), b = n.l > TAP_MAX ? xOf(t2s(n.t + n.l)) : a + gw;
+    if (x >= a - 4 && x <= Math.max(b, a + gw) + 2) { best = { n, p, edge: n.l > TAP_MAX ? x > b - 6 : x > a + gw - 4 }; }
   }
   return best;
 }
@@ -474,6 +513,7 @@ function gemAt(x, y) {
 // ---------- drawing ----------
 function draw() {
   if (!E || !E.cv) return;
+  $("#odBtn").classList.toggle("on", E.odStart != null);  // lit while a recorded phrase is open
   const c = E.g, W = E.W;
   c.clearRect(0, 0, W, H);
   const K = pal();
@@ -510,20 +550,27 @@ function draw() {
     c.fillStyle = K.fxText; c.font = "11px Segoe UI"; c.fillText((f.effect || "cmd " + f.cmd) + (f.to == null ? " →" : ""), Math.max(a, GUT) + 4, fy + 18);
   });
   // parts
+  const geo = partGeo();
   E.parts.forEach((p, i) => {
-    const y0 = partY(i);
-    c.fillStyle = p.key === E.focus ? K.partFocus : K.part; c.fillRect(GUT, y0, W - GUT, PART_H);
-    wave(STEM_OF[p.key], y0 + HEAD, 4 * LANE, PART_COL[p.key] + K.waveA);
-    for (let l = 1; l < 4; l++) { c.strokeStyle = K.laneLine; c.beginPath(); c.moveTo(GUT, y0 + HEAD + l * LANE + .5); c.lineTo(W, y0 + HEAD + l * LANE + .5); c.stroke(); }
-    // overdrive and solo markers (shared by every difficulty)
-    const od = [];
+    const g = geo[i], y0 = g.y, LN = g.lane, gw = g.gw;
+    if (g.hidden) return;
+    if (g.strip) { drawStrip(c, K, p, g, W); return; }
+    c.fillStyle = p.key === E.focus ? K.partFocus : K.part; c.fillRect(GUT, y0, W - GUT, g.h);
+    wave(STEM_OF[p.key], y0 + HEAD, 4 * LN, PART_COL[p.key] + K.waveA);
+    for (let l = 1; l < 4; l++) { c.strokeStyle = K.laneLine; c.beginPath(); c.moveTo(GUT, y0 + HEAD + l * LN + .5); c.lineTo(W, y0 + HEAD + l * LN + .5); c.stroke(); }
+    // overdrive and solo markers (shared by every difficulty): solo bar on top, overdrive bar below it, both draggable
+    const od = [], hov = E.hoverSpan, soloLabels = [];
     for (const n of p.tr.notes) {
       if (n.n !== OD && n.n !== SOLO) continue;
       const a = xOf(t2s(n.t)), b = xOf(t2s(n.t + n.l));
       if (n.n === OD) od.push(n);
       if (b < GUT || a > W) continue;
-      if (n.n === SOLO) { c.fillStyle = K.soloFill; c.fillRect(a, y0 + HEAD, b - a, 4 * LANE); c.fillStyle = K.soloBar; c.fillRect(a, y0 + 1, b - a, 4); c.font = "9px Segoe UI"; c.fillText("solo", Math.max(a, GUT) + 2, y0 + 12); }
-      else { c.fillStyle = K.od; c.fillRect(a, y0 + 7, Math.max(2, b - a), 4); }
+      const by = n.n === SOLO ? y0 + 1 : y0 + 7, bh = n.n === SOLO ? 5 : 6, w = Math.max(2, b - a);
+      if (n.n === SOLO) { c.fillStyle = K.soloFill; c.fillRect(a, y0 + HEAD, b - a, 4 * LN); soloLabels.push(Math.max(a, GUT)); }
+      c.fillStyle = n.n === SOLO ? K.soloBar : K.od; c.fillRect(a, by, w, bh);
+      if (hov && hov.n === n || E.drag && E.drag.mode === "span" && E.drag.n === n) {  // grab handles at both ends
+        c.fillStyle = K.sel; c.fillRect(a - 1, by - 1, 3, bh + 2); c.fillRect(a + w - 2, by - 1, 3, bh + 2);
+      }
     }
     const inOd = n => od.some(o => n.t >= o.t && n.t < o.t + o.l);
     if (E.showGhost && E.ghost) {  // removed gems of the automatic chart, as outlines
@@ -531,30 +578,33 @@ function draw() {
       for (const n of E.ghost[i].notes) {
         if (n.n < base || n.n >= base + 4 || cur.has(`${n.t}:${n.n}`)) continue;
         const a = xOf(t2s(n.t)); if (a < GUT - 10 || a > W) continue;
-        const l = n.n - base, y = y0 + HEAD + l * LANE;
-        c.strokeStyle = LANE_COL[l]; c.setLineDash([2, 2]); c.strokeRect(a + .5, y + 3.5, 9, LANE - 7); c.setLineDash([]);
+        const l = n.n - base, bx = gemBox(g, l);
+        c.strokeStyle = LANE_COL[l]; c.setLineDash([2, 2]); c.strokeRect(a + .5, bx.gy + .5, gw, bx.gh - 1); c.setLineDash([]);
       }
     }
     for (const [t, lo, hi] of chordsOf(p)) {
-      const x = Math.round(xOf(t2s(t)) + 4.5) + .5; if (x < GUT || x > W) continue;
-      c.strokeStyle = K.chord; c.lineWidth = 2; c.beginPath(); c.moveTo(x, y0 + HEAD + lo * LANE + LANE / 2); c.lineTo(x, y0 + HEAD + hi * LANE + LANE / 2); c.stroke(); c.lineWidth = 1;
+      const x = Math.round(xOf(t2s(t)) + gw / 2) + .5; if (x < GUT || x > W) continue;
+      c.strokeStyle = K.chord; c.lineWidth = 2; c.beginPath(); c.moveTo(x, gemBox(g, lo).mid); c.lineTo(x, gemBox(g, hi).mid); c.stroke(); c.lineWidth = 1;
     }
     for (const n of gemsOf(p)) {
       const a = xOf(t2s(n.t));
       const sus = n.l > TAP_MAX, b = sus ? xOf(t2s(n.t + n.l)) : a;
       if (b < GUT - 10 || a > W) continue;
-      const l = laneOf(p, n), y = y0 + HEAD + l * LANE, sel = E.sel.has(n);
+      const l = laneOf(p, n), bx = gemBox(g, l), sel = E.sel.has(n), th = Math.max(6, Math.round(bx.gh / 4));
       c.fillStyle = LANE_COL[l];
-      if (sus) { c.globalAlpha = .55; c.fillRect(a, y + LANE / 2 - 3, b - a, 6); c.globalAlpha = 1; }
-      c.fillRect(a, y + 3, 9, LANE - 6);
-      if (K.gemLine) { c.strokeStyle = K.gemLine; c.lineWidth = 1; if (sus) c.strokeRect(a + .5, y + LANE / 2 - 2.5, b - a, 5); c.strokeRect(a + .5, y + 3.5, 8, LANE - 7); }
-      if (inOd(n)) { c.strokeStyle = K.od; c.lineWidth = 2; c.strokeRect(a - 1, y + 2, 11, LANE - 4); c.lineWidth = 1; }
-      if (sel) { c.strokeStyle = K.sel; c.lineWidth = 2; c.strokeRect(a - 2, y + 1, Math.max(13, b - a + 4), LANE - 2); c.lineWidth = 1; }
+      if (sus) { c.globalAlpha = .55; c.fillRect(a, bx.mid - th / 2, b - a, th); c.globalAlpha = 1; }
+      c.fillRect(a, bx.gy, gw, bx.gh);
+      if (K.gemLine) { c.strokeStyle = K.gemLine; c.lineWidth = 1; if (sus && b - a > gw) c.strokeRect(a + gw + .5, bx.mid - th / 2 + .5, b - a - gw, th - 1); c.strokeRect(a + .5, bx.gy + .5, gw - 1, bx.gh - 1); }
+      if (inOd(n)) { c.strokeStyle = K.od; c.lineWidth = 2; c.strokeRect(a - 1, bx.gy - 1, gw + 2, bx.gh + 2); c.lineWidth = 1; }
+      if (sel) { c.strokeStyle = K.sel; c.lineWidth = 2; c.strokeRect(a - 2, bx.gy - 2, Math.max(gw + 4, b - a + 4), bx.gh + 4); c.lineWidth = 1; }
     }
+    // "solo" labels on top of the gems, on the part's background
+    c.font = "9px Segoe UI";
+    for (const x of soloLabels) { c.fillStyle = p.key === E.focus ? K.partFocus : K.part; c.fillRect(x + 1, y0 + HEAD + 1, 22, 11); c.fillStyle = K.soloBar; c.fillText("solo", x + 3, y0 + HEAD + 10); }
     // gutter label
-    c.fillStyle = p.key === E.focus ? K.gutFocus : K.gut; c.fillRect(0, y0, GUT - 2, PART_H);
+    c.fillStyle = p.key === E.focus ? K.gutFocus : K.gut; c.fillRect(0, y0, GUT - 2, g.h);
     c.fillStyle = PART_COL[p.key]; c.font = "bold 12px Segoe UI"; c.fillText(p.key, 8, y0 + 12);
-    for (let l = 0; l < 4; l++) { c.fillStyle = LANE_COL[l]; c.fillRect(GUT - 14, y0 + HEAD + l * LANE + 5, 8, LANE - 10); if (p.key === E.focus) { c.fillStyle = K.gutText; c.font = "9px Segoe UI"; c.fillText(String(l + 1), GUT - 24, y0 + HEAD + l * LANE + 15); } }
+    for (let l = 0; l < 4; l++) { const bx = gemBox(g, l); c.fillStyle = LANE_COL[l]; c.fillRect(GUT - 14, bx.gy + 2, 8, bx.gh - 4); if (p.key === E.focus) { c.fillStyle = K.gutText; c.font = "9px Segoe UI"; c.fillText(String(l + 1), GUT - 24, bx.mid + 3); } }
     c.fillStyle = K.gutDim; c.font = "10px Segoe UI"; c.fillText(`${gemsOf(p).length} gems`, 8, y0 + 30);
   });
   // loop region: shaded over everything, edges as handles on the ruler
@@ -574,11 +624,11 @@ function draw() {
   if (pv) {
     const [sh, x, y] = pv, h = hit(x, y);
     if (x >= GUT && h.zone === "lane" && h.part.key === E.focus) {
-      const y0 = partY(E.parts.indexOf(h.part)), t = snapT(s2t(sOf(x)));
+      const g = geoOf(h.part), t = snapT(s2t(sOf(x)));
       for (const [l, k] of sh.gems) {
-        const gx = xOf(t2s(t + k * shapeStep())), gy = y0 + HEAD + l * LANE;
-        c.globalAlpha = .6; c.fillStyle = LANE_COL[l]; c.fillRect(gx, gy + 3, 9, LANE - 6); c.globalAlpha = 1;
-        c.strokeStyle = K.sel; c.setLineDash([2, 2]); c.strokeRect(gx - 1.5, gy + 1.5, 12, LANE - 3); c.setLineDash([]);
+        const gx = xOf(t2s(t + k * shapeStep())), bx = gemBox(g, l);
+        c.globalAlpha = .6; c.fillStyle = LANE_COL[l]; c.fillRect(gx, bx.gy, g.gw, bx.gh); c.globalAlpha = 1;
+        c.strokeStyle = K.sel; c.setLineDash([2, 2]); c.strokeRect(gx - 1.5, bx.gy - 1.5, g.gw + 3, bx.gh + 3); c.setLineDash([]);
       }
     }
   }
@@ -590,8 +640,8 @@ function draw() {
     c.strokeRect(Math.min(d.x, d.cx) + .5, Math.min(d.y, d.cy) + .5, Math.abs(d.cx - d.x), Math.abs(d.cy - d.y)); c.setLineDash([]);
   }
   if (E.odStart != null && E.odPart) {
-    const i = E.parts.indexOf(E.odPart), a = xOf(t2s(E.odStart)), b = xOf(pos());
-    c.fillStyle = K.od; c.globalAlpha = .6; c.fillRect(Math.max(GUT, Math.min(a, b)), partY(i) + 7, Math.abs(b - a), 4); c.globalAlpha = 1;
+    const g = geoOf(E.odPart), a = xOf(t2s(E.odStart)), b = xOf(pos());
+    if (!g.hidden && !g.strip) { c.fillStyle = K.od; c.globalAlpha = .6; c.fillRect(Math.max(GUT, Math.min(a, b)), g.y + 7, Math.abs(b - a), 6); c.globalAlpha = 1; }
   }
   // playhead
   const px = xOf(pos());
@@ -599,6 +649,19 @@ function draw() {
   drawOverview();
   drawHighway();
   updateStatus();
+}
+// a part shrunk to a thin strip (Focus view): its name, solos and gems as small marks; a click focuses it
+function drawStrip(c, K, p, g, W) {
+  c.fillStyle = K.part; c.fillRect(GUT, g.y, W - GUT, g.h);
+  for (const n of p.tr.notes) if (n.n === SOLO) { const a = xOf(t2s(n.t)), b = xOf(t2s(n.t + n.l)); if (b >= GUT && a <= W) { c.fillStyle = K.soloFill; c.fillRect(a, g.y, b - a, g.h); } }
+  const lh = (g.h - 2) / 4;
+  for (const n of gemsOf(p)) {
+    const a = xOf(t2s(n.t)); if (a < GUT - 3 || a > W) continue;
+    const l = laneOf(p, n), b = n.l > TAP_MAX ? xOf(t2s(n.t + n.l)) : a + 3;
+    c.fillStyle = LANE_COL[l]; c.fillRect(a, g.y + 1 + l * lh, Math.max(3, b - a), Math.max(2, lh - 1));
+  }
+  c.fillStyle = K.gut; c.fillRect(0, g.y, GUT - 2, g.h);
+  c.fillStyle = PART_COL[p.key]; c.font = "bold 11px Segoe UI"; c.fillText(p.key, 8, g.y + 13);
 }
 function wave(track, y, h, col) {
   const pk = E.peaks[track];
@@ -673,27 +736,33 @@ function renderShell(root, details) {
   const opts = (list, cur) => list.map(([v, n]) => `<option value="${v}" ${String(v) === String(cur) ? "selected" : ""}>${n}</option>`).join("");
   root.innerHTML = `
   <div class="edbar">
-    <button id="play" class="primary" style="min-width:86px">▶ Play</button><button id="toStart" title="Home">⏮</button><button id="loopBtn">⟲ Loop</button>
-    <span id="time"></span>
-    <select id="rate" title="Playback speed (changes pitch)">${opts([[1, "100%"], [0.75, "75%"], [0.5, "50%"]], 1)}</select>
-    <span class="sep"></span>
-    <select id="diff" aria-label="Difficulty">${opts([[3, "Expert"], [2, "Hard"], [1, "Medium"], [0, "Easy"]], 3)}</select>
-    <label class="small dim">snap</label><select id="snap">${opts([[1, "1 beat"], [2, "1/2"], [3, "1/3"], [4, "1/4"], [6, "1/6"], [8, "1/8"], [0, "off"]], 4)}</select>
-    <button id="zoomOut" title="Zoom out (Ctrl+wheel)">−</button><button id="zoomIn" title="Zoom in (Ctrl+wheel)">+</button>
-    <span class="sep"></span>
-    <label class="small dim">part</label><select id="focus" title="The part the highway shows, the ticks follow and keys 1-4 record into">${opts([["drums", "drums"], ["bass", "bass"], ["guitar", "guitar"], ["vocals", "vocals"]], "guitar")}</select>
-    <label class="small"><input type="checkbox" id="ticks"> ticks</label>
-    <button id="rec" title="Record mode: while playing, keys 1-4 (or the controller) add gems to the part at the playhead; hold for a held note (R)">● Record</button>
-    <button id="padBtn">🎮 Controller</button>
-    <span class="sep"></span>
-    <button id="undo" title="Ctrl+Z">Undo</button><button id="redo" title="Ctrl+Y">Redo</button>
-    <button id="tempoBtn" title="Set a constant tempo or shift every gem">Tempo…</button>
+    <div class="grp" role="group" aria-label="Playback">
+      <button id="play" class="primary" style="min-width:68px">▶ Play</button><button id="toStart" title="Back to the start (Home)" aria-label="Back to the start">⏮</button><button id="loopBtn">⟲ Loop</button>
+      <button id="rec" title="Record mode: while playing, keys 1-4 (or the controller) add gems to the part at the playhead; hold for a held note (R)">● Record</button>
+      <span id="time"></span>
+      <select id="rate" title="Playback speed (changes pitch)" aria-label="Playback speed">${opts([[1, "100%"], [0.75, "75%"], [0.5, "50%"]], 1)}</select>
+    </div>
+    <div class="grp" role="group" aria-label="View">
+      <select id="focus" title="The part the highway shows, the ticks follow, keys 1-4 record into and Focus enlarges" aria-label="Part">${opts([["drums", "drums"], ["bass", "bass"], ["guitar", "guitar"], ["vocals", "vocals"]], "guitar")}</select>
+      <select id="diff" aria-label="Difficulty">${opts([[3, "Expert"], [2, "Hard"], [1, "Medium"], [0, "Easy"]], 3)}</select>
+      <span class="seg" id="viewSeg" role="group" aria-label="Parts shown">${VIEWS.map(([v, n, tip]) => `<button data-view="${v}" title="${tip} (F)" aria-pressed="false">${n}</button>`).join("")}</span>
+      <button id="zoomOut" title="Zoom out (Ctrl+wheel)" aria-label="Zoom out">−</button><button id="zoomIn" title="Zoom in (Ctrl+wheel)" aria-label="Zoom in">+</button>
+    </div>
+    <div class="grp" role="group" aria-label="Edit">
+      <label class="small dim" for="snap">snap</label><select id="snap">${opts([[1, "1 beat"], [2, "1/2"], [3, "1/3"], [4, "1/4"], [6, "1/6"], [8, "1/8"], [0, "off"]], 4)}</select>
+      <button id="odBtn" title="Overdrive phrase on/off over the selected gems; while recording, press to start a phrase at the playhead and again to end it (O). Drag a phrase's bar to move it, or its ends to resize it.">Overdrive</button><button id="soloBtn" title="Solo on/off over the selected gems; one part at a time, at most 4 per part (L). Drag a solo's bar to move it, or its ends to resize it.">Solo</button>
+      <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button><button id="redo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
+      <button id="tempoBtn" title="Set a constant tempo or shift every gem">Tempo…</button>
+    </div>
     <span class="grow"></span>
-    <span id="srcBadge"></span>
-    <button id="saveEd" class="primary">Save</button><button id="saveBuildEd">Save + rebuild chart</button>
+    <div class="grp" role="group" aria-label="Controller and save">
+      <button id="padBtn">🎮</button>
+      <span id="srcBadge"></span>
+      <button id="saveEd" class="primary">Save</button><button id="saveBuildEd" title="Save, then rebuild the song's chart">Save + rebuild</button>
+    </div>
   </div>
   <div class="mixer">${TRACKS.map(t => `<span class="ch"><b>${TRACK_NAME[t]}</b><button data-m="${t}" title="mute">M</button><button data-s="${t}" title="solo">S</button><input type="range" min="0" max="1.5" step="0.05" value="1" data-v="${t}" aria-label="${TRACK_NAME[t]} volume"></span>`).join("")}
-    <span class="ch"><b>Ticks</b><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span><span id="audioState" class="dim"></span></div>
+    <span class="ch"><label title="Play a click on the selected part's gems, to check the sync"><input type="checkbox" id="ticks"> <b>Ticks</b></label><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span><span id="audioState" class="dim"></span></div>
   <div id="shapes" class="shapes"></div>
   <div id="rules" class="rules ok"><span class="dim small">checking the chart against the official charts' rules…</span></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
@@ -709,7 +778,8 @@ function renderShell(root, details) {
       click a lane = add gem · drag = move · drag the right end = hold length<br>
       drag on empty space or a part's title = select area · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click = add to selection<br>
       <kbd>Del</kbd> delete · <kbd>←</kbd><kbd>→</kbd> move by snap · <kbd>↑</kbd><kbd>↓</kbd> lane · <kbd>T</kbd> tap/hold<br>
-      <kbd>O</kbd> overdrive phrase on/off · <kbd>L</kbd> solo on/off for the selection · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste at the playhead<br>
+      <kbd>O</kbd> / Overdrive phrase · <kbd>L</kbd> / Solo, on/off for the selection (recording: <kbd>O</kbd> starts and ends a phrase)<br>
+      drag an overdrive or solo bar = move it, drag its ends = resize · <kbd>F</kbd> all parts / focus / only (or double-click a part's name) · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste at the playhead<br>
       🎮 controller (Xbox / PlayStation): the game's layout; see <b>🎮 Controller</b> for every button<br>
       effects lane: double-click = new effect, drag body/edges, <kbd>Del</kbd> delete · wheel = scroll · <kbd>Ctrl</kbd>+wheel = zoom
     </div>
@@ -738,6 +808,9 @@ function renderShell(root, details) {
   $("#loopBtn").onclick = toggleLoop; $("#loopBtn").title = LOOP_TIP;
   $("#ticks").onchange = e => { E.ticks = e.target.checked; E.clickNext = rawPos(); };
   $("#rec").onclick = toggleRec;
+  $("#odBtn").onclick = () => overdrivePress(performance.now());
+  document.querySelectorAll("#viewSeg [data-view]").forEach(b => b.onclick = () => setView(b.dataset.view));
+  $("#soloBtn").onclick = soloPress;
   $("#clickVol").oninput = e => { if (E.clickGain) E.clickGain.gain.value = Number(e.target.value); };
   $("#undo").onclick = undo; $("#redo").onclick = redo;
   $("#tempoBtn").onclick = tempoDialog;
@@ -754,11 +827,12 @@ function renderShell(root, details) {
   E.cv.addEventListener("wheel", onWheel, { passive: false });
   E.cv.addEventListener("mousemove", e => {
     if (E.drag) return;
-    const [x, y] = local(e), g = gemAt(x, y);
-    E.cv.style.cursor = g && g.edge || fxAt(x, y)?.edge || loopEdgeAt(x, y) ? "ew-resize" : E.stamp && hit(x, y).zone === "lane" ? "copy" : "default";
+    const [x, y] = local(e), g = gemAt(x, y), sp = spanAt(x, y), z = hit(x, y).zone;
+    if ((sp && sp.n) !== (E.hoverSpan && E.hoverSpan.n)) { E.hoverSpan = sp; draw(); }
+    E.cv.style.cursor = g && g.edge || sp && sp.edge || fxAt(x, y)?.edge || loopEdgeAt(x, y) ? "ew-resize" : sp ? "grab" : z === "strip" ? "pointer" : E.stamp && z === "lane" ? "copy" : "default";
     if (E.stamp) { E.hover = [x, y]; draw(); }
   });
-  E.cv.addEventListener("mouseleave", () => { if (E.hover) { E.hover = null; draw(); } });
+  E.cv.addEventListener("mouseleave", () => { if (E.hover || E.hoverSpan) { E.hover = null; E.hoverSpan = null; draw(); } });
   const ovNav = e => { const r = E.ov.getBoundingClientRect(), s = (e.clientX - r.left) / E.W * E.length; E.x0 = Math.max(0, s - (E.W - GUT) / E.pps / 2); draw(); };
   E.ov.addEventListener("mousedown", e => { ovNav(e); const mv = ev => ovNav(ev), up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); });
   E.hw.addEventListener("mousedown", e => { const r = E.hw.getBoundingClientRect(); const l = Math.floor((e.clientX - r.left - 24) / ((HW_W - 48) / 4)); if (l >= 0 && l < 4) recordGem(l); });
@@ -766,9 +840,9 @@ function renderShell(root, details) {
   window.addEventListener("keydown", E.onKey);
   window.addEventListener("keyup", E.onKeyUp);
   renderPadBadge();
-  updateButtons(); renderFxPanel(); renderDiff(); renderShapes(); runChecks();
+  setView(E.view); updateButtons(); renderFxPanel(); renderDiff(); renderShapes(); runChecks();
 }
-function toggleRec() { E.recording = !E.recording; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
+function toggleRec() { E.recording = !E.recording; if (!E.recording) E.odStart = null; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
 function recordGem(lane) {
   const p = focusPart(), t = snapT(s2t(pos()));
   if (t < 0) return;
@@ -782,13 +856,14 @@ function updateButtons() {
   $("#undo").disabled = !E.undo.length; $("#redo").disabled = !E.redo.length;
   const dirty = E.dirty || E.fxDirty;
   $("#saveEd").disabled = !dirty;
-  $("#srcBadge").innerHTML = (E.source === "edited" ? `<span class="badge ok" title="songs/${E.folder}/${esc(E.S.chart || "chart.mid")}">edited chart</span>` : `<span class="badge" title="the chart of the last build; saving makes it songs/${E.folder}/chart.mid">automatic chart</span>`)
-    + (E.saved && !dirty ? ' <span class="badge warn" title="Saved, but the game files are from the last build">rebuild needed</span>' : "");
+  // one badge, so the toolbar stays on one line: "rebuild needed" stands for a saved edited chart not built yet
+  $("#srcBadge").innerHTML = E.saved && !dirty ? `<span class="badge warn" title="Edited chart saved (songs/${E.folder}/${esc(E.S.chart || "chart.mid")}), but the game files are from the last build">rebuild needed</span>`
+    : E.source === "edited" ? `<span class="badge ok" title="songs/${E.folder}/${esc(E.S.chart || "chart.mid")}">edited chart</span>` : `<span class="badge" title="the chart of the last build; saving makes it songs/${E.folder}/chart.mid">automatic chart</span>`;
   $("#reduceLine").textContent = E.reduce && E.diff !== 3 ? "This difficulty is remade from Expert at build time; edits here are not used." : "";
 }
 function updateStatus() {
   const p = pos(), st = $("#status");
-  $("#time").textContent = `${fmtTime(p)}  ·  bar ${barPos(s2t(p))}`;
+  $("#time").textContent = `${fmtTime(p)} · bar ${barPos(s2t(p)).split(".").slice(0, 2).join(".")}`;
   if (!st) return;
   const sel = [...E.sel];
   if (!sel.length) { st.textContent = "No selection."; return; }
@@ -843,6 +918,7 @@ function onDown(e) {
   if (e.button !== 0) return;
   const [x, y] = local(e), h = hit(x, y);
   e.preventDefault();
+  if (h.zone === "strip") { setFocus(h.part.key); return; }
   if (x < GUT) { if (h.zone === "lane" || h.zone === "head") { E.focus = h.part.key; $("#focus").value = E.focus; renderShapes(); draw(); } return; }
   if (h.zone === "ruler") {
     // an edge of the loop: resize it; else click = seek, drag = mark a new loop
@@ -861,6 +937,8 @@ function onDown(e) {
     if (f) E.drag = { mode: "fx", i: f.i, edge: f.edge, x, orig: { ...E.fx[f.i] }, undo: snapshot(), changed: false };
     draw(); return;
   }
+  const sp = h.zone === "head" && spanAt(x, y);
+  if (sp) { E.drag = { mode: "span", n: sp.n, p: sp.p, edge: sp.edge, x, orig: { t: sp.n.t, l: sp.n.l }, undo: snapshot(), changed: false, ...spanRoom(sp.n, sp.p) }; draw(); return; }
   if (h.zone === "head") { E.drag = { mode: "band", x, y, cx: x, cy: y, add: true, part: h.part, lane: 0, base: e.shiftKey || e.ctrlKey ? new Set(E.sel) : new Set(), noAdd: true }; return; }
   if (h.zone !== "lane") return;
   const g = gemAt(x, y), add = e.shiftKey || e.ctrlKey;
@@ -895,9 +973,17 @@ function onMove(e) {
     d.changed = true; E.fxDirty = true; updateButtons(); renderFxPanel(); draw(); return;
   }
   if (d.mode === "band") { d.cx = x; d.cy = y; bandSelect(); draw(); return; }
+  if (d.mode === "span") {
+    // ends: resize (at least the minimum length); body: move. Snapped, and kept between the neighbouring spans.
+    const n = d.n, o = d.orig, at = snapT(s2t(sOf(x))), min = d.min;
+    if (d.edge === "a") { const a = Math.max(d.lo, Math.min(at, o.t + o.l - min)); n.t = a; n.l = o.t + o.l - a; }
+    else if (d.edge === "b") { n.t = o.t; n.l = Math.max(min, Math.min(d.hi, at) - o.t); }
+    else { const dt = snapT(o.t + s2t(sOf(x)) - s2t(sOf(d.x))) - o.t; n.t = Math.max(d.lo, Math.min(d.hi - o.l, o.t + dt)); n.l = o.l; }
+    d.changed = n.t !== o.t || n.l !== o.l; draw(); return;
+  }
   if (d.mode === "move") {
     const dt = snapT(s2t(sOf(x)) - s2t(sOf(d.x)) + (d.orig.get(d.gem).t)) - d.orig.get(d.gem).t;
-    const h = hit(x, y), dl = h.zone === "lane" && h.part === d.part ? h.lane - Math.floor((d.y - partY(E.parts.indexOf(d.part)) - HEAD) / LANE) : 0;
+    const h = hit(x, y), g = geoOf(d.part), dl = h.zone === "lane" && h.part === d.part ? h.lane - Math.min(3, Math.floor((d.y - g.y - HEAD) / g.lane)) : 0;
     let ok = true;
     for (const [n, o] of d.orig) { const p = partOf(n), l = o.n - BASE[E.diff] - p.off + dl; if (l < 0 || l > 3 || o.t + dt < 0) ok = false; }
     if (!ok) return;
@@ -936,6 +1022,10 @@ function onUp() {
     if (g) { E.sel.clear(); E.sel.add(g); }
     fixOverlaps(p); markDirty(); return;
   }
+  if (d.mode === "span") {
+    if (d.changed) { E.undo.push(d.undo); E.redo = []; markDirty(); return; }
+    draw(); return;
+  }
   if ((d.mode === "move" || d.mode === "resize") && d.changed) {
     E.undo.push(d.undo); E.redo = [];
     E.parts.forEach(fixOverlaps); markDirty(); return;
@@ -950,15 +1040,35 @@ function onUp() {
 function bandSelect() {
   const d = E.drag, xa = Math.min(d.x, d.cx), xb = Math.max(d.x, d.cx), ya = Math.min(d.y, d.cy), yb = Math.max(d.y, d.cy);
   E.sel = new Set(d.base);
+  const geo = partGeo();
   E.parts.forEach((p, i) => {
+    const g = geo[i]; if (g.hidden || g.strip) return;
     for (const n of gemsOf(p)) {
-      const x = xOf(t2s(n.t)), y = partY(i) + HEAD + laneOf(p, n) * LANE + LANE / 2;
-      if (x + 9 >= xa && x <= xb && y >= ya && y <= yb) E.sel.add(n);
+      const x = xOf(t2s(n.t)), y = gemBox(g, laneOf(p, n)).mid;
+      if (x + g.gw >= xa && x <= xb && y >= ya && y <= yb) E.sel.add(n);
     }
   });
 }
+// how far a span can go: up to the neighbouring spans of its kind on its part (solos: on every part, since only one
+// part has a solo at a time) and the song's end. Spans that already overlap it are ignored.
+function spanRoom(span, part) {
+  const others = (span.n === SOLO ? E.parts : [part]).flatMap(p => p.tr.notes.filter(n => n.n === span.n && n !== span && !(n.t < span.t + span.l && n.t + n.l > span.t)));
+  const lo = Math.max(0, ...others.filter(n => n.t + n.l <= span.t).map(n => n.t + n.l));
+  const end = Math.max(span.t + span.l, Math.round(s2t(E.length || 0)));
+  const hi = Math.min(end, ...others.filter(n => n.t >= span.t + span.l).map(n => n.t));
+  return { lo, hi, min: span.n === SOLO ? E.tpb + 1 : Math.max(1, Math.round(E.tpb / 4)) };
+}
+// parts shown: All parts / Focus / Only (F cycles)
+function setView(v) {
+  E.view = v; try { localStorage["pe.edView"] = v; } catch { }
+  document.querySelectorAll("#viewSeg [data-view]").forEach(b => { b.classList.toggle("on", b.dataset.view === v); b.setAttribute("aria-pressed", String(b.dataset.view === v)); });
+  draw();
+}
+const cycleView = () => setView(VIEWS[(VIEWS.findIndex(v => v[0] === E.view) + 1) % VIEWS.length][0]);
 function onDbl(e) {
   const [x, y] = local(e), h = hit(x, y);
+  // double-click a part's title or name: enlarge it (Focus), or back to all parts
+  if (h.part && (h.zone === "head" && !spanAt(x, y) || x < GUT)) { setFocus(h.part.key); setView(E.view === "all" ? "focus" : "all"); return; }
   if (h.zone !== "fx" || x < GUT || fxAt(x, y)) return;
   const at = Math.round((sOf(x) - E.lead) * 100) / 100;
   pushUndo();
@@ -1030,12 +1140,17 @@ function overdrivePress(ms) {
   if (!E.sel.size) { toast("Select gems first, or press it while recording to start and end a phrase.", true); return; }
   toggleSpan(OD);
 }
+// solo: on/off over the selected gems (like L)
+function soloPress() {
+  if (!E.sel.size) { toast("Select the gems of the solo first.", true); return; }
+  toggleSpan(SOLO);
+}
 function setFocus(key) { E.focus = key; $("#focus").value = key; E.clickNext = rawPos(); E.odStart = null; renderShapes(); draw(); }
 function setDiff(d) { E.diff = d; $("#diff").value = d; E.sel.clear(); renderDiff(); renderRules(); renderShapes(); draw(); }
 
 // ---------- controller: Xbox and PlayStation (the browser's "standard" button layout is the same for both) ----------
-const PAD_ACTIONS = [  // key, what it does, default button (standard index); the first seven follow the game's layout
-  ["lane0", "Red gem", 14], ["lane1", "Yellow gem", 12], ["lane2", "Blue gem", 1], ["lane3", "Green gem", 3],
+const PAD_ACTIONS = [  // key, what it does, default button (standard index); gems: D-pad ← red, ↑ yellow, Y/△ blue, B/○ green
+  ["lane0", "Red gem", 14], ["lane1", "Yellow gem", 12], ["lane2", "Blue gem", 3], ["lane3", "Green gem", 1],
   ["partPrev", "Part to the left", 4], ["partNext", "Part to the right", 5], ["od", "Overdrive", 0],
   ["play", "Play / pause", 9], ["rec", "Record on/off", 8], ["loop", "Loop on/off", 2], ["undo", "Undo", 6], ["redo", "Redo", 7],
   ["del", "Delete the selected gems", 13], ["home", "Back to the start", 10],
@@ -1060,9 +1175,10 @@ const padButtonName = (kind, i) => (PAD_NAMES[kind || "playstation"][i]) || `but
 function renderPadBadge() {
   const b = $("#padBtn"); if (!b) return;
   const st = E.padState;
-  b.textContent = st === "xbox" ? "🎮 Xbox" : st === "playstation" ? "🎮 PlayStation" : st === "unsupported" ? "🎮 Not supported" : "🎮 Controller";
+  b.textContent = st === "xbox" ? "🎮 Xbox" : st === "playstation" ? "🎮 PlayStation" : st === "unsupported" ? "🎮 Not supported" : "🎮";
   b.classList.toggle("on", st === "xbox" || st === "playstation");
-  b.title = st === "unsupported" ? "This controller isn't supported: Pocket Encore supports Xbox and PlayStation controllers." : "Controller layout, timing offset and calibration";
+  b.title = st === "unsupported" ? "This controller isn't supported: Pocket Encore supports Xbox and PlayStation controllers." : "Controller: layout, timing offset and calibration";
+  b.setAttribute("aria-label", st === "xbox" ? "Controller: Xbox" : st === "playstation" ? "Controller: PlayStation" : st === "unsupported" ? "Controller: not supported" : "Controller");
 }
 function padPoll() {
   if (!E) return;
@@ -1210,6 +1326,9 @@ function onKey(e) {
     for (const p of E.parts) p.tr.notes = p.tr.notes.filter(n => !E.sel.has(n));
     E.sel.clear(); markDirty(); return;
   }
+  if ((k === "f" || k === "F") && !ctrl) { if (!e.repeat) cycleView(); return; }
+  if ((k === "o" || k === "O") && !ctrl) { if (!e.repeat) overdrivePress(e.timeStamp); return; }
+  if ((k === "l" || k === "L") && !ctrl) { if (!e.repeat) soloPress(); return; }
   if (!E.sel.size) return;
   if (k === "ArrowLeft" || k === "ArrowRight") {
     e.preventDefault();
@@ -1231,24 +1350,27 @@ function onKey(e) {
     }
     E.parts.forEach(fixOverlaps); markDirty(); return;
   }
-  if (k === "o" || k === "O") { toggleSpan(OD); return; }
-  if (k === "l" || k === "L") { toggleSpan(SOLO); return; }
 }
-// overdrive phrase (116) or solo (103) over the selected gems of each part: remove the ones they touch, else add one
+// overdrive phrase (116) or solo (103) over the selected gems of each part: remove the ones they touch, else add one.
+// Only one part can have a solo at a time: a solo that would overlap another part's solo is not added.
 function toggleSpan(note) {
   const byPart = new Map();
   for (const n of E.sel) { const p = partOf(n); if (!byPart.has(p)) byPart.set(p, []); byPart.get(p).push(n); }
-  pushUndo();
+  let changed = false;
+  const change = () => { if (!changed) pushUndo(); changed = true; };
   for (const [p, gems] of byPart) {
     const a = Math.min(...gems.map(n => n.t)), b = Math.max(...gems.map(n => n.t + n.l));
     const spans = p.tr.notes.filter(n => n.n === note && n.t < b && n.t + n.l > a);
-    if (spans.length) p.tr.notes = p.tr.notes.filter(n => !spans.includes(n));
-    else {
-      if (note === SOLO && p.tr.notes.filter(n => n.n === SOLO).length >= 4) { toast("This part already has 4 solos, the most the game allows. Remove one to add another.", true); continue; }
-      p.tr.notes.push({ t: a, l: Math.max(note === SOLO ? E.tpb + 1 : 1, b - a), n: note, v: 100, c: 0 });
+    if (spans.length) { change(); p.tr.notes = p.tr.notes.filter(n => !spans.includes(n)); continue; }
+    const l = Math.max(note === SOLO ? E.tpb + 1 : 1, b - a);
+    if (note === SOLO) {
+      if (p.tr.notes.filter(n => n.n === SOLO).length >= 4) { toast(`The ${p.key} part already has 4 solos, the most the game allows. Remove one to add another.`, true); continue; }
+      const other = E.parts.find(q => q !== p && q.tr.notes.some(n => n.n === SOLO && n.t < a + l && n.t + n.l > a));
+      if (other) { toast(`Couldn't add the ${p.key} solo: the ${other.key} part has a solo at that time, and only one part can have a solo at a time.`, true); continue; }
     }
+    change(); p.tr.notes.push({ t: a, l, n: note, v: 100, c: 0 });
   }
-  markDirty();
+  if (changed) markDirty();
 }
 let clip = null;
 function copy() {

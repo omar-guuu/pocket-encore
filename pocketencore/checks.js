@@ -37,13 +37,14 @@ function tempoMap(midi) {
 function checkChart(midi, opts = {}) {
   const sec = tempoMap(midi), items = [], tpb = midi.tpb, { audio } = opts;
   const push = (level, rule, part, diff, msg, at) => items.push({ level, rule, part, diff: diff == null ? null : DIFF_NAMES[diff], msg, at: at != null ? +at.toFixed(2) : undefined });
-  const hand = l => (l < 2 ? 0 : 1);
+  const hand = l => (l < 2 ? 0 : 1), allSolos = [];
   for (const [part, names] of Object.entries(PART_NAMES)) {
     const tr = midi.tracks.find(t => names.includes(t.name));
     if (!tr) { push("warn", "no-track", part, null, "no track in the chart: the part will be empty"); continue; }
     const off = part === "drums" ? 1 : 0;
     const solos = tr.notes.filter(n => n.n === 103), od = tr.notes.filter(n => n.n === 116).sort((a, b) => a.t - b.t);
     if (solos.length > 4) push("error", "solo-count", part, null, `${solos.length} solos; the chart format holds at most 4`);
+    for (const s of solos) allSolos.push({ part, s });
     for (const s of solos) if (s.l <= tpb) push("error", "solo-short", part, null, `solo at ${sec(s.t).toFixed(2)} s is shorter than a beat (mid2rbu drops it)`, sec(s.t));
     const expertGems = tr.notes.filter(n => n.n >= 96 + off && n.n < 100 + off).length;
     if (expertGems > 20 && !od.length) push("warn", "od-none", part, null, "no overdrive phrases (every official part has them)");
@@ -112,6 +113,14 @@ function checkChart(midi, opts = {}) {
       // two gems on one lane almost at once
       for (let i = 1; i < gems.length; i++) if (gems[i].n === gems[i - 1].n && gems[i].t !== gems[i - 1].t && (sec(gems[i].t) - sec(gems[i - 1].t)) * 1000 < OFFICIAL.sameLaneMs) { push("warn", "same-lane-close", part, d, `${dn}: two gems on one lane ${((sec(gems[i].t) - sec(gems[i - 1].t)) * 1000).toFixed(0)} ms apart at ${sec(gems[i].t).toFixed(2)} s`, sec(gems[i].t)); break; }
       for (const s of solos) if (s.t + s.l > last.t + 1) { push("warn", "solo-end", part, d, `${dn}: solo at ${sec(s.t).toFixed(2)} s ends after the part's last gem (mksong clamps it)`, sec(s.t)); break; }
+    }
+  }
+  // only one part has a solo at a time
+  for (let i = 0; i < allSolos.length; i++) for (let j = i + 1; j < allSolos.length; j++) {
+    const x = allSolos[i], y = allSolos[j];
+    if (x.part !== y.part && x.s.t < y.s.t + y.s.l && y.s.t < x.s.t + x.s.l) {
+      const [p, q] = x.s.t <= y.s.t ? [x, y] : [y, x];
+      push("warn", "solo-overlap", q.part, null, `solo at ${sec(q.s.t).toFixed(2)} s overlaps the ${p.part} solo at ${sec(p.s.t).toFixed(2)} s; only one part should have a solo at a time`, sec(q.s.t));
     }
   }
   if (audio && audio.musicStart != null && audio.musicStart < 2.9) push("warn", "lead-in", null, null, `the music starts at ${audio.musicStart} s; official songs leave ~3 s (set "leadIn")`);

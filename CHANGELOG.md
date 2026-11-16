@@ -2,6 +2,34 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## 0.4.3 Beta (2026-11-15)
+
+### Chart editor
+- The toolbar is grouped (**Playback**, **View**, **Edit**, and the controller with Save) and fits on one line in the
+  app's window; a narrower window wraps whole groups. Undo and redo are ↶ ↷, the controller button shows 🎮 and the
+  connected controller, and the **Ticks** checkbox moved to the mixer, next to the Ticks volume.
+- **All / Focus / Only** (or **F**, or double-click a part's name): Focus enlarges the selected part (bigger lanes and
+  gems) and shrinks the others to thin strips with their gems as small marks (click a strip to switch); Only shows the
+  selected part alone at full height. The choice is remembered.
+- Overdrive and solo bars can be dragged: an end makes the phrase or solo longer or shorter, the middle moves it,
+  snapped to the grid. A phrase stops at the next phrase; a solo stops at the next solo of any part. One undo step.
+  The overdrive bar is thicker, and both show handles at their ends on hover.
+- The chart-rules banner starts with a warning triangle (red when one of them is a problem). It keeps the same height
+  whatever it shows, so the chart below no longer moves when a rule appears or goes; **Show all** opens the full list
+  over the chart. When every rule is dismissed it says how many are dismissed, with the triangle in yellow, instead of
+  "✓ Within the official charts' ranges".
+
+### Controller
+- New default layout for two gem buttons: **Y / △ is blue** and **B / ○ is green** (red and yellow stay on D-pad ← and
+  ↑). If you changed the blue or green button in the Controller dialog, your choice stays; **Reset to the default
+  layout** gives the new one.
+- **Overdrive** and **Solo** buttons in the toolbar: they turn an overdrive phrase or a solo on or off over the
+  selected gems, like the O and L keys.
+- While recording, **O** (or the **Overdrive** button) starts an overdrive phrase at the playhead and a second press
+  ends it, like the controller's Overdrive button. The button stays lit while a phrase is open.
+- Only one part can have a solo at a time: a solo that would overlap another part's solo isn't added, and the editor
+  says which part already has one. The chart checks also warn about overlapping solos that come from a MIDI.
+
 ## 0.4.2 Beta (2026-11-15)
 
 ### Accessibility
