@@ -20,8 +20,10 @@ const TOOLS = path.resolve(__dirname, "..");
 const SONGS = path.join(TOOLS, "songs"), OUT = path.join(TOOLS, "out", "MUSIC"), REAPER = path.join(TOOLS, "reaper");
 const SCRIPTS = path.join(TOOLS, "scripts"), PUB = path.join(__dirname, "public");
 const { sections, Image, chartFromImage } = require(path.join(SCRIPTS, "beatmatch.js"));
-const { EFFECTS } = require(path.join(SCRIPTS, "fxchart.js"));
+const { EFFECTS, effectName } = require(path.join(SCRIPTS, "fxchart.js"));
+const band = require(path.join(SCRIPTS, "band.js"));
 const settings = require(path.join(SCRIPTS, "settings.js"));
+const stick = require(path.join(SCRIPTS, "stick.js"));
 const { createUpdater } = require("./update.js");
 const PORT = Number((process.argv.find((a, i) => process.argv[i - 1] === "--port")) || 8642);
 const TRACKS = ["drums", "bass_guitar", "lead_guitar", "vocals", "fill"];
@@ -72,12 +74,30 @@ function validateSong(S) {
   if (!S.title || !S.artist) throw httpError(400, "title and artist are needed");
   if (S.genre && !GENRES.includes(S.genre)) throw httpError(400, `unknown genre ${S.genre}`);
   if (Array.isArray(S.effects)) validateEffects(S.effects);
+  validateBand(S);
+}
+// singer prop, prop sections, mic changes and hand clips (the Effects & Band Anims tab; band.js)
+function validateBand(S) {
+  const num = v => typeof v === "number" && isFinite(v);
+  if (S.singerProp != null && !band.PROPS.hasOwnProperty(S.singerProp)) throw httpError(400, `unknown singer prop "${S.singerProp}" (tambourine, cowbell, clap or none)`);
+  if (S.singerSections != null) {
+    if (!Array.isArray(S.singerSections)) throw httpError(400, "singerSections must be a list");
+    for (const x of S.singerSections) if (!num(x.from) || !num(x.to) || x.to <= x.from || !band.PROPS[x.prop]) throw httpError(400, "each singer section needs a from, a later to and a prop (tambourine, cowbell or clap)");
+  }
+  if (S.singerMic != null) {
+    if (!Array.isArray(S.singerMic)) throw httpError(400, "singerMic must be a list");
+    for (const x of S.singerMic) if (!num(x.at) || !["rest", "perform"].includes(x.state)) throw httpError(400, 'each mic change needs an "at" time and a state, rest or perform');
+  }
+  if (S.bandClips != null) {
+    if (!Array.isArray(S.bandClips)) throw httpError(400, "bandClips must be a list");
+    for (const x of S.bandClips) if (!band.CLIPS[x.hand] || !band.CLIPS[x.hand].includes(x.clip) || !num(x.at)) throw httpError(400, `unknown clip "${x.clip}" for ${x.hand}`);
+  }
 }
 function validateEffects(list) {
   if (!Array.isArray(list)) throw httpError(400, "effects must be a list");
   for (const f of list) {
     if (f.cmd != null) continue;  // raw script call
-    if (!EFFECTS[f.effect]) throw httpError(400, `unknown effect "${f.effect}" (known: ${Object.keys(EFFECTS).join(", ")})`);
+    if (!EFFECTS[effectName(f.effect)]) throw httpError(400, `unknown effect "${f.effect}" (known: ${Object.keys(EFFECTS).join(", ")})`);
     if (typeof f.from !== "number" || (f.to != null && (typeof f.to !== "number" || f.to <= f.from))) throw httpError(400, `effect ${f.effect}: "from" must be a number and "to" later than it`);
   }
 }
@@ -201,7 +221,7 @@ function summary(folder) {
   }
   return {
     folder, song: S, audio, status, builtAt: built || null,
-    chartSource: S.chart ? "edited" : S.midi ? "midi" : "stems",
+    chartSource: S.imported ? "imported" : S.chart ? "edited" : S.midi ? "midi" : "stems",
     built: builtInfo(folder),
   };
 }
@@ -228,10 +248,11 @@ function details(folder) {
   return s;
 }
 function loadEffects(folder, S) {
+  let list = S.effects || [];
   if (typeof S.effects === "string") {
-    try { return JSON.parse(fs.readFileSync(path.resolve(songDir(folder), S.effects), "utf8")); } catch { return []; }
+    try { list = JSON.parse(fs.readFileSync(path.resolve(songDir(folder), S.effects), "utf8")); } catch { return []; }
   }
-  return S.effects || [];
+  return list.map(f => f.effect ? { ...f, effect: effectName(f.effect) } : f);  // old names (blur) shown as today's
 }
 
 // ---------- chart (Rock Band-format MIDI) ----------
@@ -257,6 +278,7 @@ function dbState(mode) {
 // ---------- chart checks (checks.js): the rules seen in the official charts ----------
 function readAudio(folder) { try { return JSON.parse(fs.readFileSync(path.join(songDir(folder), "build", "audio.json"), "utf8")); } catch { return null; } }
 function chartChecks(folder) {
+  if (readSong(folder).imported) return { source: null, items: [{ level: "info", rule: "imported", msg: "imported song: its chart is played as it was shipped" }] };
   const c = chartPath(folder);
   if (!c || !fs.existsSync(c.file)) return { source: null, items: [{ level: "info", rule: "no-chart", msg: "no chart yet: build the song once" }] };
   const S = readSong(folder);
@@ -383,6 +405,146 @@ function startPack(id) {
     writeBuilt(built);
   } });
   return runJob(`pack "${name}"`, "pack", steps, path.join(SONGS, ".db", `pack-${id}.log`));
+}
+
+// ---------- memory sticks: what is installed, install, import (scripts/stick.js) ----------
+const songList = () => fs.existsSync(SONGS) ? fs.readdirSync(SONGS).filter(d => FOLDER_RE.test(d) && fs.existsSync(path.join(SONGS, d, "song.json"))) : [];
+// same build on both sides: build ids from the stamps, else (songs built before stamps) the game files' sizes and dates
+function sameBuild(a, b, folder) {
+  if (a.stamp && b.stamp && a.stamp.build && b.stamp.build) return a.stamp.build === b.stamp.build;
+  const names = ["BEATMATCH.STR.EDAT", `${folder}.ATM`, `${folder}_PREVIEW.AT3`];
+  return names.every(n => { const x = a.files[n], y = b.files[n]; return (!x && !y) || (x && y && x.size === y.size && Math.abs(x.mtime - y.mtime) <= 2); });
+}
+const folderMb = x => +(Object.values(x.files).reduce((n, y) => n + y.size, 0) / 1048576).toFixed(1);
+// a memory stick (its scan) against built songs (src: a scan of out/MUSIC or of a pack's MUSIC)
+// song states: installed (same build) · older / different (another build of it) · missing (not on the stick) ·
+// extra (on the stick, not in src); listed = the database the game uses lists it (else the game hides it)
+function stickView(st, scan, src, online, at) {
+  scan = scan || {};
+  const lib = new Set(songList()), mine = new Set(stick.dbHistory().map(h => h.sha1)), libId = stick.libraryId();
+  const A = scan.active, srcDb = src.active;
+  let db = null;
+  if (A) {
+    const custom = A.number > stick.OFFICIAL_MAX;
+    db = { file: A.file, folder: A.folder, number: A.number, textOk: A.textOk !== false, customs: (A.customs || []).map(c => c.folder), pack: (A.stamp && A.stamp.pack) || null,
+      others: A.others || [], tie: scan.tie || null,
+      // current = the database just built; yours-older = an earlier build of this library; other = someone else's
+      state: !custom ? "official" : srcDb && A.sha1 === srcDb.sha1 ? "current" : mine.has(A.sha1) || (A.stamp && A.stamp.library === libId) ? "yours-older" : "other" };
+  }
+  const listed = new Set(db ? db.customs : []);
+  const names = f => {
+    try { const S = readSong(f); return { title: S.title, artist: S.artist }; } catch { }
+    const s = scan.songs && scan.songs[f] && scan.songs[f].stamp;
+    if (s && s.title) return { title: s.title, artist: s.artist };
+    const c = A && A.textOk && (A.customs || []).find(x => x.folder === f);
+    return c ? { title: c.title, artist: c.artist } : { title: null, artist: null };
+  };
+  const songs = [];
+  for (const f of new Set([...Object.keys(src.songs), ...Object.keys(scan.songs || {})])) {
+    const a = src.songs[f], b = scan.songs && scan.songs[f];
+    let state = !b ? "missing" : !a ? "extra" : sameBuild(a, b, f) ? "installed" : "different";
+    if (state === "different" && a.stamp && b.stamp && b.stamp.builtAt && a.stamp.builtAt && b.stamp.builtAt < a.stamp.builtAt) state = "older";
+    songs.push({ folder: f, ...names(f), state, inLibrary: lib.has(f), built: !!a, listed: listed.has(f), mb: a ? folderMb(a) : b ? folderMb(b) : 0,
+      theirs: !!(b && b.stamp && b.stamp.library && b.stamp.library !== libId) });
+  }
+  songs.sort((x, y) => x.folder.localeCompare(y.folder));
+  return { id: st.id, kind: st.kind, label: st.label, music: st.music, online, at: at || new Date().toISOString(), exists: !!scan.exists, db, songs,
+    srcDb: srcDb ? { file: srcDb.file, customs: (srcDb.customs || []).map(c => c.folder) } : null };
+}
+function sticksView() {
+  const s = settings.load(), src = stick.scanMusic(OUT), conn = stick.connected(s.music);
+  const out = conn.map(st => { const scan = stick.scanMusic(st.music); try { stick.remember(st, scan); } catch { } return stickView(st, scan, src, true); });
+  // an unplugged PSP: its last check
+  for (const r of Object.values(stick.remembered())) if (r.kind === "psp" && !conn.some(c => c.id === r.id)) out.push(stickView(r, r.scan, src, false, r.at));
+  return { sticks: out, output: { db: src.active ? { file: src.active.file, customs: (src.active.customs || []).map(c => c.folder) } : null, songs: Object.keys(src.songs) } };
+}
+// what an install would do. b = { stick, source: "library" (out/MUSIC) | "pack:<id>", songs?: [...], db?: bool }
+function installPlan(b) {
+  const s = settings.load(), st = stick.connected(s.music).find(x => x.id === b.stick);
+  if (!st) throw httpError(404, "that memory stick isn't connected");
+  let srcDir = OUT, name = "your songs";
+  if (b.source && b.source.startsWith("pack:")) {
+    const p = readPacks().find(x => x.id === b.source.slice(5)), built = p && readBuilt()[p.id];
+    if (!built || !built.dir || !fs.existsSync(path.join(built.dir, "MUSIC"))) throw httpError(400, "build the pack first");
+    srcDir = path.join(built.dir, "MUSIC"); name = `the pack "${built.name}"`;
+  }
+  const src = stick.scanMusic(srcDir), scan = stick.scanMusic(st.music), v = stickView(st, scan, src, true);
+  if (!src.active) throw httpError(400, "no song database built yet: build a song first");
+  const want = Array.isArray(b.songs) ? b.songs : v.songs.filter(x => x.built && x.state !== "installed").map(x => x.folder);
+  const copy = want.filter(f => src.songs[f]);
+  const db = b.db !== undefined ? !!b.db : !(v.db && v.db.state === "current");
+  const newList = new Set(db ? v.srcDb.customs : v.db ? v.db.customs : []);
+  const after = new Set([...Object.keys(scan.songs || {}), ...copy]);
+  const title = f => (v.songs.find(x => x.folder === f) || {}).title || null;
+  return { stick: st, srcDir, name, copy: copy.map(f => ({ folder: f, title: title(f), state: (v.songs.find(x => x.folder === f) || {}).state, mb: folderMb(src.songs[f]) })),
+    db, dbFile: src.active.file, current: v.db,
+    hidden: [...after].filter(f => !newList.has(f)).map(f => ({ folder: f, title: title(f), inLibrary: songList().includes(f) })),
+    notOnStick: [...newList].filter(f => !after.has(f)),
+    mb: +copy.reduce((n, f) => n + folderMb(src.songs[f]), 0).toFixed(1) };
+}
+function startInstall(b) {
+  const p = installPlan(b);
+  if (!p.copy.length && !p.db) throw httpError(400, "nothing to copy: everything is installed");
+  const args = [path.join(SCRIPTS, "install.js"), "--from", p.srcDir, "--to", p.stick.music, ...(p.db ? ["--db"] : []), ...p.copy.map(c => c.folder)];
+  return runJob(p.stick.label, "install", [{ args, label: `# ${new Date().toISOString()} install ${p.name} to ${p.stick.label} (${p.stick.music})`,
+    onDone: () => { try { stick.remember(p.stick, stick.scanMusic(p.stick.music)); } catch { } } }], path.join(SONGS, ".db", "install.log"));
+}
+
+// ---------- import: songs from someone's pack (or a memory stick) into the library, chart and audio as shipped ----------
+function importRoot(dir) {
+  dir = path.resolve(String(dir || ""));
+  if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw httpError(404, "no such folder");
+  // a song folder itself: its parent, that song only
+  if (fs.readdirSync(dir).some(f => /^BEATMATCH\.STR/i.test(f))) return { root: path.dirname(dir), only: path.basename(dir).toUpperCase() };
+  const has = r => fs.existsSync(r) && Object.keys(stick.scanMusic(r, { hashAll: false }).songs).length > 0;
+  for (const r of [dir, path.join(dir, "MUSIC"), path.join(dir, "PSP", "GAME", stick.GAME_ID, "MUSIC")]) if (has(r)) return { root: r };
+  throw httpError(404, "no song folders there (a song folder has a BEATMATCH.STR.EDAT): pick the pack's folder, its MUSIC folder or one song's folder");
+}
+function importCandidates(dir) {
+  const { root, only } = importRoot(dir), scan = stick.scanMusic(root, { hashAll: false }), libId = stick.libraryId();
+  // details: the song's PESONG.JSON, else the custom song databases in the same folder (newest first; one whose TEXT
+  // was made for it gives the names: a database copied over another one's TEXT has wrong names)
+  const dbs = (scan.dbs || []).filter(d => d.number > stick.OFFICIAL_MAX && d.valid).sort((a, b) => b.number - a.number)
+    .map(d => { try { return stick.readDb(path.join(root, d.folder, d.file)); } catch { return null; } }).filter(Boolean);
+  const lib = new Set(songList());
+  const songs = Object.entries(scan.songs).filter(([f]) => !only || f === only).map(([f, x]) => {
+    const atm = !!x.files[`${f}.ATM`];
+    let det = null, from = null;
+    if (x.stamp && x.stamp.title) { det = x.stamp; from = "PESONG.JSON"; }
+    else {
+      const named = dbs.map(d => ({ d, r: d.customs.find(c => c.name === f) })).filter(o => o.r);
+      const best = named.find(o => o.d.textOk) || named[0];
+      if (best) { det = { ...best.r.details }; from = `song database ${path.basename(best.d.file).slice(0, 8)}${best.d.textOk ? "" : " (no names: its TEXT belongs to another database)"}`; }
+    }
+    const problem = !FOLDER_RE.test(f) ? "folder name not usable (Z + up to 30 capital letters/digits)" : !atm ? `no ${f}.ATM in it` : null;
+    return { folder: f, ok: !problem, problem, inLibrary: lib.has(f), yours: !!(x.stamp && x.stamp.library === libId), from, details: det || {},
+      needsDetails: !det || !det.title, mb: folderMb(x) };
+  });
+  return { root, songs };
+}
+function importSongs(dir, folders) {
+  const c = importCandidates(dir), done = [];
+  for (const f of folders) {
+    const x = c.songs.find(s => s.folder === f);
+    if (!x || !x.ok) throw httpError(400, `${f}: ${x ? x.problem : "not found there"}`);
+    if (x.inLibrary) throw httpError(409, `${f} is already in your library`);
+  }
+  for (const f of folders) {
+    const x = c.songs.find(s => s.folder === f), d = x.details, I = path.join(SONGS, f, "import");
+    fs.mkdirSync(I, { recursive: true });
+    for (const n of ["BEATMATCH.STR.EDAT", `${f}.ATM`, `${f}_PREVIEW.AT3`]) { const p = stick.findFile(path.join(c.root, f), n); if (p) fs.copyFileSync(p, path.join(I, n)); }
+    const one = (list, v) => (list.includes(v) ? v : undefined);
+    const tiers = {};
+    for (const k of ["drums", "guitar", "bass", "vocals", "band"]) { const t = d.tiers && d.tiers[k]; tiers[k] = Number.isInteger(t) && t >= 0 && t <= 6 ? t : 2; }
+    const S = { folder: f, title: d.title || f.slice(1), artist: d.artist || "Unknown artist", album: d.album || undefined,
+      year: Number.isInteger(d.year) && d.year > 0 ? d.year : undefined, genre: one(GENRES, d.genre) || "ROCK",
+      era: one(stick.ERAS, d.era), difficulty: one(stick.DIFFICULTIES, d.difficulty), tiers,
+      vocals: d.vocals === 1 || d.vocals === 2 ? d.vocals : undefined,
+      imported: { at: new Date().toISOString(), from: x.from || "no details found", ...(d.build ? { build: d.build } : {}), ...(d.app ? { app: d.app } : {}) } };
+    writeSong(f, S);
+    done.push({ folder: f, title: S.title, needsDetails: x.needsDetails });
+  }
+  return done;
 }
 
 // ---------- file browser (to pick stems and MIDIs) ----------
@@ -560,6 +722,28 @@ async function route(req, res) {
     else { if (effects.length) S.effects = effects; else delete S.effects; writeSong(folder, S); }
     return json(res, { ok: true });
   }
+  // Effects & Band Anims tab: what the build makes of the band (from the last built chart), in game seconds
+  if (what === "band" && M === "GET") {
+    const S = readSong(folder), f = path.join(songDir(folder), "build", "BEATMATCH.STR.EDAT"), lead = (readAudio(folder) || {}).lead || 0;
+    const shots = fs.existsSync(path.join(PUB, "fx")) ? fs.readdirSync(path.join(PUB, "fx")).filter(x => /\.(png|jpe?g|webp)$/i.test(x)) : [];
+    if (!fs.existsSync(f)) return json(res, { built: false, lead, shots });
+    const sh = t => +(t + lead).toFixed(4);
+    const spec = { prop: S.singerProp || "tambourine",
+      ...(Array.isArray(S.singerSections) ? { sections: S.singerSections.map(x => ({ ...x, from: sh(x.from), to: sh(x.to) })) } : {}),
+      ...(Array.isArray(S.singerMic) ? { mic: S.singerMic.map(x => ({ ...x, at: sh(x.at) })) } : {}) };
+    // hands: the automatic clips (the tab shows song.json bandClips on top of them)
+    return json(res, { built: true, lead, shots, builtAt: mtime(f), ...band.analyze(fs.readFileSync(f), spec) });
+  }
+  if (what === "anims" && M === "PUT") {
+    const b = await body(req), S = readSong(folder);
+    validateEffects(b.effects || []);
+    if (typeof S.effects === "string") fs.writeFileSync(path.resolve(songDir(folder), S.effects), pretty(b.effects || []) + "\n");
+    else if ((b.effects || []).length) S.effects = b.effects; else delete S.effects;
+    for (const k of ["singerProp", "singerSections", "singerMic", "bandClips"]) { if (b[k] == null) delete S[k]; else S[k] = b[k]; }
+    if (S.singerProp === "tambourine") delete S.singerProp;
+    writeSong(folder, S);
+    return json(res, { ok: true });
+  }
   if (what === "audio" && M === "GET") {
     const f = audioFile(folder, extra);
     if (!f) throw httpError(404, "no audio yet: build the song once");
@@ -588,6 +772,15 @@ async function route(req, res) {
     if (!fs.existsSync(f)) throw httpError(404, "this song has no build log yet");
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
     return fs.createReadStream(f).pipe(res);
+  }
+  if (what === "buildmany" && M === "POST") {  // several songs one after the other (e.g. just imported)
+    const { folders } = await body(req);
+    if (!Array.isArray(folders) || !folders.length) throw httpError(400, "no songs");
+    folders.forEach(f => readSong(f));
+    checkSetup();
+    const steps = folders.map(f => ({ ...songBuildStep(f), label: `\n=== building ${f} ===` }));
+    const b = runJob(folders.length === 1 ? folders[0] : `${folders.length} songs`, "many", steps, path.join(SONGS, ".db", "buildmany.log"));
+    return json(res, { started: b.started });
   }
   if (what === "packs" && M === "GET") return json(res, packsView());
   if (what === "packs" && M === "PUT") {
@@ -618,6 +811,14 @@ async function route(req, res) {
     spawn("explorer.exe", [b.dir], { detached: true, stdio: "ignore" }).unref();
     return json(res, { dir: b.dir });
   }
+  if (what === "sticks" && M === "GET") return json(res, sticksView());
+  if (what === "install" && M === "POST") {
+    const b = await body(req);
+    if (b.dry) { const p = installPlan(b); return json(res, { ...p, stick: { id: p.stick.id, label: p.stick.label, music: p.stick.music } }); }
+    return json(res, { started: startInstall(b).started });
+  }
+  if (what === "import" && M === "GET") return json(res, importCandidates(u.searchParams.get("dir") || ""));
+  if (what === "import" && M === "POST") { const b = await body(req); return json(res, { imported: importSongs(b.dir || "", b.folders || []) }); }
   if (what === "ls" && M === "GET") return json(res, listDir(u.searchParams.get("dir")));
   if (what === "open" && M === "POST") return json(res, { dir: openFolder(folder, u.searchParams.get("what")) });
   throw httpError(404, "unknown API call");

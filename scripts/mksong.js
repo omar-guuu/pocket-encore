@@ -48,6 +48,15 @@
 //                                  or a path to such a JSON file; the donor's own effects are removed first
 //   "keepDonorEffects": false,     true = keep the donor's effects as well (with or without "effects")
 //   "stripCommands": [22],         remove every call of these script commands first (22 = camera shots; FINDINGS §27)
+//   "singerProp": "tambourine",    what the singer plays in solos and 8+ bar instrumental parts without vocals:
+//                                  tambourine (default) | cowbell | clap | none (band.js, FINDINGS §39)
+//   "singerSections": [ { "from": 50, "to": 62, "prop": "cowbell" } ]   prop sections set by hand (seconds), instead of
+//                                  the automatic ones; [] = none (Effects & Band Anims tab)
+//   "singerMic": [ { "at": 20.3, "state": "perform" } ]   mic up ("perform") / down ("rest") set by hand, instead of
+//                                  following the vocals (Advanced Edit Mode)
+//   "bandClips": [ { "hand": "guitarist_strum", "at": 7.19, "clip": "strum_long_03" } ]   a guitarist/bassist clip set
+//                                  by hand for the note at that time (Advanced Edit Mode; clip names: band.js CLIPS)
+//   "bandAnimations": true,        false = keep the donor's band animations (guitarist/bassist hands and singer)
 //   "chart": "edited.mid",         a chart edited in REAPER: used as it is (no autochart, no mid2rbu clean-up);
 //                                  every build writes reaper\<FOLDER>\<FOLDER>_auto.mid + the 5 WAVs to start from
 //   "reduce": true,                "chart" or Rock Band MIDI: chart only Expert; Hard/Medium/Easy are made from it
@@ -67,6 +76,7 @@ const DB_FOLDER = "ZZCUSTOMDB";
 // incomplete DLC without those two (one of its charts + its newest list) or base game only (a disc chart + the disc's
 // list, read from the ISO).
 const game = require("./game.js");
+const stick = require("./stick.js");  // memory sticks: stamps, the next song database number
 let GAME = null;
 function gameFiles(music) {
   if (!GAME) {
@@ -76,11 +86,9 @@ function gameFiles(music) {
   return GAME;
 }
 // JB number = days since 2008-03-07, the same scheme as the official packs (JB000427 = 2009-05-08 ... JB000571 =
-// 2009-09-29). The scanner reads the 6 digits after "JB" and keeps the highest, so today's number is always newer
-// than every official pack and every earlier custom build. Override with --jb <n>.
-function dayNumber(date = new Date()) {
-  return Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(2008, 2, 7)) / 86400000);
-}
+// 2009-09-29). The scanner reads the 6 digits after "JB" and keeps the highest, so today's number is newer than every
+// official pack and every earlier custom build. Someone else's song database on a memory stick (a shared pack) can
+// have the same or a higher number: the number is then raised above it (stick.js nextDbNumber). Override with --jb <n>.
 const TRACKS = { drums: "drums", bass: "bass_guitar", guitar: "lead_guitar", vocals: "vocals", fill: "fill" };
 const GENRES = ["ALTERNATIVE", "BLUES", "CLASSIC ROCK", "COUNTRY", "EMO", "FUSION", "GLAM", "GRUNGE", "INDIE ROCK", "JAZZ",
   "METAL", "NOVELTY", "NU-METAL", "POP-ROCK", "PROG", "PUNK", "ROCK", "SOUTHERN ROCK", "URBAN"];
@@ -452,6 +460,17 @@ function stageChart(S, B, music) {
     const strip = (S.stripCommands || []).join(",");
     node("fxchart.js", ["apply", bm, bm, spec, ...(S.keepDonorEffects ? ["--keep"] : []), ...(strip ? ["--strip", strip] : [])], { tail: 80 });
   }
+
+  // band animations (band.js): guitarist and bassist hands from this song's notes, the singer's mic and prop from its
+  // vocals (a custom otherwise keeps the donor's, which follow another song)
+  if (S.bandAnimations !== false) {
+    const bm = path.join(B, "BEATMATCH.STR.EDAT"), spec = path.join(B, "band.json");  // times shifted by the lead-in
+    fs.writeFileSync(spec, JSON.stringify({ prop: S.singerProp || "tambourine",
+      ...(Array.isArray(S.singerSections) ? { sections: S.singerSections.map(x => ({ ...x, from: sh(x.from), to: sh(x.to) })) } : {}),
+      ...(Array.isArray(S.singerMic) ? { mic: S.singerMic.map(x => ({ ...x, at: sh(x.at) })) } : {}),
+      ...(Array.isArray(S.bandClips) ? { overrides: S.bandClips.map(x => ({ ...x, at: sh(x.at) })) } : {}) }, null, 1));
+    node("band.js", [bm, bm, "--spec", spec], { tail: 14 });
+  }
 }
 
 function stageDb(songsDir, music, outRoot, number) {
@@ -470,6 +489,9 @@ function stageDb(songsDir, music, outRoot, number) {
   const dbOut = path.join(outRoot, DB_FOLDER);
   fs.rmSync(dbOut, { recursive: true, force: true });
   node("mkjukebox.js", ["--base", gameFiles(music).base, "--out", dbOut, "--number", String(number), ...jsons], { tail: 2 + jsons.length });
+  // PEDB.JSON: which songs this database lists (Pocket Encore's memory stick check reads it); remembered as ours
+  stick.writeDbStamp(dbOut, { kind: "library", songs: jsons.map(j => path.basename(j, ".json")) });
+  stick.recordDb(path.join(dbOut, `JB${String(number).padStart(6, "0")}.STR.EDAT`));
   // which game mode this database was made for (Pocket Encore says when the mode changed and it needs rebuilding)
   fs.writeFileSync(path.join(tmp, "mode.json"), JSON.stringify({ mode: GAME.mode, label: GAME.label, base: GAME.baseName, out: dbOut, at: new Date().toISOString() }));
 }
@@ -484,6 +506,7 @@ function main() {
   S.folder = String(S.folder || "").toUpperCase();
   if (!/^Z[A-Z0-9]{1,46}$/.test(S.folder)) throw new Error('"folder" must start with Z and be A-Z/0-9 (max 47 chars)');
   for (const k of ["title", "artist", "tiers"]) if (!S[k]) throw new Error(`"${k}" is required`);
+  if (S.imported && S.folder !== path.basename(S._dir).toUpperCase()) throw new Error("imported song: folder must match its songs folder");
   const music = opt("--music") || DEFAULT_MUSIC;
   const songsDir = path.dirname(S._dir);
   const outRoot = path.resolve(opt("--out") || path.join(songsDir, "..", "out", "MUSIC"));
@@ -499,23 +522,47 @@ function main() {
   console.log(`${S.folder}: "${S.title}" by ${S.artist}`);
   console.log(`  stems: ${src.type || "unknown"}${src.tool ? " (" + src.tool + ")" : ""}${src.quality ? ", quality " + src.quality : ""}` +
     `${src.notes ? " - " + src.notes : ""}`);
-  if (order.indexOf(from) <= 0) stageAudio(S, B);
-  if (order.indexOf(from) <= 1) stageChart(S, B, music);
-  const jb = opt("--jb") ? parseInt(opt("--jb"), 10) : dayNumber();
+  if (S.imported) {
+    // a song imported from someone's pack (Pocket Encore's Import): its chart and audio are used as they were shipped
+    const I = path.join(S._dir, "import");
+    console.log(`\n[imported song] chart and audio as shipped (${path.relative(TOOLS, I)})`);
+    for (const f of [`${S.folder}.ATM`, "BEATMATCH.STR.EDAT", `${S.folder}_PREVIEW.AT3`]) {
+      if (fs.existsSync(path.join(I, f))) fs.copyFileSync(path.join(I, f), path.join(B, f));
+      else if (!f.endsWith(".AT3")) throw new Error(`imported song: ${f} missing from ${I}`);
+    }
+  } else {
+    if (order.indexOf(from) <= 0) stageAudio(S, B);
+    if (order.indexOf(from) <= 1) stageChart(S, B, music);
+  }
+  let jb;
+  if (opt("--jb")) jb = parseInt(opt("--jb"), 10);
+  else {
+    const n = stick.nextDbNumber(music);
+    jb = n.number;
+    if (n.foreignTop && jb > stick.dayNumber()) console.log(`  song database number ${jb}: above JB${String(n.foreignTop).padStart(6, "0")}, another build's database on a memory stick`);
+  }
   if (!(jb > 571 && jb <= 999999)) throw new Error("--jb must be 572..999999");
   stageDb(songsDir, music, outRoot, jb);
 
   // Assemble the song folder.
   const out = path.join(outRoot, S.folder);
   fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out, { recursive: true });
-  const files = [`${S.folder}.ATM`, "BEATMATCH.STR.EDAT", ...(S.preview !== false ? [`${S.folder}_PREVIEW.AT3`] : [])];
+  const preview = S.imported ? fs.existsSync(path.join(B, `${S.folder}_PREVIEW.AT3`)) : S.preview !== false;
+  const files = [`${S.folder}.ATM`, "BEATMATCH.STR.EDAT", ...(preview ? [`${S.folder}_PREVIEW.AT3`] : [])];
   for (const f of files) fs.copyFileSync(path.join(B, f), path.join(out, f));
-  // REAPER folder: the chart as built (what the game plays) + the five tracks as they are in the .ATM.
-  const rp = path.join(TOOLS, "reaper", S.folder);
-  node("reaperpack.js", [path.join(B, "BEATMATCH.STR.EDAT"), rp, "--name", `${S.folder}_auto`, "--wav", path.join(B, "wav_tail")], { echo: false });
-  console.log(`  REAPER: ${rp} (${S.folder}_auto.mid + 5 WAVs; save edits under another name and set "chart" in song.json)`);
+  // PESONG.JSON: the song's details and build id (memory stick check; lets others import the song from a pack)
+  let app = "";
+  try { app = JSON.parse(fs.readFileSync(path.join(TOOLS, "pocketencore", "version.json"), "utf8")).version; } catch { }
+  stick.writeStamp(out, S, { chart: S.imported ? "imported" : S.chart ? "edited" : S.midi ? "midi" : "stems", ...(app ? { app } : {}) });
+  if (!S.imported) {
+    // REAPER folder: the chart as built (what the game plays) + the five tracks as they are in the .ATM.
+    const rp = path.join(TOOLS, "reaper", S.folder);
+    node("reaperpack.js", [path.join(B, "BEATMATCH.STR.EDAT"), rp, "--name", `${S.folder}_auto`, "--wav", path.join(B, "wav_tail")], { echo: false });
+    console.log(`  REAPER: ${rp} (${S.folder}_auto.mid + 5 WAVs; save edits under another name and set "chart" in song.json)`);
+  }
   console.log(`\ndone -> ${outRoot}`);
-  console.log(`  copy  ${S.folder}\\  and  ${DB_FOLDER}\\  into MUSIC\\ (replace ${DB_FOLDER} if it is already there)`);
+  console.log(`  copy  ${S.folder}\\  and  ${DB_FOLDER}\\  into MUSIC\\ (replace ${DB_FOLDER} if it is already there),`);
+  console.log(`  or use Install on Pocket Encore's Memory stick page`);
 }
 
 try { main(); } catch (e) { console.error(`\nERROR: ${e.message}`); process.exit(1); }

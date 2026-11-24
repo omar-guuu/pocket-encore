@@ -12,9 +12,9 @@
 // How it works: root+4 -> {count, ptr} table of compiled scripts; a song event (root+0x2b0, 0x50-byte records) runs
 // script (id & 0x3ffff) at its tick. Script = words: header (opcode 1, operand = length<<4 | 1), calls (opcode 0x16,
 // byte 1 = length in words, bits 16-27 = command number, then length-1 argument words), 0xff = end. The preset
-// effect commands take no arguments. An effect is added by giving the event nearest to the wanted time a new
-// script: a copy of its own script (camera/animation messages kept) plus the effect call. The new scripts go into
-// free space and the table grows in place. All 4 difficulty sections get the same changes.
+// effect commands take no arguments. Each effect start and end is a new event at exactly its time (insertEvents;
+// the event list has spare slots, FINDINGS §39); the new scripts and a grown copy of the script table go into free
+// space. Times at or after the music stop are skipped. All 4 difficulty sections get the same changes.
 "use strict";
 const fs = require("fs");
 const { sections, Image, chartFromImage } = require("./beatmatch.js");
@@ -37,8 +37,11 @@ const EFFECTS = {
   film: 49,         // grain + dust + scratches, keeps colour
   blurbwflash: 50,  // blur + black and white + grain + flash (TODAY intro, Chop Suey! intro)
   blurtint: 51,     // blur + tint
-  blur: 52,         // blur (default preset)
+  kaleidoscope: 52, // mirrors the picture into a kaleidoscope (seen in game 2026-11-24; was called "blur" before)
 };
+// old names still accepted in song.json / effects.json
+const ALIASES = { blur: "kaleidoscope" };
+const effectName = n => ALIASES[n] || n;
 const NAME = Object.fromEntries(Object.entries(EFFECTS).map(([k, v]) => [v, k]));
 const isFx = c => c >= 37 && c <= 52;
 
@@ -64,6 +67,7 @@ function tempoMs(img) {
   const row = k => ({ ms: T.b.readFloatLE(k * 12), tick: T.b.readUInt32LE(k * 12 + 4), us: T.b.readUInt32LE(k * 12 + 8) });
   return {
     toMs: t => { let k = 0; while (k + 1 < T.n && row(k + 1).tick <= t) k++; const r = row(k); return r.ms + (t - r.tick) * r.us / 480 / 1000; },
+    toTick: ms => { let k = 0; while (k + 1 < T.n && row(k + 1).ms <= ms) k++; const r = row(k); return r.tick + (ms - r.ms) * 1000 / r.us * 480; },
   };
 }
 
@@ -95,68 +99,72 @@ function calls(path, cmd) {
     if (c.op === 0x16 && c.cmd === cmd) console.log(`  ${(toMs(e.tick) / 1000).toFixed(2).padStart(7)} s  event ${e.i}${c.words[1] != null ? "  arg " + c.words[1].toString(16).padStart(8, "0") : ""}`);
 }
 
+// Adds song events at exact ticks: items = [{ tick, words }], words = the call words of the script the event runs.
+// The used event records stay first and sorted by tick (FINDINGS §39; new ones after the chart's own at the same tick,
+// in the given order); identical scripts are shared; a grown copy of the script table and the new scripts go into free
+// space (only root+4's holder points at the table). Ticks at or after the music stop (the last event) are refused.
+function insertEvents(img, items) {
+  const L = load(img), b = img.b, ep = img.u32(BASE + EVENTS), slots = img.u32(BASE + EVENTS + 4);
+  if (!items.length) return { events: [L.events.length, L.events.length, slots], scripts: [L.n, L.n] };
+  const lastEvent = Math.max(...L.events.map(e => e.tick));
+  for (const it of items) if (!(it.tick >= 0 && it.tick < lastEvent)) throw new Error(`difficulty ${img.d}: event at tick ${it.tick} is outside the song (music stop ${lastEvent})`);
+  const keyOf = new Map(), newScripts = [];
+  for (const it of items) { const k = it.words.join(","); if (!keyOf.has(k)) { keyOf.set(k, L.n + newScripts.length); newScripts.push([((it.words.length + 2) << 20 | 1 << 16 | 0x0101) >>> 0, ...it.words, 0xff]); } }
+  const recs = L.events.map(e => ({ tick: e.tick, own: 1, buf: Buffer.from(img.bytes(e.rec, 0x50)) }));
+  const tmpl = recs[0].buf, idHi = tmpl.readUInt32LE(4) & ~0x3ffff;
+  for (const it of items) {
+    const r = Buffer.from(tmpl);
+    r.writeUInt32LE((idHi | keyOf.get(it.words.join(","))) >>> 0, 4); r.writeFloatLE(it.tick, 0x10); r.writeFloatLE(it.tick, 0x14);
+    recs.push({ tick: it.tick, own: 0, buf: r });
+  }
+  if (recs.length > slots) throw new Error(`difficulty ${img.d}: ${recs.length} events, the chart has ${slots} slots`);
+  recs.sort((x, y) => x.tick - y.tick || y.own - x.own);  // stable: new events keep their order
+  recs.forEach((r, i) => r.buf.copy(b, img.off(ep + i * 0x50)));
+  const total = L.n + newScripts.length, words = newScripts.reduce((n, s) => n + s.length + 1, 0), need = 4 * total + 4 * words + 32;
+  const run = img.freeRuns().find(r => ((r.o + 15) & ~15) + need <= r.o + r.n);
+  if (!run) throw new Error(`difficulty ${img.d}: no free space for ${need} bytes of scripts`);
+  let at = BASE + ((run.o + 15) & ~15);
+  const table = at; at += 4 * total + 4;
+  for (let i = 0; i < L.n; i++) img.set(table + 4 * i, img.u32(L.p + 4 * i));
+  for (let i = 0; i < L.n; i++) img.set(L.p + 4 * i, FILL);
+  newScripts.forEach((s, j) => { img.set(table + 4 * (L.n + j), at); s.forEach((w, k) => img.set(at + 4 * k, w)); at += 4 * s.length + 4; });
+  img.set(L.tab, total); img.set(L.tab + 4, table);
+  return { events: [L.events.length, recs.length, slots], scripts: [L.n, total] };
+}
+
 function applySection(img, plan, keep, strip = []) {
   const drop = c => c.op === 0x16 && ((!keep && isFx(c.cmd)) || strip.includes(c.cmd));
-  const L = load(img), { toMs } = tempoMs(img);
+  const L = load(img), { toMs, toTick } = tempoMs(img);
   // 1. remove the chart's own effect calls (in place; scripts only get shorter)
-  if (!keep) for (const sc of L.scripts) {
+  if (!keep || strip.length) for (const sc of L.scripts) {
     const kept = sc.calls.filter(c => !drop(c));
     if (kept.length === sc.calls.length) continue;
     encode(kept).forEach((w, k) => img.set(sc.addr + 4 * k, w));
   }
-  // 2. effect calls per event (nearest event to each wanted time)
-  const evMs = L.events.map(e => toMs(e.tick));
-  const per = new Map(), placed = [];
+  // 2. each effect start / end / raw call becomes a new event at exactly its time (calls at the same tick share one;
+  //    an end comes before a start, so an effect that ends where the next begins leaves the new one running)
+  const lastEvent = Math.max(...L.events.map(e => e.tick)), per = new Map(), placed = [];
   const callWords = (cmd, arg) => arg == null ? [(cmd << 16 | 0x0116) >>> 0] : [(cmd << 16 | 0x0216) >>> 0, parseInt(arg, 16) >>> 0];
   const at = (sec, cmd, label, arg) => {
-    let best = 0; for (let k = 1; k < evMs.length; k++) if (Math.abs(evMs[k] - sec * 1000) < Math.abs(evMs[best] - sec * 1000)) best = k;
-    if (!per.has(best)) per.set(best, []);
-    per.get(best).push({ cmd, words: callWords(cmd, arg) }); placed.push({ label, want: sec, got: evMs[best] / 1000, event: L.events[best].i });
+    const tick = Math.max(0, Math.round(toTick(sec * 1000)));
+    if (tick >= lastEvent) { placed.push({ label, want: sec, got: null }); return; }   // after the music stops: nothing to do
+    if (!per.has(tick)) per.set(tick, []);
+    per.get(tick).push({ cmd, words: callWords(cmd, arg) }); placed.push({ label, want: sec, got: toMs(tick) / 1000 });
   };
   for (const p of plan) {
     if (p.cmd != null) { at(p.at, p.cmd, p.label || `#${p.cmd}${p.arg ? "(" + p.arg + ")" : ""}`, p.arg); continue; }
-    at(p.from, EFFECTS[p.effect], p.effect); if (p.to != null) at(p.to, EFFECTS.end, `end of ${p.effect}`);
+    const name = effectName(p.effect);
+    at(p.from, EFFECTS[name], name); if (p.to != null) at(p.to, EFFECTS.end, `end of ${name}`);
   }
-  // 3. new scripts in free space, table grows in place
-  const newScripts = [];
-  for (const [k, cmds] of per) {
-    const e = L.events[k], own = parseScript(img, L.scripts[e.id & 0x3ffff].addr);
-    const calls = own.calls.filter(c => !drop(c));
-    // "end" first, then a new effect, so an end and a start on the same event leave the new effect running
-    for (const c of [...cmds].sort((a, b) => (b.cmd === EFFECTS.end) - (a.cmd === EFFECTS.end)))
-      calls.push({ op: 0x16, ...c });
-    newScripts.push({ e, words: encode(calls) });
-  }
-  let tableEnd = L.p + 4 * L.n;
-  const need = 4 * newScripts.length;
-  let room = true;
-  for (let x = tableEnd; x < tableEnd + need; x += 4) if (img.u32(x) !== FILL) { room = false; break; }
-  const run = img.freeRuns().find(r => BASE + r.o >= tableEnd + need || BASE + r.o + r.n <= tableEnd);
-  if (!run) throw new Error("no free space in the chart");
-  let a = BASE + run.o + 16; const end = BASE + run.o + run.n - 16;
-  if (!room) { // move the pointer array into free space (only the holder at root+4 points to it)
-    const p = a;
-    if (p + 4 * (L.n + newScripts.length) > end) throw new Error("no free space for the script table");
-    for (let i = 0; i < L.n; i++) img.set(p + 4 * i, img.u32(L.p + 4 * i));
-    for (let i = 0; i < L.n; i++) img.set(L.p + 4 * i, FILL);
-    img.set(L.tab + 4, p);
-    tableEnd = p + 4 * L.n;
-    a = tableEnd + need + 16;
-  }
-  newScripts.forEach((ns, j) => {
-    if (a + 4 * ns.words.length > end) throw new Error("no free space for the new scripts");
-    ns.words.forEach((w, k) => img.set(a + 4 * k, w));
-    img.set(tableEnd + 4 * j, a);
-    img.set(ns.e.rec + 4, ((ns.e.id & ~0x3ffff) | (L.n + j)) >>> 0);
-    a += 4 * ns.words.length + 4;
-  });
-  img.set(L.tab, L.n + newScripts.length);
+  const items = [...per].sort((a, b) => a[0] - b[0]).map(([tick, cmds]) =>
+    ({ tick, words: [...cmds].sort((a, b) => (b.cmd === EFFECTS.end) - (a.cmd === EFFECTS.end)).flatMap(c => c.words) }));
+  insertEvents(img, items);
   return placed;
 }
 
 function apply(inPath, outPath, specPath, keep, strip) {
   const plan = JSON.parse(fs.readFileSync(specPath, "utf8"));
-  for (const p of plan) if (p.cmd == null && !(p.effect in EFFECTS)) throw new Error(`unknown effect "${p.effect}" (known: ${Object.keys(EFFECTS).join(", ")})`);
+  for (const p of plan) if (p.cmd == null && !(effectName(p.effect) in EFFECTS)) throw new Error(`unknown effect "${p.effect}" (known: ${Object.keys(EFFECTS).join(", ")})`);
   const bm = Buffer.from(fs.readFileSync(inPath));
   let placed;
   for (const [d, s] of sections(bm).entries()) {
@@ -165,7 +173,7 @@ function apply(inPath, outPath, specPath, keep, strip) {
     if (d === 3) placed = p;
   }
   fs.writeFileSync(outPath, bm);
-  for (const p of placed) console.log(`  ${p.label.padEnd(22)} wanted ${p.want.toFixed(1).padStart(6)} s -> event ${String(p.event).padStart(3)} at ${p.got.toFixed(2)} s`);
+  for (const p of placed) console.log(`  ${p.label.padEnd(22)} at ${p.want.toFixed(2).padStart(7)} s` + (p.got == null ? "  skipped: after the music stops" : Math.abs(p.got - p.want) > 0.005 ? ` (${p.got.toFixed(3)} s)` : ""));
   console.log(`written ${outPath}`);
 }
 
@@ -179,4 +187,4 @@ if (require.main === module) {
   }
   else { console.log("usage: fxchart.js list <bm> | calls <bm> <cmd> | apply <in bm> <out bm> <effects.json> [--keep] [--strip 22,28]\neffects: " + Object.keys(EFFECTS).join(", ")); process.exit(1); }
 }
-module.exports = { EFFECTS, load, tempoMs, parseScript };
+module.exports = { EFFECTS, effectName, load, tempoMs, parseScript, insertEvents };

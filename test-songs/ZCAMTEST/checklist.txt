@@ -1,0 +1,68 @@
+ZCAMTEST camera showcase. Play on EXPERT (any part): at each shot change a marker plays.
+Lane (left to right) 1 = S01-S08, 2 = S09-S16, 3 = S17-S24, 4 = S25-S32; gems in a row = number in the group.
+Each shot stays until the next marker (~6 s). Note what the camera shows after 'shows:'.
+
+0:07.1  S01  dc0222d9  marker: lane 1 x 1   most used (every bar, 94 songs): generic cut?
+      shows: Guitarist rear take then frontal take of Singer and Guitarist
+0:13.1  S02  35c6b11e  marker: lane 1 x 2   often near the song start
+      shows: Another rear take of Guitarist
+0:20.5  S03  7f5e7af2  marker: lane 1 x 3   
+      shows: Frontal take of Bassist, Drummer and Singer (in that order left to right)
+0:26.1  S04  d3f96270  marker: lane 1 x 4   
+      shows: Lateral take of Singer, big focus on Singer
+0:31.4  S05  c9b343db  marker: lane 1 x 5   song start
+      shows: Lateral take from the left of the drummer
+0:36.6  S06  135d556b  marker: lane 1 x 6   
+      shows: Frontal take of Bassist, Drummer and Singer with some movement in the camera(in that order left to right)
+0:44.4  S07  7350f761  marker: lane 1 x 7   never alone; while vocals sing
+      shows: Lateral take of Bassist, Singer and drummer can be seen, Guitarist is the least visible.
+0:50.7  S08  32b38316  marker: lane 1 x 8   
+      shows: Lateral take of Bassist, Singer and drummer can be seen, Guitarist is the least visible with some camera shake
+0:56.8  S09  5e13796f  marker: lane 2 x 1   
+      shows: Rear take of singer and Bassist
+1:02.7  S10  2f3b3ae9  marker: lane 2 x 2   
+      shows: 
+1:09.2  S11  61d4b320  marker: lane 2 x 3   
+      shows: 
+1:15.6  S12  b0d73205  marker: lane 2 x 4   
+      shows: 
+1:21.0  S13  039dc827  marker: lane 2 x 5   
+      shows: 
+1:26.2  S14  db1c6c86  marker: lane 2 x 6   group with a52d/8e3f/0f3d before the intro; also in guitar solos
+      shows: 
+1:34.1  S15  57e16186  marker: lane 2 x 7   
+      shows: 
+1:39.3  S16  26109a24  marker: lane 2 x 8   often after the last note (ending)
+      shows: 
+1:45.6  S17  ebc64f8c  marker: lane 3 x 1   
+      shows: 
+1:52.4  S18  31a3dd4f  marker: lane 3 x 2   
+      shows: 
+1:58.5  S19  0a6fd0ce  marker: lane 3 x 3   
+      shows: 
+2:04.9  S20  a0b60a1c  marker: lane 3 x 4   
+      shows: 
+2:10.6  S21  78354377  marker: lane 3 x 5   
+      shows: 
+2:17.1  S22  0267b088  marker: lane 3 x 6   
+      shows: 
+2:23.3  S23  64cfbab0  marker: lane 3 x 7   
+      shows: 
+2:29.5  S24  22d2bb0f  marker: lane 3 x 8   often after the last note (ending)
+      shows: 
+2:36.1  S25  a52def2c  marker: lane 4 x 1   group with db1c/8e3f/0f3d before the intro
+      shows: 
+2:42.0  S26  8e3ffdbf  marker: lane 4 x 2   group with db1c/a52d/0f3d before the intro
+      shows: 
+2:48.1  S27  068fbb83  marker: lane 4 x 3   never alone
+      shows: 
+2:55.1  S28  0f3de073  marker: lane 4 x 4   group with db1c/a52d/8e3f before the intro
+      shows: 
+3:00.3  S29  74af4e82  marker: lane 4 x 5   
+      shows: 
+3:06.8  S30  c3985a69  marker: lane 4 x 6   
+      shows: 
+3:13.3  S31  63edcc32  marker: lane 4 x 7   
+      shows: 
+3:18.6  S32  57c9a404  marker: lane 4 x 8   very rare (3 songs, at the end)
+      shows: 

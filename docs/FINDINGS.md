@@ -375,7 +375,7 @@ vocal notes mutes only the voice; fill keeps playing. JB006819 (day-number name)
 - Root lists: +0x2B0 = song events (0x50-byte records, id 0x0A0000xx interned per song, f32 tick x2, type word +0x1C:
   5 normal, 0x15 in 1-3 events of ABC/AQUALUNG/CHOPSUEY/LIVINONAPRAYER/MOVEALONG/SHOWMETHEWAY, 0 = unused slot);
   +0x2C0 = 45 events identical in every song. TODAY has no special event type.
-- Test built: songs/ZTODAYFX = TODAY's chart + ATM copied unchanged (only root+0x324 ATM CRC filled, 16 bytes), to
+- Test built: test-songs/ZTODAYFX = TODAY's chart + ATM copied unchanged (only root+0x324 ATM CRC filled, 16 bytes), to
   check whether the effect travels with the chart.
 - RESULT 2026-11-08: ZTODAYFX shows the old-film effect exactly like TODAY -> the trigger travels with the chart file
   (or the ATM; both were copied). Parser objects/scripts are identical in TODAY and WOULD (same addresses, same
@@ -433,7 +433,7 @@ vocal notes mutes only the voice; fill keeps playing. JB006819 (day-number name)
 - Hash names not recoverable: CRC-32 of 1M strings from EBOOT + all STREAMS/PRESET (lower/upper/raw) match none.
 - fxchart.js now also places raw calls ({cmd, arg, at}) and strips commands (--strip 22,28); "calls" lists uses.
 - Showcase ZTODAYCAM: TODAY with all #22 removed and the 32 hashes one at a time, ~6 s each
-  (songs/ZTODAYCAM/timetable.txt); effects removed. DB 119 songs.
+  (test-songs/ZTODAYCAM/timetable.txt); effects removed. DB 119 songs.
 - 2026-11-09: ZTODAYCAM plays, cameras visibly differ from original TODAY (so #22 drives the camera); per-hash
   mapping not yet identified from the timetable -> TODO.
 - 2026-11-09 usage stats over all official charts (Expert, scratchpad ac/cam1.js):
@@ -447,7 +447,7 @@ vocal notes mutes only the voice; fill keeps playing. JB006819 (day-number name)
     vocals are active 96 % of the time.
   - Rare: 57c9a404 (3 songs, at the end) and 094ec705 (once).
 - Showcase ZCAMTEST: marker gems (lane = group, count = shot in group) at each shot change. See
-  RBU_CUSTOM_SONGS.md §9 and songs/ZCAMTEST/checklist.txt.
+  RBU_CUSTOM_SONGS.md §9 and test-songs/ZCAMTEST/checklist.txt.
 - ZCAMTEST in game (2026-11-09): at each marker the camera focuses on the band member of the instrument the player
   is currently on (guitar -> guitarist, vocals -> singer, ...), so the same code looked different between runs.
   Hypothesis: the director picks the subject from the active track and #22 picks the shot style (or a random shot
@@ -751,3 +751,194 @@ a time: a pack = song folders + a ZZCUSTOMDB listing only them (scripts/mkpack.j
 copies whole packs (the user's choice: delete the old pack's folders and ZZCUSTOMDB, copy the new one); keeping all song
 folders on the stick and swapping only the database was not chosen (untested: folders not in the active list).
 Capacity per pack = 300 - official songs in the base list (188 with complete DLC, 245 base game only).
+
+## 35. Someone else's song database over yours (2026-11-18)
+
+User report: with another user's song ZPEAKCINEMA (Oliver Tree "lowkey evil", built with Pocket Encore on 2026-11-15)
+copied into MUSIC, only that custom song showed, titled "Beautifully Unconventional" (the user's first custom) and
+sorted under L; every other custom song was gone. RAM dump `dumpRAM_songsNotLoadingCorrectly.bin`: song table
+(0x08ed2b40) count 113, record 112 = id 0xEA05752D (CRC-32 of ZPEAKCINEMA), text ids 533..535, sort id 0x1CD (L).
+- Cause: the shared archive held ZPEAKCINEMA **and** its own `ZZCUSTOMDB` (JB006827 = official 112 + zpeakcinema,
+  TEXT with 536 entries). Copied into the user's MUSIC, the folders merged: JB006827 sat next to the user's JB006825,
+  but the user's TEXT (566 entries) was kept. The scanner takes the highest JB number and the TEXT of its folder, so
+  the game listed only ZPEAKCINEMA, with title id 533 = the user's first custom title. The sort letter is a field of
+  the record (correct for "lowkey"), not derived from the shown title.
+- Day-number databases from two people collide by design: both builds on the same day get the same number, and
+  whichever is copied last wins. A JB is only consistent with the TEXT it was built with: entries = 1 + 3 x records + 196.
+- Fixes (Pocket Encore, 2026-11-18): import shared songs into the library (details from PESONG.JSON, or from the
+  pack's JB + TEXT when the TEXT count matches); the database number is raised above every JB on the memory sticks
+  that this library didn't build (songs/.db/db-history.json keeps the sha1 of each JB it built); the Memory stick page
+  reads what the game will use (active JB, TEXT consistency, listed / hidden songs). Extra files (PESONG.JSON in song
+  folders, PEDB.JSON in ZZCUSTOMDB) are ignored by the scanner (§1: only "BEATMATCH.STR*" and "JB??????.STR.EDAT"
+  names count) - to confirm in game.
+
+## 36. What the rest of a chart section is (2026-11-24)
+
+Census of every byte of a section, all 57 official DLC charts (Easy and Expert sections, 58 MB each); tools in
+rbu-analysis/scripts: chartcensus.js (one section, optional RAM dump), crosscharts.js (all charts, writes
+rbu-analysis/cross0.json / cross3.json), chartdta.js (prints a DataArray tree). Expert, share of all bytes:
+
+| Content | % | Notes |
+|---|---|---|
+| DTA config trees (Harmonix DataArrays) | 25.8 | root+0x2f0 = the game's whole system config (system, prototype track layouts, songs list of the dev build, beatmatcher, audio submixes, game scoring/health/capture, track speeds, joypad, ui ...), plus the parsers' trees. Snapshot of the dev config at export: charts differ only by build date (song ranks, is_strider_dlc flags). |
+| free space (0x7f800001) | 12.0 | |
+| gem lists of the other difficulties | 10.6 | 20-byte gem records with the same ms + tick as another section's gems but other lanes/flags (Hysteria Expert holds a bass gem at +0x8d150 with lane 0x04 and no solo bit). Customs keep the donor's. |
+| band animation events | 8.6 | 24-byte records {f32 beat, f32 beat, DataNode symbol, DataNode int} made by the MIDI parsers (root+0x290/0x294 MidiParser objects): kBassPluck, finger_hold_index/middle(_hi), strum_pick_01/02, strum_short_*, finger_powerchord_*. kBassPluck count = Expert bass gem count in 57/57 charts. Customs keep the donor's (all four: 485 = She's Not There), so the bassist's animation follows the donor's bass line. |
+| events + scripts | 8.6 | §12, §26 |
+| notes, tempo, beats, measures, bars, solos | 8.0 | |
+| symbol table | 4.6 | root+0x2ec -> {char** entries, size-1, ...}, root+0x2e8 -> string pool. beatmatch_read stores them in DAT_08c2ed98/9c, which the Symbol constructor FUN_08ac44f0 uses (CRC-32 KeylessHash, table 0x08b452c0): the chart's table becomes the game's symbol table. 1924 of 2343 symbols are in every chart. |
+| strings | 2.8 | incl. dev paths of 91 other songs |
+| copies of tempo/measures/beats | 1.0 | §14 |
+| phrase windows | 0.1 | §33, meaning still open |
+| unknown, zero words | 11.4 | |
+| unknown, non-zero, reachable from the root | 2.9 | about 22 % gem-like words (root+0xec/0xd4 track and difficulty lists), the rest object headers |
+| unknown, non-zero, nothing points at it | 3.6 | the game only knows the root address, so these bytes can't be used |
+
+- The game reads the config tree (DAT_08b7c2f8 = root+0x2f0, set by beatmatch_read) only for "objects" /
+  "types" / "superclasses" lookups (FUN_08ac4fb0, 08ac59ac, 08ae5960, 08ae6170). Whether gameplay values (scoring,
+  track speed) are read from it after load is unknown; its scoring block (gem_value 25, bar_base 25, star
+  multipliers 3/6) does not match Unplugged's 50 points per note, so it is probably not used for scoring.
+- RAM dump (Crush Expert): 59 words change at load, all dev-build vtables (0x08c5xxxx-0x08c6xxxx) rewritten to
+  retail ones (0x08b35xxx) by beatmatch_read's helpers (round12 decompiles). Objects whose vtable stays a dev
+  address are never used as objects.
+- Root fields that differ between songs and are still unexplained: +0x14 = +0x18 (66335 Crush ... 221078
+  Constant Motion, grows with the song: MIDI file size?), +0x29c (0/1/2), +0x300 (0/1). +0x10 = 12 + section.
+- So about 82 % of a section is identified (70 % content + 12 % free space); 6.5 % is non-zero data of unknown
+  purpose, 11.4 % zero words.
+
+## 37. Band animation event lists (2026-11-24)
+
+User report: in customs the band moves slowly, out of time, and looks odd next to official songs.
+Tools: rbu-analysis/scripts/animmap.js, animlists.js.
+
+**Where they are.** root+0x290 -> object (vtable installed by FUN_08983140) with a list of 13 MIDI parser objects
+(+0x14 pointer, +0x1c count), 0xd0 bytes each, vtables installed by FUN_08ad6204: events_parser, guitarist_fret,
+bassist_fret, guitarist_strum, bassist_strum, guitarist_pos, bassist_pos, guitarist_parser, bassist_parser,
+drummer_parser, drummer_kick_drum, lighting_parser, joypad_vibrate.
+- Parser +0xc0 = {pointer, capacity, count} of its event list; +0xcc = playback cursor (0 in the file).
+- In all 57 official charts only **guitarist_fret, bassist_fret, guitarist_strum and bassist_strum** have events;
+  the other nine lists are empty. The drummer has no event list here.
+- The holder is the only reference to a list (checked on all 57; a few chance matches inside other data aside).
+- Same lists, same offsets, in all four sections; fret lists are byte-identical, strum lists differ only in
+  which variant was picked (strum_pick_01/02, strum_short_01..04).
+
+**Record (24 bytes).** f32 start, f32 end, DataNode symbol {char*, 5} = animation clip, DataNode int {value, 0}.
+- First record = sentinel {-1e30, -1e30, symbol, 0}.
+- Times are **positions on the chart's beat grid** (beats array index + fraction), not quarter notes: in 6/8
+  (The Kill) one unit is 720 ticks. In 52/57 charts every event ends (or starts) on a note of its part; the other 5
+  differ by 1-17 events (notes edited after export).
+- Count = Expert notes of the part + idle events (finger_open / strum_open / bass_pluck_open in long rests) + 1
+  sentinel, in 57/57. Generated from the Expert chart and used for every difficulty.
+- kBassPluck: start about 0.24-0.4 beat before the note, end on the note, value = lane mask of the note.
+- Clips seen: guitarist_fret finger_hold_index(_hi), finger_hold_middle(_hi), finger_powerchord_1,
+  finger_vibrato_index/middle, finger_open; guitarist_strum strum_pick_01/02, strum_short_01..04, strum_long_01..04,
+  strum_open; bassist_fret as the guitar's fret clips; bassist_strum kBassPluck, bass_pluck_open.
+- Generation parameters are in the config tree (§36, beatmatcher midi_parsers): type gem, track_name, idle_event,
+  idle_length 0.52, idle_start_gap 0.24, idle_end_gap 0.24, min_gap 0.12, max_gap 0.24, mappings.
+
+**At run time** (Crush Expert dump, song at 50.5 s = beat 115.37): the cursors (+0xcc) point at the next events
+(starting at beat 119.6-119.8; the previous ones ended at 115.0-115.4). The lists are read-only: no list word
+differs between file and RAM.
+
+**Customs.** beatmatch build keeps the donor's lists: all four customs carry She's Not There's (guitar 519, bass
+487 events) and play them on their own beat grid, so the band follows the donor's rhythm. Fix: rebuild the four
+lists from the custom's Expert notes and write them into free space, updating each parser's +0xc0 holder in all
+four sections.
+
+## 38. How the band animation lists are made (2026-11-24)
+
+Rules measured on all 57 official charts (about 54,000 guitar and 49,500 bass events per list type); generator
+rbu-analysis/scripts/animgen.js, checked by animeval.js (data: animdata.js -> rbu-analysis/anim.json). Times in
+beat-grid units (§37); p / pe = position of a note's start / end (tick + gem +0xC). Built from the Expert notes of
+PART GUITAR (guitarist_*) and PART BASS (bassist_*).
+
+**Fret hand (guitarist_fret, bassist_fret).** One clip per note, ending on the note, value = lane mask.
+- Clip: chord -> finger_powerchord_2 for Blue+Green (mask 12), finger_powerchord_1 otherwise; held single ->
+  finger_vibrato_index (Red, Blue) / finger_vibrato_middle (Yellow, Green); other singles -> finger_hold_index (Red),
+  finger_hold_middle (Yellow), finger_hold_index_hi (Blue), finger_hold_middle_hi (Green).
+- "Held" for the clip choice = sustain, or tick length >= 140 (the export tool used the MIDI note length).
+- Start = note - clamp(note - previous note's end, 0.12, 0.24); first note 0.24. (Config: min_gap 0.12, max_gap 0.24.)
+- Idle: finger_open from the previous note's end, 0.24 long, value 0, when the rest to the next note is >= 1 beat
+  (0.24 + 0.52 + 0.24 = idle_start_gap + idle_length + idle_end_gap), and after the last note.
+
+**Strumming hand.** One clip per note, ending on the note, value = lane mask.
+- Guitar: single -> strum_pick_01/02 (random, 50/50); held single or chord -> strum_short_01..04; held chord ->
+  strum_long_01..04 (random, uniform). The four sections each got their own random picks; fret lists are identical.
+- Bass: kBassPluck for every note.
+- Start = note - min(0.24, note - end of the previous clip); for a bass pluck after bass_pluck_open, or the first
+  one, 0.4 instead of 0.24.
+- Idle: guitar strum_open from note + 1.26 to + 1.5 when the next note is >= 5.5 beats later (and after the last);
+  bass bass_pluck_open from note + 0.16 to + 0.4 when the next note is >= 4.33 beats later (and after the last).
+
+**Generated vs official:** start times 100 % of matched events, values 100 %, clips 99.4-100 % (random variants
+counted as one), 99.8-99.96 % of events in both lists; the rest are charts whose notes were edited after export.
+All 22 clip names are in the symbol table of every official chart (records point at those strings, and the chart's
+symbol table becomes the game's at load, §36), so a custom can use its donor's strings.
+
+## 39. Singer props: the tambourine in solos (2026-11-24)
+
+User report: in Hysteria the singer picks up a tambourine for the whole guitar solo. Tool:
+rbu-analysis/scripts/singer.js (-> rbu-analysis/singer.json).
+- Script command **#20 = the singer** (#17-#19 and #21 = the other band members, §27). Its argument is a hashed
+  animation/state name. During Hysteria's solo (2:29.7-3:08.4): #20 ee71e39b at 2:27.1, 82b94e25 at 2:29.7, then
+  152 hits ed74731c (on the beat) / 7be36136 (off-beats, 16ths), then 55b55ee7 at 3:08.4 and fde5a7b9 at 3:09.7.
+- 26 of 57 official charts have such percussion sections (57 sections), always while the singer has no notes
+  (except Number of the Beast, where the hits fall between sung notes), mostly guitar solos, also intros/outros.
+  Three opening/closing pairs:
+  - ee71e39b ... 55b55ee7, hits ed74731c + 7be36136: 10 charts (Hysteria, Boys Are Back in Town, Casey Jones,
+    Heartbreaker, Kool Thing, Lucid Dreams, My Curse, Toxicity, Wonderwall, You're No Rock n' Roll Fun) = tambourine
+    (seen in game in Hysteria).
+  - 593661d2 ... 84fa43f9, hits ed74731c (mostly on the beat): 9 charts (Afterlife, Black Sunshine, Constant
+    Motion, Dr. Feelgood, Gimme Three Steps, Inside the Fire, My Old School, Red Barchetta, The Trooper); prop unseen.
+  - 037973b7 ... 9621fc9d: Flathead, Sin Wagon; prop unseen.
+  - 82b94e25 just before a section and 0014258a / baecac3e after it are common neutral singer states.
+- Hit rhythm (tambourine sections): ed74731c on beats (538) and 8th off-beats; 7be36136 on 8th off-beats (269),
+  16ths (219), beats (106), triplets (105). Intervals mostly 480 (ed->ed), 120-240 (alternating). The hits follow
+  the music, so they were placed by hand.
+- Song events (root+0x2b0 {ptr}, +0x2b4 slot count): used records first and sorted by tick in every chart, then
+  spare slots {0x7f800001, 0x3ffff, ...} (She's Not There 264 used of 1060). Only root+0x2b0 points into the
+  array (56/57; one chance match). Record: {1, id, 0, -1, f32 tick, f32 tick, 0, 5, 0, 0, fill, fill, 0, 0, 0,
+  1.0f, -1, fill x3}. So events can be added by rewriting the sorted used prefix into the spare slots.
+- Customs: the donor's #20 events (She's Not There: no percussion sections) are scaled to the song length.
+- Official timing (10 tambourine charts, 17 sections): pick up (ee71e39b) 0.1-0.5 s after the last sung note (later
+  in long rests); 82b94e25 about 0.17 s before the first hit; first hit 0.5-3 s after the pick up; put down
+  (55b55ee7) 0.05-1.1 s (mostly 0.15-0.2 s) after the last hit, >= 1.4 s before the next sung note.
+- Generator for customs (user's choice 2026-11-24: solos where the singer is silent + vocal rests of 8 bars or more
+  with music): rbu-analysis/scripts/singerpatch.js. Section = vocal rest (from 0.25 s after the last sung note, or
+  1 s before the band's first note, to 1.5 s before the next sung note or the band's last note); pick up at its
+  start, hits from the first beat >= 1 s later (ed74731c on beats, 7be36136 on off-beat 8ths), put down 0.17 s
+  after the last hit; donor singer calls inside a section removed (per-event script copies).
+- Test song ZHANDLEBARSANIM (2026-11-24): Handlebars with its own guitar/bass lists (§38) and the tambourine in the
+  guitar intro solo (5.8-19.2 s, 30 hits) and the instrumental break (114.0-140.5 s, 59 hits); events 264 -> 359,
+  scripts 119 -> 126; everything else verified unchanged. DB JB006836 (14 customs). Awaiting in-game check.
+- ZHANDLEBARSANIM in game (user, 2026-11-24): the tambourine shows; but the singer then sang with the mic down in
+  the lap until a later donor call raised it. Cause: the singer's mic is a state set by other #20 calls, and customs
+  keep the donor's calls at the donor's times.
+- Singer state calls (57 official charts): 0014258a = rest (mic down; 245 calls, 55 charts; median 0.4 s after a
+  phrase ends), 82b94e25 = perform (mic to the mouth, or play the prop held; 289 calls, 54 charts; median 0.45 s
+  before the next phrase), baecac3e = end pose (once per chart, at the song end). Alternates used in the same songs:
+  46a17057 (rest), fde5a7b9 and e07f71d9 (perform). Vocal gaps of >= 4 s get rest + perform in 89 %, 3-4 s about
+  half, < 3 s rarely. Order around a prop: rest, pick up (0-0.1 s later), perform (about 2 s later; plays the prop),
+  hits, put down, rest (same time), perform before the vocals.
+- Props (user, in game 2026-11-24): 593661d2 / 84fa43f9 = cowbell (13 charts, 25 sections: Funk #49, Gimme Three
+  Steps, My Old School, Wake Up Dead...; hits ed74731c on beats, few 7be36136); 037973b7 / 9621fc9d = hand clapping
+  (Flathead, Pride and Joy, Sin Wagon; claps on beats or every 2 beats). All props use the same two hit calls;
+  official hits follow the real percussion (tambourine in 8ths or 16ths).
+- Build step scripts/band.js (2026-11-24, user-approved; replaces rbu-analysis animpatch.js + singerpatch.js): every
+  build (mksong, after effects) rebuilds the guitarist/bassist lists (§38), removes every donor #20 call and places
+  rest/perform from the Expert vocals (phrases = gems closer than 4 s; rest at the start, perform 0.45 s before each
+  phrase, rest 0.4 s after a phrase followed by >= 4 s), the song.json "singerProp" (tambourine default: hit on beats +
+  shake on off-beats; cowbell / clap: hit on beats; none) in the sections above, and the end pose before the music
+  stop. Too few event slots: tambourine shakes dropped, then the prop. song.json "bandAnimations": false keeps the
+  donor's. Pocket Encore: Details -> Singer prop.
+- Effects at exact times (2026-11-24): fxchart.js apply no longer adds an effect call to the nearest existing event's
+  script (could be seconds off); every effect start/end (and raw call) is a new event at its exact tick via
+  insertEvents() (same spare-slot insertion as the singer calls), effect starts at or after the music stop are
+  skipped. Verified on a Handlebars copy: chart arrays, root values and music stop unchanged, events sorted.
+  band.js uses insertEvents too (output byte-identical to the earlier version). Not yet confirmed in game.
+- Pocket Encore Effects & Band Anims tab (2026-11-24): song.json singerSections / singerMic / bandClips (band.js
+  --spec, written by mksong to build/band.json with the lead-in added); /api/band runs band.analyze() on the last
+  built chart.
+- Effect #52 is a kaleidoscope (mirrored picture), not a blur: seen in game by the user 2026-11-24 (screenshot
+  pocketencore/public/fx/300_kaleidoscope.jpg). fxchart.js name `kaleidoscope`; the old name `blur` is still accepted.
+  Screenshots of all 15 preset effects are in pocketencore/public/fx (user, from the showcase song).

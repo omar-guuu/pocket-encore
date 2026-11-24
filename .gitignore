@@ -43,3 +43,14 @@ songs/*/stems/
 
 # disc files read from the user's own ISO (game data)
 cache/
+
+# songs imported from someone else's pack (their chart and audio)
+songs/*/import/
+
+# archived test songs (not in the song database): keep only their song.json and notes, like songs/
+test-songs/*/build/
+test-songs/*/MUSIC/
+test-songs/*/reaper/
+test-songs/*/stems/
+test-songs/*/import/
+test-songs/*/*.bak

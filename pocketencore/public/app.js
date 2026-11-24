@@ -1,5 +1,6 @@
 "use strict";
-// Pocket Encore page: library, song details (song.json form), new song, setup, builds. The chart/FX editor is editor.js.
+// Pocket Encore page: library, song details (song.json form), new song, setup, builds. The chart editor is editor.js,
+// the Effects & Band Anims tab anims.js (both on the shared time line, timeline.js).
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const DIFFS = ["Easy", "Medium", "Hard", "Expert"];
@@ -47,6 +48,27 @@ linkLabels(document.body);
 // a confirmation in the app's own modal, with buttons named after their action (not OK/Cancel).
 // buttons: [{ label, value, kind: "primary" | "danger" }]; resolves to the clicked value, or null on Escape/backdrop.
 let askPending = null;  // the open ask()'s close function: a new ask (e.g. the Back button pressed meanwhile) closes it as "no"
+// ---------- Easy / Advanced Edit Mode ----------
+// Controls that make a song easy to get wrong are read-only (greyed, 🔒) in Easy Edit Mode, the default. Advanced Edit
+// Mode unlocks them after a warning. One setting for the whole app (this computer): pages listen for "editmodechange".
+// What belongs to which mode: Help → Easy and Advanced Edit Mode.
+window.editMode = () => { try { return localStorage["pe.editMode"] === "advanced" ? "advanced" : "easy"; } catch { return "easy"; } };
+async function setEditMode(m) {
+  if (m === "advanced" && window.editMode() !== "advanced") {
+    const r = await ask("Enable Advanced Edit Mode?", "Sure you want to enable advanced edit? This option should only be used if you know what you are doing, most of the time is better to stick with Easy Edit Mode, for more information check the help page", [
+      { label: "Enable Advanced Edit Mode", value: "on", kind: "danger" }, { label: "Open the help page", value: "help" }, { label: "Stay in Easy Edit Mode", value: null, kind: "primary" }]);
+    if (r === "help") { window.open("#/help/editmodes", "_self"); return; }
+    if (r !== "on") return;
+  }
+  try { localStorage["pe.editMode"] = m === "advanced" ? "advanced" : "easy"; } catch { }
+  window.dispatchEvent(new Event("editmodechange"));
+  toast(m === "advanced" ? "Advanced Edit Mode on: the locked controls can be changed." : "Back to Easy Edit Mode.");
+}
+window.setEditMode = setEditMode;
+window.editModeButton = () => window.editMode() === "advanced"
+  ? `<button class="advmode on" onclick="setEditMode('easy')" title="Advanced Edit Mode is on: locked controls can be changed. Click to go back to Easy Edit Mode.">⚠ Advanced Edit Mode</button>`
+  : `<button class="advmode" onclick="setEditMode('advanced')" title="Easy Edit Mode: controls marked 🔒 are read-only. Click to unlock them (asks first).">Enable Advanced Edit Mode</button>`;
+
 function ask(title, body, buttons) {
   if (askPending) askPending(null);
   return new Promise(resolve => {
@@ -78,6 +100,7 @@ function guardForm(root, what, save) {
 const markSaved = () => { if (GUARD && GUARD.saved) GUARD.saved(); };
 function pageGuard() {
   if (window.editorDirty && window.editorDirty()) return { what: "the chart", save: window.editorSave };
+  if (window.animsDirty && window.animsDirty()) return { what: "the effects and band animations", save: window.animsSave };
   return GUARD && GUARD.dirty() ? GUARD : null;
 }
 async function saveGuard(g) {
@@ -127,6 +150,7 @@ async function route(ev) {
   GUARD = null;
   lastHash = location.hash;
   if (window.editorClose) window.editorClose();
+  if (window.animsClose) window.animsClose();
   document.body.classList.remove("editing");
   document.body.classList.remove("onboarding");
   const h = location.hash.replace(/^#\/?/, "").split("/");
@@ -137,6 +161,7 @@ async function route(ev) {
     else if (h[0] === "new") showNew();
     else if (h[0] === "setup") await showSetup();
     else if (h[0] === "packs") await showPacks();
+    else if (h[0] === "stick") await showSticks();
     else if (h[0] === "help") showHelp(h[1]);
     else if (h[0] === "pack" && h[1]) await showPackEdit(h[1]);
     else await showLibrary();
@@ -162,11 +187,12 @@ async function showLibrary() {
   list.sort((a, b) => sort === "title" ? String(a.song?.title).localeCompare(String(b.song?.title)) : sort === "changed" ? (b.builtAt || 0) - (a.builtAt || 0) : a.folder.localeCompare(b.folder));
   const dbNote = META.db && META.db.stale ? `<div class="panel warnline">The game mode changed to <b>${esc(META.mode.label)}</b> since the song database was built (for "${esc(META.db.was)}"). Build any song to update it, then copy the song database (<span class="mono">ZZCUSTOMDB</span>) to the memory stick again.</div>` : "";
   const setupNote = META.setupOk ? "" : `<div class="panel warnline">Setup is incomplete: builds will fail until the missing pieces are installed. <a href="#/setup">Open Setup</a>.</div>`;
-  $("#main").innerHTML = dbNote + setupNote + `
+  $("#main").innerHTML = dbNote + setupNote + `<div id="stickPanel"></div>` + `
     <div class="libbar"><button class="primary" onclick="location.hash='#/new'">+ New song</button>
       <input id="filter" aria-label="Filter songs" placeholder="Filter…" value="${esc(localStorage.libFilter || "")}">
       <select id="sort" aria-label="Sort songs"><option value="folder">by folder</option><option value="title">by title</option><option value="changed">last built</option></select>
       <button onclick="openFolder('', 'out')" title="The built songs, ready to copy to the memory stick">Open output folder</button>
+      <button onclick="location.hash='#/stick'" title="What is on PPSSPP's memory stick and a connected PSP; install and import songs">Memory stick</button>
       <button onclick="location.hash='#/packs'" title="Sets of songs with their own song database, to switch on the memory stick">Packs</button>
       <span class="grow"></span><span class="dim">${list.length} songs in rbu-tools/songs</span></div>
     ${list.length ? "" : `<div class="panel empty"><h3>No songs yet</h3>
@@ -187,6 +213,7 @@ async function showLibrary() {
   const filt = () => { const q = $("#filter").value.toLowerCase(); localStorage.libFilter = q; let shown = 0; document.querySelectorAll(".card[data-q]").forEach(c => { const hit = c.dataset.q.includes(q); c.classList.toggle("hidden", !hit); shown += hit; });
     const nm = $("#noMatch"); nm.textContent = `No songs match "${$("#filter").value}".`; nm.classList.toggle("hidden", !q || shown > 0 || !list.length); };
   $("#filter").oninput = filt; filt();
+  libraryStickPanel();
 }
 async function openFolder(folder, what) {
   try { await api("POST", `/api/open/${folder || "ZNONE"}?what=${what}`); } catch (e) { fail("Couldn't open the folder")(e); }
@@ -361,7 +388,7 @@ async function showPacks() {
         <div class="row small dim">${p.built ? `built ${esc(fmtDate(p.built.at))} · ${esc(p.built.jb)} · ${esc(p.built.mode)}` : "never built"}${p.outdated.length ? ` · ${p.outdated.length} song${p.outdated.length > 1 ? "s" : ""} to rebuild` : ""}</div>
         ${p.renamed ? `<div class="row small warnline">Its folder in out\\PACKS is still named "${esc(p.built.name)}": build the pack again to rename it.</div>` : ""}
         <div class="actions" style="margin-top:8px"><button data-a="edit">Edit</button><button class="primary" data-a="build" ${p.songs.length ? "" : "disabled"}>Build pack</button>
-          <button data-a="open" ${p.built ? "" : "disabled"}>Open folder</button><span class="grow"></span><button class="danger" data-a="del">Delete</button></div></div>`; }).join("")}</div>`
+          <button data-a="open" ${p.built ? "" : "disabled"}>Open folder</button><button data-a="install" ${p.built ? "" : "disabled"} title="Copy this pack to PPSSPP's memory stick or a connected PSP">Install…</button><span class="grow"></span><button class="danger" data-a="del">Delete</button></div></div>`; }).join("")}</div>`
       : `<div class="panel dim">No packs yet. A pack groups songs (for example by genre) so you can switch what the game lists without rebuilding them.</div>`}`;
   $("#pk_new").onclick = () => { location.hash = "#/pack/new"; };
   document.querySelectorAll(".card.pack [data-a]").forEach(b => b.onclick = async e => {
@@ -371,6 +398,7 @@ async function showPacks() {
       if (a === "edit") location.hash = `#/pack/${id}`;
       else if (a === "build") await buildPack(id);
       else if (a === "open") await api("POST", `/api/packopen/${id}`);
+      else if (a === "install") await installPack(p);
       else if (a === "del") {
         const keep = p.built ? "Its songs stay; only the pack and its built folder are deleted." : "Its songs stay; only the pack is deleted.";
         if (await ask(`Delete the pack "${p.display}"?`, keep, [{ label: "Delete pack", value: true, kind: "danger" }, { label: "Keep pack", value: null }]) !== true) return;
@@ -378,6 +406,13 @@ async function showPacks() {
       }
     } catch (err) { fail({ open: "Couldn't open the pack folder", del: "Couldn't delete the pack" }[a] || "Couldn't update the pack")(err); }
   });
+}
+// a built pack to a memory stick: its songs and its song database
+async function installPack(p) {
+  const v = await loadSticks(), on = v.sticks.filter(s => s.online);
+  if (!on.length) return toast("No memory stick found: set PPSSPP's MUSIC folder on Setup, or connect the PSP by USB.", true);
+  const id = on.length === 1 ? on[0].id : await ask(`Install "${p.display}" to which memory stick?`, "", [...on.map(s => ({ label: s.label, value: s.id })), { label: "Cancel", value: null }]);
+  if (id) installTo(id, "pack:" + p.id, p.built.folders.map(f => f.folder), true);
 }
 async function buildPack(id) {
   try { await api("POST", `/api/packbuild/${id}`); } catch (e) { fail("Pack build couldn't start")(e); return; }
@@ -450,6 +485,169 @@ async function showPackEdit(id) {
     dirty: () => nameEl.isConnected && (nameEl.value.trim() !== (p.name || "") || sel.size !== p.songs.length || p.songs.some(f => !sel.has(f))) };
 }
 
+// ---------- memory sticks: what is installed, install, import ----------
+// /api/sticks: PPSSPP's memory stick (the MUSIC folder on Setup) and a PSP connected by USB; an unplugged PSP shows
+// its last check. Song states: installed · older / different (another build) · missing · extra (not built here).
+let STK = null;
+const STATE_TXT = { installed: ["ok", "installed"], older: ["warn", "older build"], different: ["warn", "different build"], missing: ["", "not copied"], extra: ["", "not in your output"] };
+const stickShort = s => s.kind === "ppsspp" ? "PPSSPP" : "PSP";
+const whenTxt = iso => { const d = new Date(iso), days = Math.floor((Date.now() - d) / 86400000); return days < 1 ? `today ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : days < 2 ? "yesterday" : `${days} days ago (${d.toLocaleDateString()})`; };
+// what is wrong with a stick, in words: [{ level: "bad" | "warn" | "info", html, act? }]
+function stickIssues(s) {
+  const out = [], db = s.db, mine = s.songs.filter(x => x.inLibrary), foreign = s.songs.filter(x => x.state === "extra" && !x.inLibrary);
+  if (!s.exists) { out.push({ level: "info", html: `No <span class="mono">MUSIC</span> folder on it yet: installing creates it.` }); return out; }
+  if (!db || db.state === "official") {
+    if (s.srcDb) out.push({ level: "warn", html: `No custom song database on it: the game lists only official songs. Install to copy yours.` });
+  } else if (db.state === "other") {
+    const list = db.customs.map(esc).join(", ") || "no custom songs";
+    out.push({ level: "bad", html: `The game uses <span class="mono">${esc(db.file)}</span>${db.pack ? ` (pack "${esc(db.pack)}")` : ""} from <b>another build</b>, not yours: it lists only ${list}. `
+      + `Every other custom song on this memory stick is hidden in the game.${db.textOk ? "" : " Its names don't match it either (titles in the game are wrong): its TEXT files belong to a different database."}` });
+  } else if (db.state === "yours-older") out.push({ level: "warn", html: `The song database on it (<span class="mono">${esc(db.file)}</span>) is an older build of yours: install to update it.` });
+  if (db && db.others && db.others.length) out.push({ level: "info", html: `${db.others.length} older song database file${db.others.length > 1 ? "s" : ""} in <span class="mono">${esc(db.folder)}</span> (unused; installing removes them).` });
+  if (db && db.tie) out.push({ level: "warn", html: `Two folders have a song database with the same number (${db.tie.map(esc).join(", ")}): which one the game uses is not certain.` });
+  for (const f of foreign) out.push({ level: "warn", html: `<b>${esc(f.title || f.folder)}</b> <span class="mono small">${esc(f.folder)}</span> is on it but not in your library${f.listed ? " (only the current database lists it)" : ", so the game hides it"}. Import it to keep it listed with your songs.`, act: { importDir: s.music + "\\" + f.folder, folder: f.folder } });
+  const toCopy = mine.filter(x => x.built && x.state !== "installed").length;
+  if (toCopy) out.push({ level: "warn", html: `${toCopy} of your built song${toCopy > 1 ? "s are" : " is"} not on it, or an older build.` });
+  const hidden = mine.filter(x => x.state !== "missing" && !x.listed && db && db.state !== "other");
+  if (hidden.length) out.push({ level: "warn", html: `Hidden in the game (the database doesn't list them): ${hidden.map(x => esc(x.title || x.folder)).join(", ")}.` });
+  return out;
+}
+function stickSummary(s) {
+  const mine = s.songs.filter(x => x.built), ok = mine.filter(x => x.state === "installed" && x.listed).length;
+  const db = s.db && s.db.state !== "official" ? { current: ["ok", "up to date"], "yours-older": ["warn", "older"], other: ["bad", "another build's"] }[s.db.state] : ["warn", "none"];
+  return `<b>${esc(s.label)}</b> ${s.online ? "" : `<span class="badge">unplugged · checked ${esc(whenTxt(s.at))}</span>`}
+    <span class="badge ${ok === mine.length && mine.length ? "ok" : "warn"}">${ok} of ${mine.length} songs in the game</span>
+    <span class="badge ${db[0]}">song database: ${db[1]}</span>`;
+}
+async function loadSticks() { STK = await api("GET", "/api/sticks"); return STK; }
+// Library: one line per memory stick + its problems, and a badge per song card
+async function libraryStickPanel() {
+  const host = $("#stickPanel");
+  if (!host) return;
+  let v;
+  try { v = await loadSticks(); } catch (e) { host.innerHTML = ""; return; }
+  if (!$("#stickPanel")) return;
+  host.innerHTML = v.sticks.length ? v.sticks.map(s => {
+    const iss = stickIssues(s).filter(i => i.level !== "info");
+    return `<div class="panel stickline"><div class="row">${stickSummary(s)}<span class="grow"></span>
+      ${s.online ? `<button class="primary small" onclick="location.hash='#/stick'">Install…</button>` : ""}<button class="small" onclick="location.hash='#/stick'">Details</button></div>
+      ${iss.length ? `<ul class="issues">${iss.map(i => `<li class="${i.level}">${i.html}</li>`).join("")}</ul>` : ""}</div>`;
+  }).join("") : `<div class="panel small dim">No memory stick found: set PPSSPP's MUSIC folder on Setup, or connect your PSP by USB (USB mode).</div>`;
+  for (const s of v.sticks) for (const x of s.songs) {
+    const row = document.querySelector(`.card[data-f="${x.folder}"] .row`);
+    if (!row) continue;
+    const t = !x.built ? null : x.state === "installed" ? (x.listed ? ["ok", "✓"] : ["warn", "hidden"]) : x.state === "missing" ? ["", "not copied"] : ["warn", "older"];
+    if (t) row.insertAdjacentHTML("beforeend", `<span class="badge ${t[0]}" title="${esc(s.label)}${s.online ? "" : " (last check)"}">${stickShort(s)}: ${t[1]}</span>`);
+  }
+}
+async function showSticks() {
+  $("#crumb").innerHTML = `<a href="#/">Songs</a> / Memory stick`;
+  $("#main").innerHTML = `<div class="panel dim">Looking at the memory sticks…</div>`;
+  const v = await loadSticks();
+  const stickHtml = s => {
+    const iss = stickIssues(s);
+    const rows = s.songs.map(x => {
+      const st = STATE_TXT[x.state], can = s.online && x.built;
+      const pre = can && x.state !== "installed";
+      return `<tr data-f="${esc(x.folder)}"><td>${can ? `<input type="checkbox" aria-label="Copy ${esc(x.title || x.folder)}" ${pre ? "checked" : ""}>` : ""}</td>
+        <td>${esc(x.title || "(unknown)")} <span class="dim small mono">${esc(x.folder)}</span>${x.inLibrary ? "" : ' <span class="badge">not in your library</span>'}</td>
+        <td><span class="badge ${st[0]}">${st[1]}</span></td>
+        <td>${x.state === "missing" ? "" : x.listed ? '<span class="badge ok">listed</span>' : '<span class="badge warn">hidden</span>'}</td>
+        <td class="small">${x.mb || ""}</td>
+        <td>${!x.inLibrary && x.state === "extra" ? `<button class="small" data-import="${esc(s.music + "\\" + x.folder)}">Import…</button>` : ""}</td></tr>`;
+    }).join("");
+    return `<div class="panel stick" data-id="${esc(s.id)}"><div class="row">${stickSummary(s)}<span class="grow"></span>${s.online ? `<button class="small" data-a="rescan">Check again</button>` : ""}</div>
+      <div class="small dim mono" style="margin:4px 0 8px">${esc(s.music)}</div>
+      ${s.db ? `<div class="small">The game uses <span class="mono">${esc(s.db.folder)}\\${esc(s.db.file)}</span>${s.db.pack ? `, pack "${esc(s.db.pack)}"` : ""}${s.db.state !== "official" ? `, listing ${s.db.customs.length} custom song${s.db.customs.length === 1 ? "" : "s"}` : " (official)"}.
+        ${s.srcDb ? `Your last build: <span class="mono">${esc(s.srcDb.file)}</span>, ${s.srcDb.customs.length} songs.` : ""}</div>` : ""}
+      ${iss.length ? `<ul class="issues">${iss.map(i => `<li class="${i.level}">${i.html}</li>`).join("")}</ul>` : ""}
+      <table class="t sticktable"><tr><th></th><th>Song</th><th>On the memory stick</th><th>In the game</th><th>MB</th><th></th></tr>${rows}</table>
+      ${s.online ? `<div class="actions" style="margin-top:8px"><button class="primary" data-a="install">Install selected…</button>
+        <label class="small"><input type="checkbox" data-a="db" ${s.db && s.db.state === "current" ? "" : "checked"}> replace the song database with yours</label>
+        <span class="grow"></span><button data-a="all">Select changed</button><button data-a="none">Clear</button></div>`
+        : `<p class="small dim">Connect the PSP by USB (Settings → USB Connection) to install or check it again.</p>`}</div>`;
+  };
+  $("#main").innerHTML = `<div class="panel small"><b>Memory sticks.</b> Every build stamps its song folders (<span class="mono">PESONG.JSON</span>) and song database
+      (<span class="mono">ZZCUSTOMDB\\PEDB.JSON</span>), so Pocket Encore can tell what is on a memory stick: PPSSPP's (the MUSIC folder on Setup) and a PSP
+      connected by USB. An unplugged PSP shows its last check. The game itself ignores these files.</div>
+    ${v.sticks.map(stickHtml).join("") || `<div class="panel dim">No memory stick found: set PPSSPP's MUSIC folder on Setup, or connect the PSP by USB.</div>`}
+    <div class="panel"><h4>Import songs</h4>
+      <p class="small dim">Songs someone shared (a pack folder, its MUSIC folder or one song folder; unzip it first). They join your library with their chart and
+      audio as shipped, so your song database lists them with your songs. Don't copy someone else's <span class="mono">ZZCUSTOMDB</span> onto your memory stick: it replaces yours.</p>
+      <div class="inline"><input type="text" id="im_dir" style="flex:1" placeholder="Folder with the shared songs" value="${esc(localStorage.importDir || "")}"><button onclick="pickInto('#im_dir', null, true)">Browse…</button><button class="primary" id="im_go">Look for songs</button></div></div>`;
+  document.querySelectorAll(".panel.stick").forEach(p => {
+    const s = v.sticks.find(x => x.id === p.dataset.id);
+    const boxes = () => [...p.querySelectorAll("tr[data-f] input")];
+    const btn = a => p.querySelector(`[data-a="${a}"]`);
+    if (btn("rescan")) btn("rescan").onclick = () => showSticks();
+    if (btn("all")) btn("all").onclick = () => boxes().forEach(b => { const x = s.songs.find(y => y.folder === b.closest("tr").dataset.f); b.checked = x.state !== "installed"; });
+    if (btn("none")) btn("none").onclick = () => boxes().forEach(b => { b.checked = false; });
+    if (btn("install")) btn("install").onclick = () => installTo(s.id, "library", boxes().filter(b => b.checked).map(b => b.closest("tr").dataset.f), btn("db").checked);
+    p.querySelectorAll("[data-import]").forEach(b => b.onclick = () => importFrom(b.dataset.import));
+  });
+  $("#im_go").onclick = () => { const d = $("#im_dir").value.trim(); if (!d) return toast("Pick the folder with the shared songs first.", true); localStorage.importDir = d; importFrom(d); };
+}
+// install: show what will happen, then copy (a job in the build log panel)
+async function installTo(stickId, source, songs, db) {
+  let p;
+  try { p = await api("POST", "/api/install", { stick: stickId, source, songs, db, dry: true }); } catch (e) { return fail("Couldn't plan the install")(e); }
+  if (!p.copy.length && !p.db) return toast("Nothing to copy: tick songs, or the song database.", true);
+  const theirs = p.hidden.filter(h => !h.inLibrary), mineHidden = p.hidden.filter(h => h.inLibrary);
+  $("#modalBox").innerHTML = `<b>Install ${esc(p.name)} to the ${esc(p.stick.label)}?</b>
+    <div class="small mono dim" style="margin:4px 0 8px">${esc(p.stick.music)}</div>
+    ${p.copy.length ? `<p>Copy <b>${p.copy.length} song${p.copy.length > 1 ? "s" : ""}</b> (${p.mb} MB), replacing those folders: ${p.copy.map(c => esc(c.title || c.folder)).join(", ")}.</p>` : ""}
+    ${p.db ? `<p>Replace the song database (<span class="mono">ZZCUSTOMDB</span>) with <span class="mono">${esc(p.dbFile)}</span>. Everything else in that folder goes${p.current && p.current.state === "other" ? `, including the other build's <span class="mono">${esc(p.current.file)}</span>` : ""}.</p>` : `<p class="small dim">The song database stays as it is.</p>`}
+    ${theirs.length ? `<p class="warnline">Hidden in the game afterwards (not in your library): ${theirs.map(h => esc(h.title || h.folder)).join(", ")}. Import ${theirs.length > 1 ? "them" : "it"} first to keep ${theirs.length > 1 ? "them" : "it"} listed.</p>` : ""}
+    ${mineHidden.length ? `<p class="warnline">Your songs not in the new database stay on the stick but hidden: ${mineHidden.map(h => esc(h.title || h.folder)).join(", ")}.</p>` : ""}
+    ${p.notOnStick.length ? `<p class="small dim">Listed but not on the stick (the game skips them): ${p.notOnStick.map(esc).join(", ")}.</p>` : ""}
+    <p class="small dim">Nothing else on the memory stick changes. ${p.stick.id === "ppsspp" ? "If the game is running in PPSSPP, restart it afterwards." : "Afterwards, end the USB connection on the PSP before unplugging it."}</p>
+    <div class="actions" style="margin-top:12px">${theirs.length ? `<button id="ins_import">Import first</button>` : ""}<button class="primary" id="ins_go">Install</button><button id="ins_cancel">Cancel</button></div>`;
+  $("#modal").classList.remove("hidden");
+  $("#ins_go").focus();
+  $("#ins_cancel").onclick = () => $("#modal").classList.add("hidden");
+  if ($("#ins_import")) $("#ins_import").onclick = () => importFrom(p.stick.music + "\\" + theirs[0].folder);
+  $("#ins_go").onclick = async () => {
+    $("#modal").classList.add("hidden");
+    try { await api("POST", "/api/install", { stick: stickId, source, songs: p.copy.map(c => c.folder), db: p.db }); } catch (e) { return fail("Couldn't start the install")(e); }
+    showBuildPanel(true);
+    followBuild();
+  };
+}
+// import: list the songs found in a folder, then add the ticked ones to the library
+async function importFrom(dir) {
+  let c;
+  try { c = await api("GET", "/api/import?dir=" + encodeURIComponent(dir)); } catch (e) { return fail("Couldn't look for songs there")(e); }
+  const rows = c.songs.map(s => {
+    const d = s.details, why = s.problem || (s.inLibrary ? "already in your library" : "");
+    return `<tr data-f="${esc(s.folder)}"><td>${why ? "" : `<input type="checkbox" checked aria-label="Import ${esc(d.title || s.folder)}">`}</td>
+      <td><b>${esc(d.title || "(no title)")}</b> <span class="dim small mono">${esc(s.folder)}</span><div class="small dim">${esc(d.artist || "")}${d.album ? " · " + esc(d.album) : ""}${d.year ? " · " + esc(d.year) : ""}${d.genre ? " · " + esc(d.genre) : ""}</div></td>
+      <td class="small">${why ? `<span class="warnline">${esc(why)}</span>` : s.needsDetails ? `<span class="warnline">details missing: fill them in after importing</span>` : `details from ${esc(s.from)}`}${s.yours ? ' <span class="badge">built by you</span>' : ""}</td><td class="small">${s.mb} MB</td></tr>`;
+  }).join("");
+  $("#modalBox").innerHTML = `<b>Import songs</b><div class="small mono dim" style="margin:4px 0 8px">${esc(c.root)}</div>
+    ${c.songs.length ? `<table class="t importtable">${rows}</table>` : `<p>No song folders there.</p>`}
+    <p class="small dim">Each song is copied into your library (songs\\&lt;FOLDER&gt;\\import) with its chart and audio as shipped: its details can be changed, its gems can't.
+    Then a build adds it to your song database.</p>
+    <div class="actions" style="margin-top:10px"><button class="primary" id="im_ok">Import</button><label class="small"><input type="checkbox" id="im_build" checked> and build the song database</label><button id="im_cancel">Cancel</button></div>`;
+  $("#modal").classList.remove("hidden");
+  $("#im_cancel").onclick = () => $("#modal").classList.add("hidden");
+  $("#im_ok").onclick = async () => {
+    const folders = [...document.querySelectorAll("#modalBox tr[data-f] input:checked")].map(b => b.closest("tr").dataset.f);
+    if (!folders.length) return toast("Tick the songs to import.", true);
+    try {
+      const r = await api("POST", "/api/import", { dir, folders });
+      $("#modal").classList.add("hidden");
+      const need = r.imported.filter(x => x.needsDetails);
+      toast(`Imported ${r.imported.map(x => x.title).join(", ")}` + (need.length ? `. Fill in the details of ${need.map(x => x.folder).join(", ")}` : ""), !!need.length);
+      location.hash = `#/song/${r.imported[0].folder}`;
+      if ($("#im_build").checked) {
+        try { await api("POST", "/api/buildmany", { folders: r.imported.map(x => x.folder) }); } catch (e) { return fail("Build couldn't start")(e); }
+        showBuildPanel(true);
+        followBuild();
+      }
+    } catch (e) { fail("Couldn't import")(e); }
+  };
+}
+
 // ---------- help ----------
 const HELP = [
   ["start", "Getting started", `
@@ -461,10 +659,33 @@ const HELP = [
       <li><b>+ New song</b>: fill in the details and drop the stems (or Browse). A MIDI is optional; without one the chart is
         made from the stems.</li>
       <li><b>Build</b>: makes the audio, the chart and the song database.</li>
-      <li>Copy the song folder and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span> (<b>Open output folder</b>)
-        into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> on PPSSPP's memory stick, replacing the old
-        <span class="mono">ZZCUSTOMDB</span>. Pocket Encore never copies to the memory stick itself.</li>
+      <li><b>Memory stick</b> (top right) shows what is on PPSSPP's memory stick and on a PSP connected by USB, and
+        <b>Install…</b> copies the changed songs and the song database there after showing you what it will do. Copying
+        by hand works too: the song folders and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span>
+        (<b>Open output folder</b>) into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span>, replacing the old
+        <span class="mono">ZZCUSTOMDB</span>.</li>
     </ol>`],
+  ["stick", "Memory stick and sharing", `
+    <p>The game lists the songs of <b>one</b> song database: the <span class="mono">JB</span> file with the highest number in
+    any folder of <span class="mono">MUSIC</span>, with the names from the <span class="mono">TEXT</span> folder next to it. Song
+    folders it doesn't list are hidden, even though they are on the memory stick.</p>
+    <h3>What is installed</h3>
+    <p>Every build puts a small <span class="mono">PESONG.JSON</span> in each song folder (details and a build code) and a
+    <span class="mono">PEDB.JSON</span> in <span class="mono">ZZCUSTOMDB</span>; the game ignores them. The <b>Memory stick</b>
+    page reads PPSSPP's memory stick (the MUSIC folder on Setup) and a PSP connected by USB (on the PSP: Settings → USB
+    Connection), and shows each song as installed, older build, not copied, or hidden. An unplugged PSP shows its last check.
+    The song list shows the same as a badge on each song.</p>
+    <h3>Install</h3>
+    <p><b>Install…</b> copies the ticked songs (each folder replaced as a whole) and, if ticked, replaces
+    <span class="mono">ZZCUSTOMDB</span> with your newest song database. It shows what will change first and touches nothing
+    else. Packs have their own <b>Install…</b> button.</p>
+    <h3>Songs from other people</h3>
+    <p>Never copy someone else's <span class="mono">ZZCUSTOMDB</span> onto your memory stick: theirs only lists their songs,
+    so yours disappear, and if it lands next to your <span class="mono">TEXT</span> its songs get your songs' names. Use
+    <b>Import songs</b> on the Memory stick page instead (unzip the pack first): their songs join your library with their chart
+    and audio as shipped, and your next build lists them with yours. A song someone else's database put on your memory stick
+    can be imported straight from there (<b>Import…</b> on its row). Your song database number is always raised above any other
+    build's database Pocket Encore has seen on your memory sticks, so yours is the one the game uses.</p>`],
   ["song", "Making a song", `
     <h3>Stems</h3>
     <p>One file per instrument: drums, bass, guitar, vocals (required) and backing (optional: everything else). WAV, MP3, FLAC
@@ -482,7 +703,7 @@ const HELP = [
     <p><b>Build</b> does everything; <b>Rebuild chart</b> reuses the audio (faster) after chart or star changes. The build log
     (bottom) shows each step; <b>Last log</b> shows the previous one.</p>`],
   ["editor", "Chart editor", `
-    <p>The <b>Chart &amp; effects</b> tab shows the four parts' gems over each stem's waveform, with the song playing. Saving
+    <p>The <b>Chart</b> tab shows the four parts' gems over each stem's waveform, with the song playing. Saving
     turns the automatic chart into your own (<span class="mono">chart.mid</span>); <b>Back to automatic chart</b> on Details
     undoes that.</p>
     <table class="t"><tr><th>Key / action</th><th>Does</th></tr>
@@ -512,9 +733,38 @@ const HELP = [
     buttons together for a chord; hold one while playing for a held note; while recording, overdrive starts and ends a phrase.
     The other actions (play, record, loop, undo…) and the sticks are listed in the editor's <b>🎮 Controller</b> dialog, where
     any button can be changed. If your presses land early or late, use its <b>Calibrate…</b>.</p>
-    <h3>Effects and tempo</h3>
-    <p>Double-click the effects lane to add a screen effect, drag it to move or resize. <b>Tempo…</b> sets a steady BPM from the
-    first beat, or shifts every gem against the audio.</p>`],
+    <h3>Tempo</h3>
+    <p><b>Tempo…</b> sets a steady BPM from the first beat, or shifts every gem against the audio. Screen effects are on the
+    <b>Effects &amp; Band Anims</b> tab.</p>`],
+  ["anims", "Effects & Band Anims", `
+    <p>The <b>Effects &amp; Band Anims</b> tab shows, on the song's time line with playback, the screen effects and what the band
+    does in game. Changes go into <span class="mono">song.json</span>; <b>Save + rebuild</b> (or Rebuild chart) puts them in the game files.</p>
+    <h3>Screen effects</h3>
+    <p>One track for the whole song: an effect covers the whole screen, and only one runs at a time, so effects can't overlap.
+    Double-click the track to add one, drag it to move it, drag an end to make it longer or shorter, <kbd>Del</kbd> deletes it.
+    Click one to pick the effect or type its times. An effect starts and ends exactly at its times. The preview box on the
+    right shows the effect at the playhead.</p>
+    <h3>Singer props</h3>
+    <p><b>Automatic</b> (the default): in guitar solos where nobody sings and in instrumental parts of 8 bars or more, the
+    singer picks up a prop and plays it on the beat. Choose which one: <b>Tambourine</b>, <b>Cowbell</b>, <b>Hand clapping</b>
+    or <b>None</b>. <b>My own sections</b> starts from the automatic ones and lets you move, resize, add (double-click, or the
+    <b>Tambourine</b> / <b>Cowbell</b> / <b>Clapping</b> buttons) and delete them, each with its own prop.</p>
+    <h3>Singer mic, Guitarist and Bassist 🔒</h3>
+    <p>The singer raises the mic before each vocal part and lowers it in breaks of 4 s or more; the guitarist's and bassist's
+    hands play one movement per note. These follow the song's notes, so they are read-only in Easy Edit Mode: change the
+    notes on the Chart tab instead. In Advanced Edit Mode, mic changes can be moved, added (double-click) or deleted, and a
+    guitarist or bassist clip can be changed for one note.</p>`],
+  ["editmodes", "Easy and Advanced Edit Mode", `
+    <p><b>Easy Edit Mode</b> (the default) keeps everything that is easy to get wrong read-only: those controls are greyed
+    and marked 🔒. Most of the time it is better to stay in Easy Edit Mode: the build makes those parts from the song's own
+    notes, the way the official songs do.</p>
+    <p><b>Advanced Edit Mode</b> unlocks them. Turn it on with <b>Enable Advanced Edit Mode</b> (it asks first) and off with the
+    same button. It is one setting for the whole app on this computer.</p>
+    <table class="t"><tr><th>Where</th><th>Easy Edit Mode</th><th>Advanced Edit Mode adds</th></tr>
+      <tr><td>Effects &amp; Band Anims</td><td>screen effects; singer props (automatic or your own sections)</td>
+        <td>singer mic changes (move, add, delete); one guitarist or bassist clip per note</td></tr>
+    </table>
+    <p class="small dim">More controls will follow this split as they are added.</p>`],
   ["packs", "Song packs", `
     <p>The game lists at most 300 songs, official ones included (188 custom songs with all the DLC, 245 with the base game
     only). A <b>pack</b> is a set of your songs with its own song database, so you can switch what the game lists.</p>
@@ -522,9 +772,12 @@ const HELP = [
       <li><b>Packs</b> → <b>+ New pack</b>: name it (empty = "Pocket Encore" + its database code) and tick songs, or add all
         songs of a genre.</li>
       <li><b>Build pack</b>: builds the pack's new or changed songs and writes <span class="mono">out\\PACKS\\&lt;name&gt;</span>.</li>
-      <li>On the memory stick: delete the previous pack's song folders and <span class="mono">ZZCUSTOMDB</span> (its
-        <span class="mono">pack.txt</span> lists them), then copy the new pack's <span class="mono">MUSIC</span> contents.</li>
+      <li><b>Install…</b> copies the pack's songs and song database to PPSSPP's memory stick or a connected PSP. By hand: delete
+        the previous pack's song folders and <span class="mono">ZZCUSTOMDB</span> (its <span class="mono">pack.txt</span> lists
+        them), then copy the new pack's <span class="mono">MUSIC</span> contents.</li>
     </ol>
+    <p>Giving a pack to someone who also uses Pocket Encore: they should <b>Import</b> it (Memory stick page) rather than copy its
+    <span class="mono">ZZCUSTOMDB</span>, or their own songs would be hidden. <span class="mono">pack.txt</span> says so too.</p>
     <p>Scores are kept per song, so they come back with the song.</p>`],
   ["modes", "Game modes", `
     <p>Checked every time Pocket Encore starts (badge at the top right):</p>
@@ -537,8 +790,12 @@ const HELP = [
   ["trouble", "Troubleshooting", `
     <ul>
       <li><b>A build fails</b>: the build log says which step. Setup must show everything found.</li>
-      <li><b>The song isn't in the game's list</b>: copy <span class="mono">ZZCUSTOMDB</span> again after every build; the song
-        folder name must match (Z + capital letters).</li>
+      <li><b>The song isn't in the game's list</b>: the Memory stick page says whether it is copied and whether the song
+        database the game uses lists it (install again after every build). Only one song database counts: if the page says the
+        game uses another build's, install yours.</li>
+      <li><b>Only someone else's song shows, under one of your songs' names</b>: their pack's <span class="mono">ZZCUSTOMDB</span>
+        was copied onto yours. Import their song (Memory stick page, <b>Import…</b> on its row), build, then install your song
+        database.</li>
       <li><b>Notes feel early or late</b>: in the editor, <b>Tempo…</b> → shift all gems by a few ms.</li>
       <li><b>Stars too easy or hard</b>: Details → Stars scale → <b>Calibrate from a play…</b>, then Rebuild chart.</li>
       <li><b>Pocket Encore won't start</b>: the console window says why; if it's already running, starting it again just opens
@@ -546,7 +803,7 @@ const HELP = [
       <li><b>Uninstalling</b>: Windows Settings → Apps → Installed apps → Pocket Encore → Uninstall. It closes Pocket Encore
         if it is running and asks whether to delete your songs, settings and built output too (No keeps them, so a new
         install in the same folder finds them). Songs already copied to the memory stick stay there: delete their folders
-        and <span class="mono">ZZCUSTOMDB</span> by hand.</li>
+        and <span class="mono">ZZCUSTOMDB</span> by hand (their <span class="mono">PESONG.JSON</span> / <span class="mono">PEDB.JSON</span> go with them).</li>
     </ul>
     <p>Everything in detail (file formats, every option, what was tested): <button id="openGuide">Open the full guide</button></p>`],
 ];
@@ -567,14 +824,20 @@ async function showSong(folder, tab) {
   CUR = await api("GET", `/api/song/${folder}`);
   const S = CUR.song;
   $("#crumb").innerHTML = `<a href="#/">Songs</a> / ${esc(S.title)} <span class="dim">(${esc(folder)})</span> ${statusBadge(CUR)}`;
-  const tabs = [["details", "Details"], ["editor", "Chart & effects"], ["json", "song.json"]];
+  const tabs = [["details", "Details"], ["editor", "Chart"], ["anims", "Effects & Band Anims"], ["json", "song.json"]];
   $("#main").innerHTML = `<div class="tabs">${tabs.map(([k, n]) => `<button class="${k === tab ? "on" : ""}" onclick="location.hash='#/song/${folder}/${k}'">${n}</button>`).join("")}
     <span class="grow"></span>${buildButtons(folder)}</div><div id="tab"></div>`;
+  if ((tab === "editor" || tab === "anims") && S.imported) { $("#tab").innerHTML = `<div class="panel">This song was imported from someone else's pack: its chart and audio are played as they were shipped, so the gems, effects and band animations can't be edited here. Its details (title, tiers…) can be changed on the Details tab.</div>`; return; }
   if (tab === "editor") { document.body.classList.add("editing"); return window.openEditor($("#tab"), folder, CUR); }
+  if (tab === "anims") { document.body.classList.add("editing"); return window.openAnims($("#tab"), folder, CUR); }
   if (tab === "json") return showJson(folder);
   showDetails(folder);
 }
 function buildButtons(folder) {
+  if (CUR && CUR.song.imported) return `<span class="actions">
+    <button class="primary" onclick="runBuild('${folder}','audio')" title="Puts the imported song in out\\MUSIC and builds the song database">Build</button>
+    <button onclick="openFolder('${folder}','outsong')" title="The built song folder in out\\MUSIC">Open output folder</button>
+    ${CUR.buildLog ? `<button onclick="showStoredLog('${folder}')" title="The last build's log, from disk">Last log</button>` : ""}</span>`;
   return `<span class="actions">
     <button class="primary" onclick="runBuild('${folder}','audio')" title="Audio, preview, chart and song database (mksong.js)">Build</button>
     <button onclick="runBuild('${folder}','chart')" title="Chart and song database only: reuses the audio from the last build">Rebuild chart</button>
@@ -602,7 +865,41 @@ function checksHtml(c) {
   if (!c || !c.items.length) return `<div class="small" style="color:var(--ok)">No problems found in the ${c && c.source === "edited" ? "edited" : "automatic"} chart.</div>`;
   return `<ul class="checks">${c.items.map(i => `<li class="${i.level}"><span class="badge ${i.level === "error" ? "bad" : i.level === "warn" ? "warn" : ""}">${i.level}</span> ${i.part ? `<b>${esc(i.part)}</b> ` : ""}${esc(i.msg)}${i.at != null ? ` <a href="#" data-at="${i.at}" class="small">go</a>` : ""}</li>`).join("")}</ul>`;
 }
+// an imported song: details and tiers only (its chart and audio are as shipped)
+function showImportedDetails(folder) {
+  const S = CUR.song, T = S.tiers || {}, I = S.imported || {};
+  const tierSel = k => `<select data-tier="${k}">${opt([0, 1, 2, 3, 4, 5, 6].map(n => [n, n === 0 ? "0 (none)" : starStr(n).slice(0, n) + "  " + n]), T[k] ?? 0)}</select>`;
+  $("#tab").innerHTML = `<div class="grid2"><div>
+    <div class="panel"><h4>Song</h4><div class="form">
+      <label>Title</label><input type="text" id="f_title" value="${esc(S.title)}">
+      <label>Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}">
+      <label>Album</label><input type="text" id="f_album" value="${esc(S.album)}">
+      <label>Year</label><input type="number" id="f_year" value="${esc(S.year)}" style="width:100%">
+      <label>Genre</label><select id="f_genre">${opt(META.genres.map(g => [g, g]), S.genre)}</select>
+      <label>Lead vocals</label><select id="f_vocals">${opt([["", "(not set)"], [1, "male"], [2, "female"]], S.vocals)}</select>
+    </div></div>
+    <div class="panel"><h4>Difficulty tiers (0–6)</h4><div class="form">${["band", "guitar", "bass", "drums", "vocals"].map(k => `<label>${k}</label>${tierSel(k)}`).join("")}</div></div>
+  </div><div>
+    <div class="panel"><h4>Imported</h4><p class="small">From someone else's pack on ${esc(I.at ? new Date(I.at).toLocaleDateString() : "?")}; details from ${esc(I.from || "?")}${I.app ? `, made with Pocket Encore ${esc(I.app)}` : ""}.</p>
+      <p class="small dim">Its chart and audio (songs\\${esc(folder)}\\import) are played as they were shipped, so gems, effects, stems and stars can't be changed here.
+      Changing the title, tiers or genre only changes your song database: build to apply.</p></div>
+  </div></div>
+  <div class="actions"><button class="primary" id="save">Save song.json</button><button id="saveBuild">Save and build</button></div>`;
+  const save = async () => {
+    const N = JSON.parse(JSON.stringify(S)), v = id => $(id).value.trim();
+    N.title = v("#f_title"); N.artist = v("#f_artist"); setOrDelete(N, "album", v("#f_album"));
+    setOrDelete(N, "year", v("#f_year") ? Number(v("#f_year")) : ""); N.genre = v("#f_genre");
+    setOrDelete(N, "vocals", v("#f_vocals") ? Number(v("#f_vocals")) : "");
+    N.tiers = Object.assign({}, N.tiers); document.querySelectorAll("[data-tier]").forEach(e => N.tiers[e.dataset.tier] = Number(e.value));
+    if (!N.title || !N.artist) throw userError("Add a title and an artist to save the song.");
+    CUR = await api("PUT", `/api/song/${folder}`, N); markSaved(); toast("song.json saved"); return true;
+  };
+  $("#save").onclick = () => save().catch(fail("Couldn't save song.json"));
+  $("#saveBuild").onclick = () => save().then(() => runBuild(folder, "audio")).catch(fail("Couldn't save song.json"));
+  guardForm($("#tab"), "the song details", save);
+}
 async function showDetails(folder) {
+  if (CUR.song.imported) return showImportedDetails(folder);
   const s = CUR, S = s.song, T = S.tiers || {}, src = S.stemSource || {};
   const tierSel = k => `<select data-tier="${k}">${opt([0, 1, 2, 3, 4, 5, 6].map(n => [n, n === 0 ? "0 (none)" : starStr(n).slice(0, n) + "  " + n]), T[k] ?? 0)}</select>`;
   const stemLines = s.stems.map(st => `<div class="stemrow"><label>${st.part} ${tip(st.part)}</label><input type="text" data-stem="${st.part}" value="${esc(st.source || "")}" placeholder="${esc(st.part === "fill" ? PH.stem("fill") : st.part[0].toUpperCase() + st.part.slice(1) + " stem file: Browse…")}">
@@ -1099,15 +1396,17 @@ function followBuild() {
   log.innerHTML = "";
   es = new EventSource("/api/build");
   let kind = "";
-  es.addEventListener("start", e => { const d = JSON.parse(e.data); kind = d.from; $("#buildTitle").textContent = d.from === "pack" ? `Build ${d.folder}` : `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
+  es.addEventListener("start", e => { const d = JSON.parse(e.data); kind = d.from; $("#buildTitle").textContent = d.from === "install" ? `Install to the ${d.folder}` : d.from === "pack" ? `Build ${d.folder}` : d.from === "many" ? `Build ${d.folder}` : `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
   es.addEventListener("line", e => logLine(log, JSON.parse(e.data)));
   es.addEventListener("end", e => {
     const code = JSON.parse(e.data);
     es.close(); es = null;
     if (code === "none") { $("#buildTitle").textContent = "Build"; $("#buildState").innerHTML = '<span class="dim">nothing built yet in this session (a song\'s "Last log" button shows its log from disk)</span>'; return; }
-    $("#buildState").innerHTML = code === "0" ? (kind === "pack"
-      ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: delete the previous pack from the memory stick (its pack.txt lists it), then copy this pack\'s MUSIC contents</span>'
-      : '<span class="badge ok">done</span> <span class="small dim">copy the song folder and ZZCUSTOMDB from out\\MUSIC to the memory stick</span>') : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
+    $("#buildState").innerHTML = code === "0" ? (kind === "install"
+      ? '<span class="badge ok">installed</span> <span class="small dim">restart the game to see the changes (on a PSP, end the USB connection first)</span>'
+      : kind === "pack"
+      ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: Install… on the Packs page copies it to the memory stick</span>'
+      : '<span class="badge ok">done</span> <span class="small dim">Memory stick (on the song list) shows what to copy, or copies it for you</span>') : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
     log.scrollTop = log.scrollHeight;
     if (code === "0" && !pageGuard()) route();  // refresh the page, unless that would lose unsaved changes
   });

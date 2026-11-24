@@ -2,7 +2,7 @@
 
 Tools to build custom songs that the game loads natively on PPSSPP: audio (.ATM), chart (BEATMATCH.STR.EDAT),
 preview and the song database, from stems and an optional MIDI. **Pocket Encore** is the all-in-one app: song library,
-details, stems and their quality, builds, and a chart/effects editor with playback, a highway preview and record mode.
+details, stems and their quality, builds, a chart editor with playback, a highway preview and record mode, and an effects and band animations editor.
 
 > **Disclaimer:** Pocket Encore is an unofficial fan project. It is not affiliated with, endorsed by or connected to
 > Harmonix, MTV Games, Electronic Arts, Sony Interactive Entertainment or any other company behind Rock Band or the

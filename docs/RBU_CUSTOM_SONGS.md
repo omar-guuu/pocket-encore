@@ -161,6 +161,7 @@ Our scripts (`rbu-tools\scripts`), in pipeline order:
 | chart | `beatmatch.js` | `.rbu` + donor → `BEATMATCH.STR.EDAT` (song end, music stop, ATM hash, solos); `verify` |
 | chart | `countin.py` | optional drumstick count-in before the music (re-encodes the backing track) |
 | chart | `fxchart.js` | screen effects / raw script calls at chosen times |
+| chart | `band.js` | band animations from the song's own notes: guitarist/bassist hands, the singer's mic (rest/sing from the vocals) and prop (tambourine, cowbell, clapping) in solos and long instrumental parts |
 | chart | `solocheck.py` | solos in the MIDI; mksong stops if any is missing from the built chart |
 | database | `mkjukebox.js` | official list + all customs → `ZZCUSTOMDB\JB<day>.STR.EDAT` + TEXT |
 | editing | `reaperpack.js` | chart + WAVs for REAPER (customs and official references) |
@@ -219,7 +220,7 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   pack list is `songs\packs.json` (in the repo); what was built where is `songs\.db\packs-built.json` (per machine).
 - **Build** (whole song) and **Rebuild chart** (chart and database only, reusing the audio). The output streams into the
   build log at the bottom and is written to `songs\<FOLDER>\build\build.log` (**Last log** shows it later).
-- **Chart & effects**: the four parts' gems on a time line, over each part's own stem waveform, with playback of the
+- **Chart**: the four parts' gems on a time line, over each part's own stem waveform, with playback of the
   five tracks as the game plays them (mute, solo, volume, 50/75/100% speed). The **part** selector picks the focus part:
   the **highway** on the right shows it the way the game does (gems falling to the strike line, overdrive and solo
   spans), **ticks** play a click on its gems to check sync, and keys **1–4** add a gem in that lane at the playhead,
@@ -230,8 +231,17 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   Edit gems: add, move, change length (hold), delete, copy/paste, overdrive phrase (**Overdrive** / O) and solo
   (**Solo** / L) on/off for the selection (while recording, O starts and ends a phrase at the playhead; a solo that
   would overlap another part's solo is not added); drag an overdrive or solo bar to move it, or its ends to resize
-  it (it stops at the next phrase, and a solo at any part's next solo), undo/redo (also for effects and tempo changes); snap to the beat grid. Effects lane: add, move, resize,
-  change or delete screen effects (song.json `effects`).
+  it (it stops at the next phrase, and a solo at any part's next solo), undo/redo (also for tempo changes); snap to the beat grid.
+- **Effects & Band Anims**: the same time line and playback (shared code: `pocketencorepublic	imeline.js`) with one
+  track per thing the game shows besides the gems: **Screen effects** (one track for the whole song; an effect covers the
+  whole screen and only one runs at a time, so blocks can't overlap; each starts and ends exactly at its time),
+  **Singer props** (automatic: solos where nobody sings and 8+ bar instrumental parts with Tambourine / Cowbell / Hand
+  clapping / None; or **My own sections**, song.json `singerSections`), **Singer mic**, **Guitarist** and **Bassist**
+  fret/strum clips, and the four parts' Expert notes for orientation. A preview box shows the effect at the playhead
+  (an in-game screenshot from `pocketencorepublicx<effect>.png` when there is one, otherwise a placeholder).
+  The band rows show what `band.js` makes from the last built chart. **Easy / Advanced Edit Mode**: the mic and hand
+  rows are read-only (🔒) in Easy Edit Mode (the default); Advanced Edit Mode (asks first) lets you move, add or delete
+  mic changes (`singerMic`) and set one guitarist/bassist clip per note (`bandClips`).
   - **Tempo…**: set a constant BPM from a first beat (for songs with a steady beat whose grid is off) or shift every gem
     by some ms against the audio. Both keep every gem, phrase and solo at its time in seconds; only the grid moves.
   - The editor starts from the last build's chart (`reaper\<FOLDER>\<FOLDER>_auto.mid`). Saving writes
@@ -456,6 +466,7 @@ overdrive or solo-edge gems); Handlebars exported and imported back: all 3945 ge
 | Chart root +0x324 = CRC-32 of the first 0x400 bytes of the .ATM | Wrong value → "Memory Stick removed" at song start |
 | JB record +0xF8 = exact .ATM size | Song missing from the list (same check as a missing folder) |
 | JB file exactly 0x1D580 bytes, TEXT files next to it, number above 571 | Database ignored, customs missing |
+| One song database counts: the highest JB number in any MUSIC folder, with the TEXT folder next to it. Never copy someone else's ZZCUSTOMDB over yours | Their JB lists only their songs (yours are hidden), and next to your TEXT its title ids point at your songs' names: their song shows under one of your titles (FINDINGS §35) |
 
 `beatmatch.js build` handles all the chart rules above automatically; `mkjukebox.js` handles the JB ones.
 
@@ -630,6 +641,14 @@ when every track has passed its end (the lanes hide).
 ---
 
 ## 9. Open questions / next steps
+
+- TODO (2026-11-24, user): decide, control by control, what is **Easy Edit** and what is **Advanced Edit** in Pocket
+  Encore. So far: Effects & Band Anims tab - Easy: screen effects, singer props; Advanced: singer mic changes and
+  guitarist/bassist clips. Still to sort: the Chart tab (e.g. Tempo…, editing Hard/Medium/Easy by hand, held drum
+  gems), Details (loudness, lead-in, stars scale), the song.json tab (raw editing is likely Advanced), build options.
+- TODO: in-game screenshots of each screen effect for the Effects & Band Anims preview box (user is taking them;
+  they go in `pocketencorepublicx<effect>.png` and in the public repo - user's decision 2026-11-24; list in
+  `pocketencorepublicxREADME.md`).
 - Solos are supported (format matched on all official charts); first in-game test: Handlebars (guitar intro solo).
 - Vocals from a stem (vocalchart.js) are new; first test: Handlebars.
 - Vocals are charted from the synth line (no real vocal part in the source MIDI); kick notes are ignored.
@@ -684,7 +703,8 @@ commands with parameters, #162–#175, not used by any chart and not exposed yet
 | `oldfilm` | 40 | black and white + lines, grain, dust, scratches (Aqualung solo) |
 | `colorfilm` | 41 | lines, grain, dust, scratches in colour (Aqualung intro) |
 | `tintlines` | 42 | colour tint + video lines |
-| `blur2`, `blur3`, `blur` | 43, 44, 52 | blur (three presets) |
+| `blur2`, `blur3` | 43, 44 | blur (two presets) |
+| `kaleidoscope` | 52 | the picture mirrored into a kaleidoscope (seen in game 2026-11-24; called `blur` before, still accepted) |
 | `bwflash` | 45 | black and white + grain + flash |
 | `negative` | 46 | photonegative |
 | `bw` | 47 | black and white only |
@@ -696,9 +716,9 @@ commands with parameters, #162–#175, not used by any chart and not exposed yet
 Names come from the code; the showcase song below is there to check what each really looks like.
 - `node scripts\fxchart.js list <BEATMATCH>`: the effects a chart switches, with times.
 - `node scripts\fxchart.js apply <in> <out> effects.json [--keep]`, where effects.json is
-  `[{"effect": "sepia", "from": 83.0, "to": 97.5}, ...]` (seconds). Each effect is added to the song event nearest
-  the time you ask for (events are 1–3 s apart), keeping that event's camera and animation commands. Without
-  `--keep` the chart's own effects are removed first.
+  `[{"effect": "sepia", "from": 83.0, "to": 97.5}, ...]` (seconds). Each start and end is a new song event at exactly
+  the time you ask for (since 2026-11-24; before, it went to the nearest event, 1–3 s away). Without `--keep` the
+  chart's own effects are removed first.
 - **In a custom song (the normal way):** add to song.json
   `"effects": [{"effect": "oldfilm", "from": 45, "to": 60}, {"effect": "sepia", "from": 90, "to": 100}]`
   (seconds in the song's audio, e.g. read off REAPER; `"to"` optional) or `"effects": "myeffects.json"`, and
@@ -712,7 +732,7 @@ Names come from the code; the showcase song below is there to check what each re
   The first vocal solo built in a custom: checks vocal solos and an effect running to the end of the song.
 
 **Showcase:** `ZTODAYALLFX` ("Today (all FX)") = TODAY with its own effects removed and the 15 effects one after
-the other, about 9 s each (`songs\ZTODAYALLFX\effects.json`): vortex 0:07, night vision 0:18, old film 0:32,
+the other, about 9 s each (`test-songs\ZTODAYALLFX\effects.json`): vortex 0:07, night vision 0:18, old film 0:32,
 colour film 0:44, tint+lines 0:55, blur2 1:08, blur3 1:20, B&W+flash 1:33, negative 1:45, B&W 1:56, sepia 2:08,
 film 2:20, blur+B&W+flash 2:32, blur+tint 2:44, blur 2:56 (end 3:05). Vortex runs straight into night vision. **Result:** all 15 effects show up in game at their times.
 
@@ -721,7 +741,7 @@ The same chart scripts drive the cameras and the band's moves: script command #2
 shots/cues, which every venue file defines; #17–#20 send moves to the four band members; #28 changes the
 stage/game state. The names exist only as hashes, so the showcase song `ZTODAYCAM` ("Today (camera test)")
 plays each of the 32 by itself for about 6 s (TODAY's own camera messages and effects removed). The list of times
-is in `rbu-tools\songs\ZTODAYCAM\timetable.txt` (S01–S32); note what each one shows, and they can be given names.
+is in `rbu-tools\test-songs\ZTODAYCAM\timetable.txt` (S01–S32); note what each one shows, and they can be given names.
 `fxchart.js` can already place any of them: `{"cmd": 22, "arg": "dc0222d9", "at": 12.5}` in the JSON, and
 `--strip 22` removes the chart's own. Details: FINDINGS §27.
 **Result so far:** ZTODAYCAM plays and its camera work is clearly different from the original TODAY, but the
@@ -731,8 +751,8 @@ showcase with one shot per section and an on-screen marker), then add a song.jso
 marker at each shot change, on every part and difficulty: the lane (left to right) gives the group (S01–S08,
 S09–S16, S17–S24, S25–S32), the number of gems in a row gives the shot in the group (1–8). One shot every ~6.2 s
 from 0:07 (the camera calls sit exactly on the marker's event). Checklist with times, markers and what the official
-charts suggest for each code: `rbu-tools\songs\ZCAMTEST\checklist.txt` (fill in "shows:"). Generator:
-`songs\ZCAMTEST\make.py`; mksong's new `"stripCommands": [22]` removes the donor's own camera calls.
+charts suggest for each code: `rbu-tools\test-songs\ZCAMTEST\checklist.txt` (fill in "shows:"). Generator:
+`test-songs\ZCAMTEST\make.py`; mksong's new `"stripCommands": [22]` removes the donor's own camera calls.
 **Result so far:** the camera follows the instrument you are playing (guitar -> guitarist, vocals -> singer, ...),
 so a code looks different depending on the active instrument. Next test: stay on one instrument the whole song,
 play it twice, and note the kind of shot (close-up, wide, angle, pan, no change) for each marker.

@@ -15,15 +15,13 @@ const path = require("path");
 const { execFileSync } = require("child_process");
 const settings = require("./settings.js");
 const game = require("./game.js");
+const stick = require("./stick.js");
 
 const TOOLS = path.resolve(__dirname, "..");
 const SONGS = path.join(TOOLS, "songs"), BUILT = path.join(TOOLS, "out", "MUSIC");
 const DB_FOLDER = "ZZCUSTOMDB", CAPACITY = 300;
 
-// JB number = days since 2008-03-07 (as mksong.js): newer than every official pack and every earlier build
-function dayNumber(date = new Date()) {
-  return Math.round((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(2008, 2, 7)) / 86400000);
-}
+// JB number = days since 2008-03-07 (as mksong.js), raised above someone else's song database on a memory stick
 const dirSize = d => fs.readdirSync(d, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? dirSize(path.join(d, e.name)) : fs.statSync(path.join(d, e.name)).size), 0);
 
 function main() {
@@ -32,7 +30,7 @@ function main() {
   const outDir = opt("--out");
   if (!outDir || !folders.length) { console.log('usage: mkpack.js --out <dir> [--name "Pack"] [--music <MUSIC>] [--jb <n>] ZSONG...'); process.exit(1); }
   const s = settings.load(), music = opt("--music") || s.music;
-  const number = Number(opt("--jb") || dayNumber());
+  const number = Number(opt("--jb") || stick.nextDbNumber(music).number);
   const code = String(number).padStart(6, "0");
   const name = (opt("--name") || "").trim() || `Pocket Encore ${code}`;
   const g = game.resolve(music, s.iso);
@@ -50,7 +48,12 @@ function main() {
   const M = path.join(outDir, "MUSIC");
   fs.rmSync(outDir, { recursive: true, force: true });
   fs.mkdirSync(M, { recursive: true });
-  for (const x of songs) fs.cpSync(x.built, path.join(M, x.folder), { recursive: true });
+  for (const x of songs) {
+    const dest = path.join(M, x.folder);
+    fs.cpSync(x.built, dest, { recursive: true, preserveTimestamps: true });
+    // songs built before Pocket Encore 0.5 have no PESONG.JSON: add it, so whoever gets the pack can import the song
+    if (!stick.readStamp(dest)) stick.writeStamp(dest, x.S, { chart: x.S.imported ? "imported" : x.S.chart ? "edited" : x.S.midi ? "midi" : "stems" });
+  }
 
   // the pack's own song database (only its songs)
   const tmp = path.join(SONGS, ".db", "pack"); fs.rmSync(tmp, { recursive: true, force: true }); fs.mkdirSync(tmp, { recursive: true });
@@ -60,6 +63,8 @@ function main() {
     return q;
   });
   const out = execFileSync(process.execPath, [path.join(__dirname, "mkjukebox.js"), "--base", g.base, "--out", path.join(M, DB_FOLDER), "--number", String(number), ...jsons], { encoding: "utf8" });
+  stick.writeDbStamp(path.join(M, DB_FOLDER), { kind: "pack", pack: name, songs: songs.map(x => x.folder) });
+  stick.recordDb(path.join(M, DB_FOLDER, `JB${code}.STR.EDAT`), { pack: name });
   const baseLine = out.split(/\r?\n/).find(l => l.startsWith("base ")) || "";
   console.log("  " + baseLine.replace(/ -> .*\(/, " -> pack song list ("));
   const official = Number((/\((\d+) songs/.exec(baseLine) || [])[1] || 0);
@@ -76,6 +81,11 @@ function main() {
     "Install: copy everything inside the MUSIC folder of this pack into PSP\\GAME\\ULUS10418\\MUSIC on the memory stick.",
     `Switch packs: first delete the previous pack's song folders and ${DB_FOLDER} from that MUSIC folder (its pack.txt`,
     "lists them), then copy this pack. Official DLC folders stay. Scores are kept per song, so they come back with it.",
+    "",
+    `Already have custom songs of your own? Copying this pack's ${DB_FOLDER} replaces your song database: the game lists`,
+    "only one database (the newest), so your songs would be hidden. With Pocket Encore, use Import on the Memory stick",
+    "page instead: it adds these songs to your library (details from each song's PESONG.JSON) and your next build lists",
+    "them together with yours.",
     "",
     "Folders in this pack:",
     ...songs.map(x => `  ${x.folder.padEnd(22)} ${x.S.title} - ${x.S.artist}`),

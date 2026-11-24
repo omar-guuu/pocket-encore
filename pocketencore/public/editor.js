@@ -1,13 +1,13 @@
 "use strict";
-// Chart and effects editor: gems of the 4 parts on a time line with the stems' waveforms, audio playback, editing,
-// overdrive, solos, screen effects, a highway preview and record mode. Gems live in a Rock Band-format MIDI (the
+// Chart editor (the Chart tab): gems of the 4 parts on a time line with the stems' waveforms, audio playback, editing,
+// overdrive, solos, a highway preview and record mode. Screen effects and band animations are on the Effects & Band
+// Anims tab (anims.js); the time line, audio and tempo map are shared with it (timeline.js). Gems live in a Rock Band-format MIDI (the
 // REAPER export layout): PART DRUMS / BASS / GUITAR / KEYS (vocals), difficulty bases 60/72/84/96, drums one note
 // higher; 116 = overdrive, 103 = solo; notes of 160 ticks or less are taps.
 (() => {
 const PART_TRACKS = [["drums", ["PART DRUMS"]], ["bass", ["PART BASS"]], ["guitar", ["PART GUITAR"]], ["vocals", ["PART KEYS", "PART VOCALS"]]];
 const STEM_OF = { drums: "drums", bass: "bass_guitar", guitar: "lead_guitar", vocals: "vocals" };
-const TRACKS = ["drums", "bass_guitar", "lead_guitar", "vocals", "fill"];
-const TRACK_NAME = { drums: "Drums", bass_guitar: "Bass", lead_guitar: "Guitar", vocals: "Vocals", fill: "Backing" };
+const TL = window.PETimeline, { TRACKS } = TL;
 const BASE = [60, 72, 84, 96], OD = 116, SOLO = 103, TAP_MAX = 160, TAP_LEN = 60;
 const LANE_COL = ["#e65050", "#e8c440", "#4a94ec", "#4cc466"];
 const LANE_NAME = ["Red", "Yellow", "Blue", "Green"];
@@ -24,80 +24,61 @@ const SHAPES = {
   bass: [runShape(1, 2), runShape(2, 1), runShape(2, 0), runShape(0, 2), runShape(1, 3), runShape(3, 1)],
 };
 const PART_COL = { drums: "#c86464", bass: "#6488d8", guitar: "#d89a48", vocals: "#58b078" };
-const GUT = 78, RULER = 30, FXH = 30, HEAD = 14, LANE = 22, PART_H = HEAD + 4 * LANE, PAD = 6;
-const H = RULER + FXH + 4 * (PART_H + PAD) + 4;
-const PARTS_TOP = RULER + FXH + 4, PARTS_H = 4 * (PART_H + PAD), STRIP = 18;
+const GUT = 78, RULER = 30, HEAD = 14, LANE = 22, PART_H = HEAD + 4 * LANE, PAD = 6;
+const H = RULER + 4 * (PART_H + PAD) + 4;
+const PARTS_TOP = RULER + 4, PARTS_H = 4 * (PART_H + PAD), STRIP = 18;
 // parts shown: all four, the focus part enlarged with the others as thin strips, or the focus part alone
 const VIEWS = [["all", "All", "Show all four parts"], ["focus", "Focus", "Enlarge the selected part; the others become thin strips (click one to switch)"], ["only", "Only", "Show only the selected part, at full height"]];
 const HW_W = 230, HW_AHEAD = 2.5;  // highway: width, seconds shown above the strike line
 
 let E = null;  // editor state
 
-window.editorDirty = () => !!(E && (E.dirty || E.fxDirty));
+window.editorDirty = () => !!(E && E.dirty);
 window.editorState = () => E;  // for tests and the console
 window.editorFns = () => ({ partGeo, xOf, t2s, s2t, draw, undo });  // the same, for layout and timing
-window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); clearInterval(E.padTimer); window.removeEventListener("keyup", E.onKeyUp); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); if (E.ctx) E.ctx.close(); E = null; };
+window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); clearInterval(E.padTimer); window.removeEventListener("keyup", E.onKeyUp); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); if (E.ctx && E.ctx.state !== "closed") E.ctx.close().catch(() => { }); E = null; };
 
+let opening = null;  // only the latest openEditor call builds the editor (two quick route changes would make two)
 window.openEditor = async (root, folder, details) => {
   window.editorClose();
+  const me = opening = {};
   root.innerHTML = `<div class="panel">Loading chart…</div>`;
   let chart;
   try { chart = await api("GET", `/api/chart/${folder}`); }
-  catch (e) { root.innerHTML = `<div class="panel">Couldn't open the editor: ${esc(e.message)}</div>`; return; }
+  catch (e) { if (me === opening) root.innerHTML = `<div class="panel">Couldn't open the editor: ${esc(e.message)}</div>`; return; }
+  if (me !== opening || !root.isConnected) return;
+  window.editorClose();
   const S = details.song;
   E = {
     folder, S, midi: chart.midi, source: chart.source, hasAuto: chart.hasAuto, tpb: chart.midi.tpb, lead: (chart.audio && chart.audio.lead) || 0,
-    diff: 3, snap: 4, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, fxDirty: false, saved: false,
-    fx: JSON.parse(JSON.stringify(details.effects || [])), fxSel: -1, reduce: S.chart ? !!S.reduce : true,
+    diff: 3, snap: 4, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, saved: false,
+    reduce: S.chart ? !!S.reduce : true,
     ctx: null, bufs: {}, peaks: {}, gains: {}, vol: {}, mute: {}, solo: {}, srcs: [], playing: false, t0: 0, off: 0, rate: 1,
     focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, view: (() => { try { return VIEWS.some(v => v[0] === localStorage["pe.edView"]) ? localStorage["pe.edView"] : "all"; } catch { return "all"; } })(), padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
   };
+  E.hooks = { draw: () => draw(), started: () => { E.clickNext = E.off; $("#play").textContent = "❚❚ Pause"; loop(); }, stopped: () => { $("#play").textContent = "▶ Play"; draw(); } };
   E.parts = PART_TRACKS.map(([key, names]) => {
     let tr = E.midi.tracks.find(t => names.includes(t.name));
     if (!tr) { tr = { name: names[0], notes: [], events: [{ t: 0, d: [0xff, 3, names[0].length, ...[...names[0]].map(c => c.charCodeAt(0))] }] }; E.midi.tracks.push(tr); }
     return { key, tr, off: key === "drums" ? 1 : 0 };
   });
   buildTempo();
-  for (const t of TRACKS) { E.vol[t] = 1; E.mute[t] = false; E.solo[t] = false; }
+  TL.initMix(E);
   E.length = Math.max(E.length, ...E.parts.flatMap(p => p.tr.notes.map(n => t2s(n.t + n.l)))) || 60;
   renderShell(root, details);
   E.timer = setInterval(scheduleClicks, 25);
   E.padTimer = setInterval(padPoll, 8);  // the controller (8 ms: timing comes from its time stamps anyway)
   if (sessionStorage.seekTo) { const s = Number(sessionStorage.seekTo); delete sessionStorage.seekTo; E.off = Math.max(0, s - 1); E.x0 = Math.max(0, s - 2); }
   draw();
-  loadAudio();
+  const cur = E; TL.loadAudio(E, $("#audioState"), () => E === cur);
   if (E.source === "edited" && E.hasAuto) loadGhost();
 };
 
-// ---------- tempo map ----------
-function buildTempo() {
-  const segs = [];
-  for (const tr of E.midi.tracks) for (const e of tr.events) if (e.d[0] === 0xff && e.d[1] === 0x51) segs.push({ t: e.t, us: (e.d[3] << 16) | (e.d[4] << 8) | e.d[5] });
-  segs.sort((a, b) => a.t - b.t);
-  if (!segs.length || segs[0].t > 0) segs.unshift({ t: 0, us: 500000 });
-  let s = 0;
-  segs.forEach((g, i) => { if (i) s += (g.t - segs[i - 1].t) * segs[i - 1].us / 1e6 / E.tpb; g.s = s; });
-  E.tempo = segs;
-  // beat lines: the BEAT track if there is one (12 = downbeat, 13 = beat), else every beat with 4/4 bars
-  const beat = E.midi.tracks.find(t => t.name === "BEAT");
-  E.beats = beat && beat.notes.length ? beat.notes.map(n => ({ t: n.t, down: n.n === 12 })).sort((a, b) => a.t - b.t) : null;
-}
-function seg(t) { const T = E.tempo; let lo = 0, hi = T.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (T[m].t <= t) lo = m; else hi = m - 1; } return T[lo]; }
-function t2s(t) { const g = seg(t); return g.s + (t - g.t) * g.us / 1e6 / E.tpb; }
-function s2t(s) { const T = E.tempo; let g = T[0]; for (const x of T) if (x.s <= s) g = x; else break; return g.t + (s - g.s) * 1e6 * E.tpb / g.us; }
+// ---------- tempo map (timeline.js) ----------
+const buildTempo = () => TL.buildTempo(E), seg = t => TL.seg(E, t), t2s = t => TL.t2s(E, t), s2t = s => TL.s2t(E, s);
+const beatList = (t0, t1) => TL.beatList(E, t0, t1), barPos = t => TL.barPos(E, t);
 const step = () => E.snap ? E.tpb / E.snap : 1;
 const snapT = t => E.snap ? Math.round(t / step()) * step() : Math.round(t);
-function beatList(t0, t1) {
-  if (E.beats) { const out = []; let n = 0; for (const b of E.beats) { if (b.down) n++; if (b.t >= t0 && b.t <= t1) out.push({ ...b, bar: n }); } return out; }
-  const out = []; for (let t = Math.max(0, Math.floor(t0 / E.tpb)) * E.tpb; t <= t1; t += E.tpb) out.push({ t, down: (t / E.tpb) % 4 === 0, bar: Math.floor(t / E.tpb / 4) + 1 });
-  return out;
-}
-function barPos(t) {
-  const bs = beatList(0, t); if (!bs.length) return "";
-  let bar = 0, bi = 0, last = bs[0];
-  for (const b of bs) { if (b.down) { bar = b.bar; bi = 0; } else bi++; last = b; }
-  return `${bar}.${bi + 1}.${String(Math.round(t - last.t)).padStart(3, "0")}`;
-}
 // Tempo tools: a constant BPM from a first beat at `firstBeat` s; every note and marker keeps its time in seconds.
 function setConstantTempo(bpm, firstBeat) {
   const beat = 60 / bpm, old = E.parts.map(p => p.tr.notes.map(n => [t2s(n.t), t2s(n.t + n.l)]));
@@ -163,13 +144,13 @@ const pal = () => PAL[document.documentElement.dataset.theme === "light" ? "ligh
 window.addEventListener("themechange", () => { if (E) draw(); });
 const partOf = n => E.parts.find(p => p.tr.notes.includes(n));
 const focusPart = () => E.parts.find(p => p.key === E.focus);
-function snapshot() { return { notes: E.parts.map(p => p.tr.notes.map(n => ({ ...n }))), fx: JSON.parse(JSON.stringify(E.fx)), tempo: null }; }
+function snapshot() { return { notes: E.parts.map(p => p.tr.notes.map(n => ({ ...n }))), tempo: null }; }
 function fullSnapshot() { return { ...snapshot(), tempo: JSON.parse(JSON.stringify(E.midi.tracks.map(t => ({ notes: t.notes, events: t.events })))) }; }
 function pushUndo(full) { E.undo.push(full ? fullSnapshot() : snapshot()); if (E.undo.length > 200) E.undo.shift(); E.redo = []; }
 function restore(st) {
   if (st.tempo) { E.midi.tracks.forEach((t, i) => { t.notes = st.tempo[i].notes; t.events = st.tempo[i].events; }); E.parts.forEach(p => { p.tr = E.midi.tracks.find(t => t.name === p.tr.name) || p.tr; }); buildTempo(); }
   E.parts.forEach((p, i) => { p.tr.notes = st.notes[i]; });
-  E.fx = st.fx; E.fxSel = -1; E.sel.clear(); E.dirty = true; E.fxDirty = true; renderFxPanel(); markDirty();
+  E.sel.clear(); E.dirty = true; markDirty();
 }
 function undo() { if (!E.undo.length) return; E.redo.push(E.undo[E.undo.length - 1].tempo ? fullSnapshot() : snapshot()); restore(E.undo.pop()); }
 function redo() { if (!E.redo.length) return; const st = E.redo.pop(); E.undo.push(st.tempo ? fullSnapshot() : snapshot()); restore(st); }
@@ -240,7 +221,6 @@ function renderRules() {
   const show = el.querySelector("#rulesShow"); if (show) show.onclick = () => { saveDismissed(new Set()); renderRules(); };
   E.fresh = new Set();
 }
-function fxChanged() { E.fxDirty = true; updateButtons(); renderFxPanel(); draw(); }
 // a gem must end before the next gem in the same lane (one MIDI note number)
 function fixOverlaps(p) {
   const by = new Map();
@@ -296,70 +276,8 @@ function renderDiff() {
 }
 
 // ---------- audio ----------
-async function loadAudio() {
-  const st = $("#audioState");
-  try {
-    E.ctx = new AudioContext();
-    E.master = E.ctx.createGain(); E.master.connect(E.ctx.destination);
-    E.clickGain = E.ctx.createGain(); E.clickGain.gain.value = 0.5; E.clickGain.connect(E.ctx.destination);
-    for (const t of TRACKS) { E.gains[t] = E.ctx.createGain(); E.gains[t].connect(E.master); }
-    let i = 0;
-    for (const t of TRACKS) {
-      if (!E) return;
-      st.textContent = `loading audio ${++i}/5…`;
-      const r = await fetch(`/api/audio/${E.folder}/${t}`);
-      if (!r.ok) { st.textContent = "no audio: build the song once"; continue; }
-      const buf = await E.ctx.decodeAudioData(await r.arrayBuffer());
-      if (!E) return;
-      E.bufs[t] = buf; E.peaks[t] = peaks(buf);
-      E.length = Math.max(E.length, buf.duration);
-      draw();
-    }
-    st.textContent = "";
-    applyGains();
-  } catch (e) { st.textContent = "Couldn't load the audio: " + e.message; }
-}
-function peaks(buf) {  // max |sample| per 1/200 s
-  const x = buf.getChannelData(0), hop = buf.sampleRate / 200, n = Math.floor(x.length / hop), p = new Float32Array(n);
-  for (let i = 0; i < n; i++) { let m = 0; const a = Math.floor(i * hop), b = Math.floor((i + 1) * hop); for (let k = a; k < b; k++) { const v = Math.abs(x[k]); if (v > m) m = v; } p[i] = m; }
-  return p;
-}
-function applyGains() {
-  if (!E.ctx) return;
-  const anySolo = TRACKS.some(t => E.solo[t]);
-  for (const t of TRACKS) E.gains[t].gain.value = E.mute[t] || (anySolo && !E.solo[t]) ? 0 : E.vol[t];
-}
-// Loop: E.loop = { a, b, on } in seconds. While playing, E.playLoop is the loop the audio sources were started with (they
-// loop by themselves, gaplessly). rawPos counts on past the loop end; pos is where that is in the song.
-const rawPos = () => E.playing ? E.off + (E.ctx.currentTime - E.t0) * E.rate : E.off;
-const songAt = r => { const L = E.playLoop; return L && r >= L.b ? L.a + (r - L.a) % (L.b - L.a) : r; };
-const pos = () => E.playing ? songAt(rawPos()) : E.off;
-const loopOn = () => !!(E.loop && E.loop.on && E.loop.b > E.loop.a);
-function play() {
-  if (!E.ctx || E.playing) return;
-  E.ctx.resume();
-  const L = loopOn() ? { a: E.loop.a, b: E.loop.b } : null;
-  if (L && E.off >= L.b) E.off = L.a;  // starting before the loop plays into it; after it, from its start
-  E.srcs = TRACKS.filter(t => E.bufs[t]).map(t => {
-    const s = E.ctx.createBufferSource(); s.buffer = E.bufs[t]; s.playbackRate.value = E.rate; s.connect(E.gains[t]);
-    if (L) { s.loop = true; s.loopStart = L.a; s.loopEnd = L.b; }
-    s.start(0, Math.max(0, E.off)); return s;
-  });
-  E.playLoop = L;
-  E.t0 = E.ctx.currentTime; E.playing = true; E.clickNext = E.off;
-  $("#play").textContent = "❚❚ Pause";
-  loop();
-}
-function stop() {
-  if (!E || !E.playing) return;
-  E.off = pos(); E.srcs.forEach(s => { try { s.stop(); } catch { } }); E.srcs = []; E.playing = false; E.playLoop = null;
-  $("#play").textContent = "▶ Play";
-  draw();
-}
-function seek(s) {
-  s = Math.max(0, Math.min(E.length, s));
-  const was = E.playing; stop(); E.off = s; if (was) play(); else draw();
-}
+const applyGains = () => TL.applyGains(E), rawPos = () => TL.rawPos(E), songAt = r => TL.songAt(E, r), pos = () => TL.pos(E);
+const loopOn = () => TL.loopOn(E), play = () => TL.play(E), stop = () => TL.stop(E), seek = s => TL.seek(E, s);
 function loop() {
   if (!E || !E.playing) return;
   const p = pos();
@@ -475,7 +393,6 @@ const geoOf = p => partGeo()[E.parts.indexOf(p)];
 const gemBox = (g, l) => { const gh = Math.min(g.lane - 6, 30), y = g.y + HEAD + l * g.lane; return { y, gy: y + (g.lane - gh) / 2, gh, mid: y + g.lane / 2 }; };
 function hit(x, y) {
   if (y < RULER) return { zone: "ruler" };
-  if (y < RULER + FXH) return { zone: "fx" };
   const geo = partGeo();
   for (let i = 0; i < 4; i++) {
     const g = geo[i];
@@ -518,37 +435,7 @@ function draw() {
   c.clearRect(0, 0, W, H);
   const K = pal();
   c.fillStyle = K.bg; c.fillRect(0, 0, W, H);
-  const s0 = E.x0, s1 = sOf(W), t0 = s2t(Math.max(0, s0)), t1 = s2t(s1);
-  // grid
-  const beats = beatList(t0 - E.tpb, t1 + E.tpb);
-  const stepPx = E.pps * (seg(t0).us / 1e6) / (E.snap || 4);
-  if (E.snap > 1 && stepPx > 7) {
-    c.strokeStyle = K.grid; c.beginPath();
-    for (let t = Math.floor(t0 / step()) * step(); t <= t1; t += step()) { const x = Math.round(xOf(t2s(t))) + .5; c.moveTo(x, RULER); c.lineTo(x, H); }
-    c.stroke();
-  }
-  for (const b of beats) {
-    const x = Math.round(xOf(t2s(b.t))) + .5;
-    if (x < GUT) continue;
-    c.strokeStyle = b.down ? K.beatDown : K.beat; c.beginPath(); c.moveTo(x, RULER - (b.down ? 12 : 5)); c.lineTo(x, H); c.stroke();
-    if (b.down && E.pps * 2 > 40) { c.fillStyle = K.barNum; c.font = "11px Segoe UI"; c.fillText(String(b.bar), x + 3, 12); }
-  }
-  // ruler seconds
-  c.fillStyle = K.secs; c.font = "10px Segoe UI";
-  const secStep = [1, 2, 5, 10, 15, 30, 60].find(v => v * E.pps > 60) || 60;
-  for (let s = Math.ceil(s0 / secStep) * secStep; s < s1; s += secStep) { const x = xOf(s); if (x > GUT) c.fillText(fmtTime(s).replace(/\.0$/, ""), x + 2, RULER - 3); }
-  // effects lane
-  const fy = RULER;
-  c.fillStyle = K.fxLane; c.fillRect(GUT, fy, W - GUT, FXH - 2);
-  wave("fill", fy, FXH - 2, K.fxWave);
-  E.fx.forEach((f, i) => {
-    const a = xOf(f.from + E.lead), b = f.to != null ? xOf(f.to + E.lead) : xOf(E.length);
-    if (b < GUT || a > W) return;
-    c.fillStyle = i === E.fxSel ? K.fxSel : K.fx;
-    c.fillRect(a, fy + 3, Math.max(3, b - a), FXH - 8);
-    c.strokeStyle = i === E.fxSel ? K.fxSelLine : K.fxLine; c.strokeRect(a + .5, fy + 3.5, Math.max(3, b - a) - 1, FXH - 9);
-    c.fillStyle = K.fxText; c.font = "11px Segoe UI"; c.fillText((f.effect || "cmd " + f.cmd) + (f.to == null ? " →" : ""), Math.max(a, GUT) + 4, fy + 18);
-  });
+  TL.drawGrid(E, c, K, { gut: GUT, ruler: RULER, h: H, step: E.snap > 1 ? step() : 0 });
   // parts
   const geo = partGeo();
   E.parts.forEach((p, i) => {
@@ -632,8 +519,8 @@ function draw() {
       }
     }
   }
-  c.fillStyle = K.gut; c.fillRect(0, 0, GUT - 2, RULER + FXH);
-  c.fillStyle = K.gutText; c.font = "11px Segoe UI"; c.fillText("bar / time", 8, 18); c.fillText("effects", 8, RULER + 18);
+  c.fillStyle = K.gut; c.fillRect(0, 0, GUT - 2, RULER);
+  c.fillStyle = K.gutText; c.font = "11px Segoe UI"; c.fillText("bar / time", 8, 18);
   // rubber band
   if (E.drag && E.drag.mode === "band") {
     const d = E.drag; c.strokeStyle = K.band; c.setLineDash([4, 3]);
@@ -663,19 +550,7 @@ function drawStrip(c, K, p, g, W) {
   c.fillStyle = K.gut; c.fillRect(0, g.y, GUT - 2, g.h);
   c.fillStyle = PART_COL[p.key]; c.font = "bold 11px Segoe UI"; c.fillText(p.key, 8, g.y + 13);
 }
-function wave(track, y, h, col) {
-  const pk = E.peaks[track];
-  if (!pk) return;
-  const c = E.g, mid = y + h / 2;
-  c.fillStyle = col;
-  for (let x = GUT; x < E.W; x++) {
-    const a = Math.floor(sOf(x) * 200), b = Math.max(a + 1, Math.floor(sOf(x + 1) * 200));
-    if (a < 0 || a >= pk.length) continue;
-    let m = 0; for (let k = a; k < b && k < pk.length; k++) if (pk[k] > m) m = pk[k];
-    const v = Math.min(1, Math.sqrt(m)) * h / 2;
-    c.fillRect(x, mid - v, 1, 2 * v);
-  }
-}
+const wave = (track, y, h, col) => TL.wave(E, track, y, h, col, GUT);
 function drawOverview() {
   const c = E.og, W = E.W, h = 34, K = pal();
   c.fillStyle = K.ovBg; c.fillRect(0, 0, W, h);
@@ -685,7 +560,6 @@ function drawOverview() {
     const i = E.parts.indexOf(p);
     for (const n of gemsOf(p)) c.fillRect(Math.floor(t2s(n.t) * k), 3 + i * 7, 1, 6);
   }
-  E.fx.forEach(f => { c.fillStyle = K.ovFx; const a = (f.from + E.lead) * k, b = (f.to != null ? f.to + E.lead : L) * k; c.fillRect(a, h - 4, Math.max(2, b - a), 3); });
   c.strokeStyle = K.band; c.strokeRect(E.x0 * k + .5, .5, Math.max(4, (W - GUT) / E.pps * k), h - 1);
   c.fillStyle = K.playhead; c.fillRect(pos() * k, 0, 1, h);
 }
@@ -761,8 +635,7 @@ function renderShell(root, details) {
       <button id="saveEd" class="primary">Save</button><button id="saveBuildEd" title="Save, then rebuild the song's chart">Save + rebuild</button>
     </div>
   </div>
-  <div class="mixer">${TRACKS.map(t => `<span class="ch"><b>${TRACK_NAME[t]}</b><button data-m="${t}" title="mute">M</button><button data-s="${t}" title="solo">S</button><input type="range" min="0" max="1.5" step="0.05" value="1" data-v="${t}" aria-label="${TRACK_NAME[t]} volume"></span>`).join("")}
-    <span class="ch"><label title="Play a click on the selected part's gems, to check the sync"><input type="checkbox" id="ticks"> <b>Ticks</b></label><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span><span id="audioState" class="dim"></span></div>
+  ${TL.mixerHtml(`<span class="ch"><label title="Play a click on the selected part's gems, to check the sync"><input type="checkbox" id="ticks"> <b>Ticks</b></label><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span>`)}
   <div id="shapes" class="shapes"></div>
   <div id="rules" class="rules ok"><span class="dim small">checking the chart against the official charts' rules…</span></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
@@ -770,7 +643,6 @@ function renderShell(root, details) {
     <div class="panel" style="flex:1"><div id="status"></div><div id="reduceLine" class="warnline"></div>
       <label class="small"><input type="checkbox" id="reduce" ${E.reduce ? "checked" : ""}> Easy, Medium and Hard are made from Expert at build time (only Expert edits count)</label>
       <div id="diffBox" class="diffbox" style="margin-top:6px"></div></div>
-    <div class="panel" id="fxPanel" style="width:340px"></div>
     <div class="panel keys" style="width:390px">
       <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
       <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane at the playhead (hold while playing = held note; together = chord) · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd> add that shape<br>
@@ -781,7 +653,7 @@ function renderShell(root, details) {
       <kbd>O</kbd> / Overdrive phrase · <kbd>L</kbd> / Solo, on/off for the selection (recording: <kbd>O</kbd> starts and ends a phrase)<br>
       drag an overdrive or solo bar = move it, drag its ends = resize · <kbd>F</kbd> all parts / focus / only (or double-click a part's name) · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> copy/paste at the playhead<br>
       🎮 controller (Xbox / PlayStation): the game's layout; see <b>🎮 Controller</b> for every button<br>
-      effects lane: double-click = new effect, drag body/edges, <kbd>Del</kbd> delete · wheel = scroll · <kbd>Ctrl</kbd>+wheel = zoom
+      screen effects: on the <b>Effects &amp; Band Anims</b> tab · wheel = scroll · <kbd>Ctrl</kbd>+wheel = zoom
     </div>
   </div>`;
   E.cv = $("#cv"); E.ov = $("#overview"); E.hw = $("#highway");
@@ -817,9 +689,7 @@ function renderShell(root, details) {
   $("#reduce").onchange = e => { E.reduce = e.target.checked; E.dirty = true; updateButtons(); draw(); scheduleChecks(); };
   $("#saveEd").onclick = () => save(false);
   $("#saveBuildEd").onclick = () => save(true);
-  document.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const t = b.dataset.m; E.mute[t] = !E.mute[t]; b.classList.toggle("on", E.mute[t]); applyGains(); });
-  document.querySelectorAll("[data-s]").forEach(b => b.onclick = () => { const t = b.dataset.s; E.solo[t] = !E.solo[t]; b.classList.toggle("on", E.solo[t]); applyGains(); });
-  document.querySelectorAll("[data-v]").forEach(r => r.oninput = () => { E.vol[r.dataset.v] = Number(r.value); applyGains(); });
+  TL.bindMixer(E);
   E.cv.addEventListener("mousedown", onDown);
   window.addEventListener("mousemove", onMove);
   window.addEventListener("mouseup", onUp);
@@ -829,18 +699,17 @@ function renderShell(root, details) {
     if (E.drag) return;
     const [x, y] = local(e), g = gemAt(x, y), sp = spanAt(x, y), z = hit(x, y).zone;
     if ((sp && sp.n) !== (E.hoverSpan && E.hoverSpan.n)) { E.hoverSpan = sp; draw(); }
-    E.cv.style.cursor = g && g.edge || sp && sp.edge || fxAt(x, y)?.edge || loopEdgeAt(x, y) ? "ew-resize" : sp ? "grab" : z === "strip" ? "pointer" : E.stamp && z === "lane" ? "copy" : "default";
+    E.cv.style.cursor = g && g.edge || sp && sp.edge || loopEdgeAt(x, y) ? "ew-resize" : sp ? "grab" : z === "strip" ? "pointer" : E.stamp && z === "lane" ? "copy" : "default";
     if (E.stamp) { E.hover = [x, y]; draw(); }
   });
   E.cv.addEventListener("mouseleave", () => { if (E.hover || E.hoverSpan) { E.hover = null; E.hoverSpan = null; draw(); } });
-  const ovNav = e => { const r = E.ov.getBoundingClientRect(), s = (e.clientX - r.left) / E.W * E.length; E.x0 = Math.max(0, s - (E.W - GUT) / E.pps / 2); draw(); };
-  E.ov.addEventListener("mousedown", e => { ovNav(e); const mv = ev => ovNav(ev), up = () => { window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); }; window.addEventListener("mousemove", mv); window.addEventListener("mouseup", up); });
+  TL.bindOverview(E, E.ov, GUT);
   E.hw.addEventListener("mousedown", e => { const r = E.hw.getBoundingClientRect(); const l = Math.floor((e.clientX - r.left - 24) / ((HW_W - 48) / 4)); if (l >= 0 && l < 4) recordGem(l); });
   E.onKey = onKey; E.onKeyUp = onKeyUp;
   window.addEventListener("keydown", E.onKey);
   window.addEventListener("keyup", E.onKeyUp);
   renderPadBadge();
-  setView(E.view); updateButtons(); renderFxPanel(); renderDiff(); renderShapes(); runChecks();
+  setView(E.view); updateButtons(); renderDiff(); renderShapes(); runChecks();
 }
 function toggleRec() { E.recording = !E.recording; if (!E.recording) E.odStart = null; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
 function recordGem(lane) {
@@ -854,7 +723,7 @@ function recordGem(lane) {
 function updateButtons() {
   if (!E) return;
   $("#undo").disabled = !E.undo.length; $("#redo").disabled = !E.redo.length;
-  const dirty = E.dirty || E.fxDirty;
+  const dirty = E.dirty;
   $("#saveEd").disabled = !dirty;
   // one badge, so the toolbar stays on one line: "rebuild needed" stands for a saved edited chart not built yet
   $("#srcBadge").innerHTML = E.saved && !dirty ? `<span class="badge warn" title="Edited chart saved (songs/${E.folder}/${esc(E.S.chart || "chart.mid")}), but the game files are from the last build">rebuild needed</span>`
@@ -871,12 +740,7 @@ function updateStatus() {
   st.textContent = `${sel.length} gem${sel.length > 1 ? "s" : ""} selected (${[...parts].join(", ")}) · first at ${t2s(n0.t).toFixed(3)} s, bar ${barPos(n0.t)}` +
     (sel.length === 1 ? ` · ${n0.l > TAP_MAX ? "hold " + (n0.l / E.tpb).toFixed(2) + " beats" : "tap"}` : "");
 }
-function zoom(f, x) {
-  const s = sOf(x);
-  E.pps = Math.max(8, Math.min(2000, E.pps * f));
-  E.x0 = Math.max(0, s - (x - GUT) / E.pps);
-  draw();
-}
+const zoom = (f, x) => TL.zoom(E, f, x, GUT);
 function tempoDialog() {
   const bpm = 60 / (E.tempo[E.tempo.length - 1].us / 1e6), first = E.beats ? t2s((E.beats.find(b => b.down) || E.beats[0]).t) : 0;
   $("#modalBox").innerHTML = `<b>Tempo</b>
@@ -905,14 +769,6 @@ function tempoDialog() {
 }
 
 // ---------- mouse ----------
-function fxAt(x, y) {
-  if (y < RULER || y >= RULER + FXH) return null;
-  for (let i = E.fx.length - 1; i >= 0; i--) {
-    const f = E.fx[i], a = xOf(f.from + E.lead), b = f.to != null ? xOf(f.to + E.lead) : xOf(E.length);
-    if (x >= a - 4 && x <= b + 4) return { i, edge: Math.abs(x - a) < 6 ? "from" : f.to != null && Math.abs(x - b) < 6 ? "to" : null };
-  }
-  return null;
-}
 function local(e) { const r = E.cv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
 function onDown(e) {
   if (e.button !== 0) return;
@@ -930,12 +786,6 @@ function onDown(e) {
     if (h.part.key !== E.focus) toast(`These are ${E.focus} shapes: click the ${E.focus} part.`, true);
     else placeShape(h.part, E.stamp, snapT(s2t(sOf(x))));
     return;
-  }
-  if (h.zone === "fx") {
-    const f = fxAt(x, y);
-    E.fxSel = f ? f.i : -1; renderFxPanel();
-    if (f) E.drag = { mode: "fx", i: f.i, edge: f.edge, x, orig: { ...E.fx[f.i] }, undo: snapshot(), changed: false };
-    draw(); return;
   }
   const sp = h.zone === "head" && spanAt(x, y);
   if (sp) { E.drag = { mode: "span", n: sp.n, p: sp.p, edge: sp.edge, x, orig: { t: sp.n.t, l: sp.n.l }, undo: snapshot(), changed: false, ...spanRoom(sp.n, sp.p) }; draw(); return; }
@@ -964,13 +814,6 @@ function onMove(e) {
     const s = snapS(sOf(x)), min = t2s(shapeStep()) - t2s(0);
     if (d.edge === "a") E.loop.a = Math.max(0, Math.min(s, E.loop.b - min)); else E.loop.b = Math.max(s, E.loop.a + min);
     d.made = true; draw(); return;
-  }
-  if (d.mode === "fx") {
-    const f = E.fx[d.i], ds = (x - d.x) / E.pps, r = v => Math.round(v * 100) / 100;
-    if (d.edge === "from") f.from = r(Math.max(-E.lead, Math.min(d.orig.to != null ? d.orig.to - 0.1 : 1e9, d.orig.from + ds)));
-    else if (d.edge === "to") f.to = r(Math.max(d.orig.from + 0.1, d.orig.to + ds));
-    else { f.from = r(Math.max(-E.lead, d.orig.from + ds)); if (d.orig.to != null) f.to = r(f.from + (d.orig.to - d.orig.from)); }
-    d.changed = true; E.fxDirty = true; updateButtons(); renderFxPanel(); draw(); return;
   }
   if (d.mode === "band") { d.cx = x; d.cy = y; bandSelect(); draw(); return; }
   if (d.mode === "span") {
@@ -1030,11 +873,6 @@ function onUp() {
     E.undo.push(d.undo); E.redo = [];
     E.parts.forEach(fixOverlaps); markDirty(); return;
   }
-  if (d.mode === "fx") {
-    if (d.changed) { E.undo.push(d.undo); E.redo = []; }
-    E.fx.sort((a, b) => a.from - b.from); E.fxSel = E.fx.indexOf(E.fx.find(f => f.from === d.orig.from && f.effect === d.orig.effect) || E.fx[d.i]);
-    updateButtons(); renderFxPanel();
-  }
   draw();
 }
 function bandSelect() {
@@ -1068,21 +906,9 @@ const cycleView = () => setView(VIEWS[(VIEWS.findIndex(v => v[0] === E.view) + 1
 function onDbl(e) {
   const [x, y] = local(e), h = hit(x, y);
   // double-click a part's title or name: enlarge it (Focus), or back to all parts
-  if (h.part && (h.zone === "head" && !spanAt(x, y) || x < GUT)) { setFocus(h.part.key); setView(E.view === "all" ? "focus" : "all"); return; }
-  if (h.zone !== "fx" || x < GUT || fxAt(x, y)) return;
-  const at = Math.round((sOf(x) - E.lead) * 100) / 100;
-  pushUndo();
-  E.fx.push({ effect: localStorage.lastFx || "oldfilm", from: at, to: Math.round((at + 8) * 100) / 100 });
-  E.fx.sort((a, b) => a.from - b.from);
-  E.fxSel = E.fx.findIndex(f => f.from === at);
-  fxChanged();
+  if (h.part && (h.zone === "head" && !spanAt(x, y) || x < GUT)) { setFocus(h.part.key); setView(E.view === "all" ? "focus" : "all"); }
 }
-function onWheel(e) {
-  e.preventDefault();
-  const [x] = local(e);
-  if (e.ctrlKey) zoom(e.deltaY < 0 ? 1.2 : 1 / 1.2, Math.max(GUT, x));
-  else { E.x0 = Math.max(0, Math.min(E.length, E.x0 + (e.deltaY + e.deltaX) / E.pps * 0.8)); draw(); }
-}
+function onWheel(e) { TL.onWheel(E, e, local(e)[0], GUT); }
 
 // ---------- playing gems in: keys 1-4 and the controller ----------
 // A press adds a gem at the playhead; lanes pressed within CHORD_MS of each other land on the same tick (a chord, one undo
@@ -1264,7 +1090,7 @@ function padDialog() {
 function calibrate() {
   if (!E.ctx) { toast("The audio isn't loaded yet: try again in a moment.", true); return; }
   if (E.playing) stop();
-  E.ctx.resume();
+  E.ctx.resume().catch(() => { });
   const beat = 0.6, n = 8, t0 = E.ctx.currentTime + 1;
   for (let i = 0; i < n; i++) {
     const w = t0 + i * beat, o = E.ctx.createOscillator(), g = E.ctx.createGain();
@@ -1317,10 +1143,9 @@ function onKey(e) {
   if (ctrl && k.toLowerCase() === "c") { copy(); return; }
   if (ctrl && k.toLowerCase() === "v") { paste(); return; }
   if (k === "r" || k === "R") { toggleRec(); return; }
-  if (k === "Escape") { if (E.recording) toggleRec(); E.odStart = null; if (E.stamp) { E.stamp = null; renderShapes(); } E.sel.clear(); E.fxSel = -1; renderFxPanel(); draw(); return; }
+  if (k === "Escape") { if (E.recording) toggleRec(); E.odStart = null; if (E.stamp) { E.stamp = null; renderShapes(); } E.sel.clear(); draw(); return; }
   if (k === "Delete" || k === "Backspace") {
     e.preventDefault();
-    if (E.fxSel >= 0 && !E.sel.size) { pushUndo(); E.fx.splice(E.fxSel, 1); E.fxSel = -1; fxChanged(); return; }
     if (!E.sel.size) return;
     pushUndo();
     for (const p of E.parts) p.tr.notes = p.tr.notes.filter(n => !E.sel.has(n));
@@ -1389,26 +1214,6 @@ function paste() {
   E.parts.forEach(fixOverlaps); markDirty();
 }
 
-// ---------- effects panel ----------
-function renderFxPanel() {
-  const el = $("#fxPanel");
-  if (!el) return;
-  const f = E.fx[E.fxSel];
-  const head = `<h4>Effects</h4><div class="small dim" style="margin-bottom:6px">${E.fx.length} effect${E.fx.length === 1 ? "" : "s"}. Times are song.json seconds (the original audio, before the ${E.lead} s lead-in). In game an effect starts at the chart event nearest to its time.</div>`;
-  if (!f) { el.innerHTML = head + `<div class="small dim">Double-click the effects lane to add one; click one to edit it.</div>`; return; }
-  if (f.cmd != null) { el.innerHTML = head + `<div class="small">Raw script call cmd ${esc(f.cmd)} at ${esc(f.at)} s (edit it on the song.json tab).</div>`; return; }
-  el.innerHTML = head + `<div class="form" style="grid-template-columns:60px 1fr">
-    <label>Effect</label><select id="fxName">${META.effects.filter(n => n !== "end").map(n => `<option ${n === f.effect ? "selected" : ""}>${n}</option>`).join("")}</select>
-    <label>From</label><input type="number" step="0.01" id="fxFrom" value="${f.from}">
-    <label>To</label><span class="inline"><input type="number" step="0.01" id="fxTo" value="${f.to ?? ""}" placeholder="end"><span class="small dim">empty = to the end</span></span>
-  </div><div class="actions" style="margin-top:8px"><button id="fxSeek">Play from here</button><button class="danger" id="fxDel">Delete</button></div>`;
-  $("#fxName").onchange = e => { pushUndo(); f.effect = e.target.value; localStorage.lastFx = f.effect; fxChanged(); };
-  $("#fxFrom").onchange = e => { pushUndo(); f.from = Number(e.target.value); fxChanged(); };
-  $("#fxTo").onchange = e => { pushUndo(); const v = e.target.value.trim(); if (v === "") delete f.to; else f.to = Number(v); fxChanged(); };
-  $("#fxSeek").onclick = () => { seek(Math.max(0, f.from + E.lead - 2)); play(); };
-  $("#fxDel").onclick = () => { pushUndo(); E.fx.splice(E.fxSel, 1); E.fxSel = -1; fxChanged(); };
-}
-
 // ---------- save ----------
 async function save(rebuild) {
   if (!E) return;
@@ -1418,11 +1223,6 @@ async function save(rebuild) {
       const r = await api("PUT", `/api/chart/${E.folder}`, { midi: E.midi, reduce: E.reduce });
       E.dirty = false; E.source = "edited"; E.S.chart = "chart.mid"; E.saved = true;
       if (!E.ghost && E.hasAuto) loadGhost(); else renderDiff();
-    }
-    if (E.fxDirty) {
-      const fx = E.fx.map(f => f.cmd != null ? f : { effect: f.effect, from: Math.round(f.from * 100) / 100, ...(f.to != null ? { to: Math.round(f.to * 100) / 100 } : {}) });
-      await api("PUT", `/api/effects/${E.folder}`, { effects: fx });
-      E.fxDirty = false; E.saved = true;
     }
     updateButtons();
     toast(rebuild ? "Saved; rebuilding the chart…" : "Saved to songs/" + E.folder);

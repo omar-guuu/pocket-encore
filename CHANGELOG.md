@@ -2,6 +2,55 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## 0.5.1 Beta (2026-11-24)
+
+### Effects & Band Anims tab
+- New **Effects & Band Anims** tab next to **Chart**: screen effects and the band's animations on the song's time line,
+  with playback. **Screen effects** have one track for the whole song (an effect covers the whole screen, one at a
+  time); double-click to add one, drag to move it or change its length. A preview box shows the effect at the
+  playhead (in-game screenshots to come).
+- **Singer props**: Automatic (the default) puts the prop in solos where nobody sings and in instrumental parts of 8
+  bars or more; choose Tambourine, Cowbell, Hand clapping or None. **My own sections** lets you move, resize, add and
+  delete them, each with its own prop. This replaces the Singer prop setting on Details.
+- The singer's mic and the guitarist's and bassist's hands are shown too. They follow the song's notes, so they are
+  read-only (🔒) in **Easy Edit Mode**, the default. **Enable Advanced Edit Mode** (it asks first) unlocks them: move,
+  add or delete mic changes, or pick another clip for one note. Help → Easy and Advanced Edit Mode.
+- Screen effects now start and end exactly at their times in game. Before, each one moved to the nearest chart event,
+  which could be seconds away. Rebuild the chart of songs with effects to get this.
+- The Chart tab (was "Chart & effects") keeps the gems, overdrive and solos; its effects lane moved to the new tab.
+
+### Band animations
+- The guitarist's and bassist's hands now follow each song's own notes, the way they do in official songs. Before, a
+  custom song kept the hand movements of the song its chart was built on, so the band moved slowly and out of time.
+- The singer now raises the microphone before each vocal part and lowers it in long breaks, following the song's own
+  vocals. Before, the singer could sing with the microphone in their lap.
+- In guitar solos where nobody sings, and in instrumental parts of 8 bars or more, the singer picks up a prop and
+  plays it on the beat (choose the prop on the Effects & Band Anims tab). Rebuild the chart of existing songs to get all of this.
+
+### Memory stick
+- New **Memory stick** page (top right): what is on PPSSPP's memory stick and on a PSP connected by USB, song by song:
+  installed, older build, not copied, and whether the game lists it or hides it. It also says which song database the
+  game uses, and warns when that is another build's (someone else's pack), an older one of yours, or when its names
+  come from the wrong TEXT files. An unplugged PSP shows its last check. The song list shows a one-line summary per
+  memory stick and a badge on each song.
+- **Install…** copies the ticked songs and your song database to a memory stick, after showing what will change
+  (songs that would end up hidden, older databases that go). Each song folder and `ZZCUSTOMDB` is replaced as a whole;
+  nothing else is touched. Packs have their own **Install…** button. Copying by hand still works.
+- Every build writes a small `PESONG.JSON` in each song folder (details and a build code) and a `PEDB.JSON` in
+  `ZZCUSTOMDB` (which songs it lists). The game ignores them. Songs built before this version are still recognised
+  by their files' sizes and dates.
+
+### Songs from other people
+- **Import songs** (Memory stick page): adds songs from someone else's pack to your library, with their chart and audio
+  as shipped. Details come from the song's `PESONG.JSON`, or from the pack's song database and its TEXT. A song that
+  someone else's database put on your memory stick can be imported straight from there. Imported songs can be renamed
+  and re-tiered; their gems and audio can't be edited. Building one only puts it in your output and your song database.
+- Your song database number is now raised above any other build's database seen on your memory sticks, so the game
+  always uses yours. Before, two Pocket Encore users building on the same day made databases with the same number, and
+  copying someone's pack over your `ZZCUSTOMDB` hid all your songs and gave theirs your songs' names.
+- Packs: `pack.txt` tells Pocket Encore users to import a pack instead of copying its `ZZCUSTOMDB`, and every song in a
+  pack carries its `PESONG.JSON`, so it can be imported with all its details.
+
 ## 0.4.3 Beta (2026-11-15)
 
 ### Chart editor

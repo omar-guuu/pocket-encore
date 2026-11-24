@@ -250,3 +250,24 @@ body.onboarding a.navlink.help { display: inline; }
 .relnotes ul { padding-left: 20px; margin: 4px 0; }
 .relnotes table.t td, .relnotes table.t th { text-align: left; }
 progress { vertical-align: middle; width: 200px; }
+
+/* memory sticks */
+.stickline { padding: 8px 14px; }
+.stickline .row, .panel.stick > .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+ul.issues { margin: 6px 0 0; padding-left: 18px; font-size: 12px; }
+ul.issues li { margin: 2px 0; }
+ul.issues li.bad { color: var(--bad); }
+ul.issues li.warn { color: var(--warn); }
+ul.issues li.info { color: var(--dim); }
+table.t.sticktable td, table.t.sticktable th, table.t.importtable td, table.t.importtable th { text-align: left; vertical-align: middle; }
+table.t.sticktable td:nth-child(5), table.t.sticktable th:nth-child(5), table.t.importtable td:last-child { text-align: right; }
+
+/* Effects & Band Anims tab (anims.js) */
+.anside { width: 240px; flex: none; display: flex; flex-direction: column; gap: 6px; }
+.anpreview { width: 240px; height: 136px; border: 1px dashed var(--line); border-radius: 6px; background: var(--panel); overflow: hidden; position: relative; }
+.anpreview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.anpreview .pvname { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 6px; font-size: 12px; background: rgba(0,0,0,.6); color: #fff; }
+.anpreview .pvempty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; text-align: center; padding: 8px; font-size: 12px; color: var(--dim); }
+.anpreview .pvempty b { color: var(--text); font-size: 13px; }
+/* Easy / Advanced Edit Mode switch */
+button.advmode.on { background: var(--warn-line); border-color: var(--warn); }
