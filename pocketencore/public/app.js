@@ -130,8 +130,14 @@ function applyTheme() {
   window.dispatchEvent(new Event("themechange"));  // the chart editor redraws its canvas
 }
 THEME_MQ.addEventListener("change", () => { if (themePref() === "auto") applyTheme(); });
-$("#themeSel").value = themePref();
-$("#themeSel").onchange = e => { try { localStorage.peTheme = e.target.value; } catch { } applyTheme(); };
+// the choice lives on Settings → Look (System Default / Light / Dark)
+function setTheme(p) { try { localStorage.peTheme = p; } catch { } applyTheme(); }
+
+// the top bar: the section of the page on screen is highlighted
+function markNav(h) {
+  const sec = h === "stick" ? "stick" : h === "packs" || h === "pack" ? "share" : h === "setup" ? "setup" : h === "help" ? "help" : h === "welcome" ? "" : "songs";
+  document.querySelectorAll("#top [data-nav]").forEach(a => { const on = a.dataset.nav === sec; a.classList.toggle("on", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+}
 
 // ---------- routing ----------
 let skipRoute = false, leaving = false, lastHash = location.hash;
@@ -154,6 +160,8 @@ async function route(ev) {
   document.body.classList.remove("editing");
   document.body.classList.remove("onboarding");
   const h = location.hash.replace(/^#\/?/, "").split("/");
+  markNav(h[0]);
+  $("#crumb").textContent = "";
   try {
     if (h[0] === "help") return showHelp(h[1]);
     if (!META.configured || h[0] === "welcome") { if (h[0] !== "welcome") { skipRoute = true; location.hash = "#/welcome"; lastHash = location.hash; } return await showWelcome(); }
@@ -180,40 +188,90 @@ function statusBadge(s) {
   const cls = s.status === "built" ? "ok" : s.status === "not built" ? "bad" : "warn";
   return `<span class="badge ${cls}">${esc(s.status)}</span>`;
 }
+// Songs (home): the main task first (make a song), then managing and sharing, then your songs with where each one is.
 async function showLibrary() {
-  $("#crumb").textContent = "Songs";
   const list = await api("GET", "/api/songs");
-  const sort = localStorage.libSort || "folder";
+  const sort = localStorage.libSort || "title";
   list.sort((a, b) => sort === "title" ? String(a.song?.title).localeCompare(String(b.song?.title)) : sort === "changed" ? (b.builtAt || 0) - (a.builtAt || 0) : a.folder.localeCompare(b.folder));
-  const dbNote = META.db && META.db.stale ? `<div class="panel warnline">The game mode changed to <b>${esc(META.mode.label)}</b> since the song database was built (for "${esc(META.db.was)}"). Build any song to update it, then copy the song database (<span class="mono">ZZCUSTOMDB</span>) to the memory stick again.</div>` : "";
-  const setupNote = META.setupOk ? "" : `<div class="panel warnline">Setup is incomplete: builds will fail until the missing pieces are installed. <a href="#/setup">Open Setup</a>.</div>`;
-  $("#main").innerHTML = dbNote + setupNote + `<div id="stickPanel"></div>` + `
-    <div class="libbar"><button class="primary" onclick="location.hash='#/new'">+ New song</button>
-      <input id="filter" aria-label="Filter songs" placeholder="Filter…" value="${esc(localStorage.libFilter || "")}">
-      <select id="sort" aria-label="Sort songs"><option value="folder">by folder</option><option value="title">by title</option><option value="changed">last built</option></select>
-      <button onclick="openFolder('', 'out')" title="The built songs, ready to copy to the memory stick">Open output folder</button>
-      <button onclick="location.hash='#/stick'" title="What is on PPSSPP's memory stick and a connected PSP; install and import songs">Memory stick</button>
-      <button onclick="location.hash='#/packs'" title="Sets of songs with their own song database, to switch on the memory stick">Packs</button>
-      <span class="grow"></span><span class="dim">${list.length} songs in rbu-tools/songs</span></div>
-    ${list.length ? "" : `<div class="panel empty"><h3>No songs yet</h3>
-      <p>Pick a song's stems (and a MIDI if you have one), and Pocket Encore makes the audio, chart and song database the game needs.</p>
-      <div class="actions"><button class="primary" onclick="location.hash='#/new'">+ New song</button></div></div>`}
-    <div id="noMatch" class="panel dim hidden"></div>
-    <div class="cards">${list.map(s => {
-      if (s.error) return `<div class="card"><h3>${esc(s.folder)}</h3><div class="sub" style="color:var(--bad)">${esc(s.error)}</div></div>`;
-      const S = s.song, ex = s.built && s.built[3];
-      return `<div class="card" data-f="${esc(s.folder)}" data-q="${esc((S.title + " " + S.artist + " " + s.folder).toLowerCase())}">
-        <h3><a class="cardlink" href="#/song/${esc(s.folder)}">${esc(S.title)}</a></h3><div class="sub">${esc(S.artist)}${S.year ? " · " + esc(S.year) : ""}${S.genre ? " · " + esc(S.genre) : ""}</div>
-        <div class="row">${statusBadge(s)}<span class="badge">chart: ${esc(s.chartSource)}</span>${qualityBadge(S)}</div>
-        <div class="row small dim">${esc(s.folder)}${s.audio ? " · " + fmtTime(s.audio.audioSeconds) : ""}${ex ? " · Expert gold " + fmtN(ex.stars[5]) : ""}${S.effects ? " · FX" : ""}${S.countIn ? " · count-in" : ""}</div>
-      </div>`;
-    }).join("")}</div>`;
+  const setupNote = META.setupOk ? "" : `<div class="notice warn"><b>Pocket Encore needs one more thing before it can make songs.</b> <a href="#/setup">Open Settings</a> to see what's missing.</div>`;
+  const dbNote = META.db && META.db.stale ? `<div class="notice warn"><b>Your game changed</b> (now ${esc(META.mode.label)}) since your song list was made. Rebuild any song, then update your memory stick.</div>` : "";
+  $("#main").innerHTML = `<div class="home">
+    ${setupNote}${dbNote}
+    <section class="hero" aria-labelledby="heroTitle">
+      <div><h1 id="heroTitle">Make a new custom song for Rock Band Unplugged</h1>
+        <p>Drop the custom song's audio tracks (and a MIDI if you have one to generate the chart from there, or autogenerate if you don't have one). Pocket Encore will handle the files automatically to be easily installed in the game.</p></div>
+      <button class="primary big" onclick="location.hash='#/new'">Make a new song</button>
+    </section>
+    <div class="tasks">
+      <section class="task"><h2>Manage my custom songs</h2><p class="small dim" id="stickLine">Checking your memory stick…</p>
+        <div class="actions" id="stickAct"><button onclick="location.hash='#/stick'">See memory stick</button></div></section>
+      <section class="task"><h2>Share or import songs</h2><p class="small dim">Make a pack for a friend, or add songs someone shared with you.</p>
+        <div class="actions"><button onclick="location.hash='#/packs'">Share or import</button></div></section>
+    </div>
+    <div class="bar"><h2>Your songs <span class="small dim">· ${list.length}</span></h2>
+      <div class="actions"><input id="filter" type="search" aria-label="Find a song" placeholder="Find a song…" value="${esc(localStorage.libFilter || "")}">
+        <select id="sort" aria-label="Sort songs"><option value="title">by title</option><option value="changed">last built</option><option value="folder">by folder name</option></select></div></div>
+    <div id="noMatch" class="small dim hidden"></div>
+    <div class="songgrid">
+      <a class="addsong" href="#/new"><b>+ Make a new song</b><span class="small">from audio tracks and a MIDI</span></a>
+      ${list.map(s => {
+        if (s.error) return `<div class="songcard"><b>${esc(s.folder)}</b><span class="small" style="color:var(--bad)">${esc(s.error)}</span></div>`;
+        const S = s.song, st = songState(s, null);
+        return `<div class="songcard" data-f="${esc(s.folder)}" data-q="${esc((S.title + " " + S.artist + " " + s.folder).toLowerCase())}">
+          <a class="songtitle" href="#/song/${esc(s.folder)}">${esc(S.title)}</a>
+          <span class="small dim">${esc(S.artist)}${S.year ? " · " + esc(S.year) : ""}${S.genre ? " · " + esc(S.genre) : ""}${s.audio ? " · " + fmtTime(s.audio.audioSeconds) : ""}${S.imported ? " · shared with you" : ""}</span>
+          <span class="state" data-state>${stateHtml(st)}</span>
+          <div class="actions" data-act>${stateAction(s, st)}</div>
+        </div>`;
+      }).join("")}
+    </div></div>`;
   $("#sort").value = sort;
   $("#sort").onchange = e => { localStorage.libSort = e.target.value; showLibrary(); };
-  const filt = () => { const q = $("#filter").value.toLowerCase(); localStorage.libFilter = q; let shown = 0; document.querySelectorAll(".card[data-q]").forEach(c => { const hit = c.dataset.q.includes(q); c.classList.toggle("hidden", !hit); shown += hit; });
-    const nm = $("#noMatch"); nm.textContent = `No songs match "${$("#filter").value}".`; nm.classList.toggle("hidden", !q || shown > 0 || !list.length); };
+  const filt = () => {
+    const q = $("#filter").value.toLowerCase(); localStorage.libFilter = q; let shown = 0;
+    document.querySelectorAll(".songcard[data-q]").forEach(c => { const hit = c.dataset.q.includes(q); c.classList.toggle("hidden", !hit); shown += hit; });
+    const nm = $("#noMatch"); nm.textContent = `No songs match "${$("#filter").value}".`; nm.classList.toggle("hidden", !q || shown > 0 || !list.length);
+  };
   $("#filter").oninput = filt; filt();
-  libraryStickPanel();
+  libraryStickPanel(list);
+}
+// a song's state in plain words: [kind ok | todo | new, text]; x = its row on the memory stick (or null before the check)
+function songState(s, x) {
+  if (s.status === "not built") return ["todo", "Not made yet"];
+  if (s.status === "changed since build") return ["todo", "Changed: rebuild it to play the new version"];
+  if (!x) return ["", "Made"];
+  if (x.state === "missing") return ["new", "Not on your memory stick yet"];
+  if (x.state === "installed") return x.listed ? ["ok", "On your memory stick"] : ["todo", "On your memory stick, but the game doesn't list it yet"];
+  return ["todo", "Changed: update your memory stick"];
+}
+const stateHtml = ([k, t]) => `<span class="sdot ${k}" aria-hidden="true"></span>${esc(t)}`;
+function stateAction(s, [k, t]) {
+  const open = `<a class="btn" href="#/song/${esc(s.folder)}">Open</a>`;
+  if (k === "new") return `<a class="btn" href="#/stick">Install on memory stick</a>${open}`;
+  if (k === "todo" && /memory stick|game doesn't list/.test(t)) return `<a class="btn" href="#/stick">Update on memory stick</a>${open}`;
+  return open;
+}
+// the memory stick summary on the home page, and each song card's state
+async function libraryStickPanel(list) {
+  let v;
+  try { v = await loadSticks(); } catch (e) { if ($("#stickLine")) $("#stickLine").textContent = "Couldn't check the memory stick."; return; }
+  const line = $("#stickLine"); if (!line) return;
+  const st = v.sticks.find(s => s.online && s.kind === "ppsspp") || v.sticks.find(s => s.online) || v.sticks[0];
+  if (!st) { line.innerHTML = `No memory stick found yet. Set PPSSPP's memory stick on <a href="#/setup">Settings</a>, or connect your PSP by USB.`; return; }
+  const where = st.kind === "ppsspp" ? "in PPSSPP" : "on your PSP";
+  const mine = st.songs.filter(x => x.built && x.inLibrary), ok = mine.filter(x => x.state === "installed" && x.listed).length;
+  const upd = mine.filter(x => x.state === "older" || x.state === "different" || (x.state === "installed" && !x.listed)).length, notIn = mine.filter(x => x.state === "missing").length;
+  const other = st.db && st.db.state === "other";
+  line.innerHTML = other ? `<b>The game is showing someone else's song list</b>, so your custom songs are hidden. Update your memory stick to put yours back.`
+    : `${ok} of ${mine.length} custom songs are installed ${where}${upd ? ` – ${upd} ${upd > 1 ? "need" : "needs"} an update` : ""}${notIn ? `${upd ? "," : " –"} ${notIn} not installed` : ""}.${st.online ? "" : ` <span class="dim">(last checked ${esc(whenTxt(st.at))})</span>`}`;
+  $("#stickAct").innerHTML = `<button ${other || upd || notIn ? 'class="primary"' : ""} onclick="location.hash='#/stick'">${other || upd || notIn ? "Update memory stick" : "See memory stick"}</button>`;
+  for (const s of list || []) {
+    if (s.error) continue;
+    const card = document.querySelector(`.songcard[data-f="${s.folder}"]`); if (!card) continue;
+    const x = st.songs.find(y => y.folder === s.folder) || { state: "missing" }, k = songState(s, x);
+    card.querySelector("[data-state]").innerHTML = stateHtml(k);
+    card.querySelector("[data-act]").innerHTML = stateAction(s, k);
+  }
 }
 async function openFolder(folder, what) {
   try { await api("POST", `/api/open/${folder || "ZNONE"}?what=${what}`); } catch (e) { fail("Couldn't open the folder")(e); }
@@ -329,35 +387,68 @@ function renderModeBadge() {
     (stale ? ` The song database was built for "${META.db.was}": build any song to update it.` : "") + " Checked every time Pocket Encore starts.";
 }
 
-// ---------- setup ----------
+// ---------- settings (was Setup): the game, the look, editing, updates and the tools ----------
+const CHECK_NAME = { node: ["Node.js", "runs Pocket Encore"], python: ["Python 3.12", "charting and audio analysis"], packages: ["Python packages", "mido, numpy, miniaudio"],
+  mid2rbu: ["mid2rbu", "turns a chart into the game's format"], at3tool: ["at3tool", "encodes the audio for the PSP"], game: ["Rock Band Unplugged", "your game (US, ULUS10418)"] };
+function gameText(m) {
+  const cov = m.coverage ? `${m.coverage.present} of the ${m.coverage.listed} DLC songs` : `${m.dlc || 0} DLC song${m.dlc === 1 ? "" : "s"}`;
+  return m.complete ? [`Rock Band Unplugged (US) with all its DLC songs (${cov})`, "Your custom songs are added to the DLC song list, so every DLC song stays in the game."]
+    : m.mode !== "disc" ? [`Rock Band Unplugged (US) with some DLC songs (${cov})`, "Your custom songs are added to your DLC song list, so your DLC songs stay in the game."]
+    : ["Rock Band Unplugged (US), base game", "No DLC was found: your custom songs are listed with the base game's songs."];
+}
 async function showSetup() {
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / Setup`;
   const s = await api("GET", "/api/setup");
-  const row = (k, label) => { const c = s.checks[k]; return `<tr><td>${c.ok ? '<span class="badge ok">ok</span>' : '<span class="badge bad">missing</span>'}</td><td>${label}</td><td class="mono small">${esc(c.detail)}</td><td class="small">${!c.ok && c.url ? (c.url.startsWith("http") ? `<a href="${esc(c.url)}" target="_blank">${esc(c.url)}</a>` : esc(c.url)) : ""}</td></tr>`; };
-  $("#main").innerHTML = `<div class="panel"><h4>What the tool needs</h4>
-    <p class="small dim">Pocket Encore and its scripts are ours; the pieces below are not, so they are not included. Install each one and set its path here (saved in <span class="mono">${esc(s.file)}</span>).</p>
-    <table class="t setup"><tr><th></th><th>Piece</th><th>Found</th><th>Where to get it</th></tr>
-      ${row("node", "Node.js (runs Pocket Encore and the scripts)")}${row("python", "Python 3.12 (charting, stem analysis, count-in, mid2rbu)")}${row("packages", "Python packages mido, numpy, miniaudio")}
-      ${row("mid2rbu", "mid2rbu (Rock Band MIDI → .rbu chart)")}${row("at3tool", "at3tool.exe (ATRAC3 encoder for the audio)")}${row("game", `Rock Band Unplugged: <span class="badge ${s.mode.mode === "disc" ? "" : "ok"}">${esc(s.mode.label)}</span> <span class="small dim">chart container ${esc(s.mode.donorName)}, song list ${esc(s.mode.baseName)}</span>`)}</table>
-    <p class="small dim">The game mode is checked every time Pocket Encore starts: Base Game + Complete / Incomplete DLC → built on your DLC (every song you have stays listed); Base Game only → built from the disc image. <a href="#/welcome" onclick="OB.step=0;OB.check=null;OB.settings=null">Run the first-time setup again</a></p></div>
-    <div class="panel"><h4>Paths</h4><div class="form" style="grid-template-columns:160px 1fr auto">
-      <label>Disc image (ISO/CSO)</label><input type="text" id="s_iso" value="${esc(s.settings.iso)}"><button onclick="pickInto('#s_iso')">Browse…</button>
-      <label>MUSIC folder</label><input type="text" id="s_music" value="${esc(s.settings.music)}"><button onclick="pickInto('#s_music', null, true)">Browse…</button>
-      <label>python.exe</label><input type="text" id="s_python" value="${esc(s.settings.python)}"><button onclick="pickInto('#s_python')">Browse…</button>
-      <label>at3tool.exe</label><input type="text" id="s_at3tool" value="${esc(s.settings.at3tool)}"><button onclick="pickInto('#s_at3tool')">Browse…</button>
-      <label>mid2rbu.py</label><input type="text" id="s_mid2rbu" value="${esc(s.settings.mid2rbu)}"><button onclick="pickInto('#s_mid2rbu')">Browse…</button>
-    </div><div class="actions" style="margin-top:10px"><button class="primary" id="s_save">Save and check again</button>
-      <span class="small dim">Python packages: open a console and run <span class="mono">pip install mido numpy miniaudio</span> (with the same python.exe).</span></div></div>`;
+  const missing = Object.keys(CHECK_NAME).filter(k => s.checks[k] && !s.checks[k].ok);
+  const adv = window.editMode() === "advanced", lockTools = !adv && !missing.length;
+  const fix = k => { const c = s.checks[k], [n, what] = CHECK_NAME[k];
+    return `<li><b>${n}</b> wasn't found (${what}). ${c.url ? (c.url.startsWith("http") ? `<a href="${esc(c.url)}" target="_blank">Where to get it</a>` : esc(c.url)) : ""}</li>`; };
+  const [gTitle, gText] = gameText(s.mode), theme = themePref();
+  const path = (id, label, val, dir, locked) => `<label for="s_${id}">${label}</label><span class="inline"><input type="text" id="s_${id}" value="${esc(val)}" ${locked ? "disabled" : ""}><button onclick="pickInto('#s_${id}'${dir ? ", null, true" : ""})" ${locked ? "disabled" : ""}>Choose…</button></span>`;
+  $("#main").innerHTML = `<div class="settings"><h1>Settings</h1>
+    ${missing.length ? `<section class="notice bad"><h2>Pocket Encore needs ${missing.length > 1 ? missing.length + " more things" : "one more thing"}</h2>
+        <ul>${missing.map(fix).join("")}</ul>
+        <p class="small">Install it, set where it is under <b>Tools</b> below (or <b>Your game</b>), then press <b>Save and check again</b>.${missing.includes("packages") ? ` Python packages: in a console, run <span class="mono">"${esc(s.settings.python)}" -m pip install mido numpy miniaudio</span>.` : ""}</p></section>`
+      : `<section class="notice ok"><b>Pocket Encore has everything it needs.</b> <span class="small dim">Checked when it started.</span></section>`}
+    <div class="grid2">
+      <section class="panel"><h2>Your game</h2>
+        <p><b>${esc(gTitle)}</b></p><p class="small dim">${esc(gText)} Pocket Encore checks this every time it starts.</p>
+        <div class="form">${path("music", "PPSSPP memory stick (MUSIC folder)", s.settings.music, true, false)}${path("iso", "Disc image (ISO or CSO)", s.settings.iso, false, false)}</div>
+        <p class="small dim">A PSP connected by USB is found by itself on the Memory stick page. <a href="#/welcome" onclick="OB.step=0;OB.check=null;OB.settings=null">Run the first-time setup again</a></p></section>
+      <section class="panel"><h2>Look</h2>
+        <div class="seg" role="radiogroup" aria-label="Theme">${[["auto", "System Default"], ["light", "Light"], ["dark", "Dark"]].map(([k, n]) => `<button role="radio" data-theme-set="${k}" class="${theme === k ? "on" : ""}" aria-checked="${theme === k}">${n}</button>`).join("")}</div>
+        <h2 class="gap">Editing</h2>
+        <label class="sw"><input type="checkbox" id="s_adv" data-noguard="1" ${adv ? "checked" : ""}><span>Advanced Edit Mode</span></label>
+        <p class="small dim">Off (Easy Edit Mode) keeps settings that are easy to get wrong read-only and marked 🔒. Turning it on asks first. <a href="#/help/editmodes">What changes?</a></p></section>
+    </div>
+    <div class="grid2">
+      <div id="updHost"></div>
+      <details class="panel" ${missing.length || adv ? "open" : ""}><summary><b>Tools</b> ${lockTools ? `<span class="small dim">· 🔒 read-only in Easy Edit Mode</span>` : ""}</summary>
+        <table class="t setup">${Object.keys(CHECK_NAME).map(k => { const c = s.checks[k]; if (!c) return ""; const [n, what] = CHECK_NAME[k];
+          return `<tr><td><span class="badge ${c.ok ? "ok" : "bad"}">${c.ok ? "OK" : "not found"}</span></td><td><b>${n}</b><div class="small dim">${what}</div></td><td class="mono small">${esc(c.detail)}</td></tr>`; }).join("")}</table>
+        <div class="form">${path("python", "python.exe", s.settings.python, false, lockTools)}${path("at3tool", "at3tool.exe", s.settings.at3tool, false, lockTools)}${path("mid2rbu", "mid2rbu.py", s.settings.mid2rbu, false, lockTools)}</div>
+        <p class="small dim">Saved in <span class="mono">${esc(s.file)}</span>.</p></details>
+    </div>
+    <div class="actions"><button class="primary" id="s_save">Save and check again</button></div></div>`;
+  $("#updHost").outerHTML = updatePanel();
+  bindUpdatePanel();
+  document.querySelectorAll("[data-theme-set]").forEach(b => b.onclick = () => {
+    setTheme(b.dataset.themeSet);
+    document.querySelectorAll("[data-theme-set]").forEach(x => { const on = x === b; x.classList.toggle("on", on); x.setAttribute("aria-checked", on); });
+  });
+  $("#s_adv").onchange = async e => { e.target.checked = window.editMode() === "advanced"; await setEditMode(window.editMode() === "advanced" ? "easy" : "advanced"); };
   const saveSetup = async () => {
-    const r = await api("PUT", "/api/settings", { iso: $("#s_iso").value, music: $("#s_music").value, python: $("#s_python").value, at3tool: $("#s_at3tool").value, mid2rbu: $("#s_mid2rbu").value });
+    const v = id => $("#s_" + id).value;
+    const r = await api("PUT", "/api/settings", { iso: v("iso"), music: v("music"), python: v("python"), at3tool: v("at3tool"), mid2rbu: v("mid2rbu") });
     markSaved();
-    META = await api("GET", "/api/meta"); renderModeBadge(); $("#setupLink").classList.toggle("warn", !META.setupOk); toast(r.ok ? "Setup complete" : "Saved; some pieces are still missing", !r.ok);
+    META = await api("GET", "/api/meta"); $("#setupLink").classList.toggle("warn", !META.setupOk);
+    toast(r.ok ? "Everything Pocket Encore needs was found" : "Saved; something is still missing", !r.ok);
     return true;
   };
-  $("#main").insertAdjacentHTML("beforeend", updatePanel()); bindUpdatePanel();
-  $("#s_save").onclick = () => saveSetup().then(() => showSetup(), fail("Couldn't save the setup"));
-  guardForm($("#main"), "the Setup paths", saveSetup);
+  $("#s_save").onclick = () => saveSetup().then(() => showSetup(), fail("Couldn't save the settings"));
+  guardForm($("#main"), "the settings", saveSetup);
 }
+// Settings follows the edit mode switch (it is the one place for it)
+window.addEventListener("editmodechange", () => { if (/^#\/setup/.test(location.hash)) showSetup(); });
 
 // ---------- packs: sets of songs with their own song database, to switch on the memory stick ----------
 let PK = null;  // packs view from the server
@@ -520,26 +611,6 @@ function stickSummary(s) {
     <span class="badge ${db[0]}">song database: ${db[1]}</span>`;
 }
 async function loadSticks() { STK = await api("GET", "/api/sticks"); return STK; }
-// Library: one line per memory stick + its problems, and a badge per song card
-async function libraryStickPanel() {
-  const host = $("#stickPanel");
-  if (!host) return;
-  let v;
-  try { v = await loadSticks(); } catch (e) { host.innerHTML = ""; return; }
-  if (!$("#stickPanel")) return;
-  host.innerHTML = v.sticks.length ? v.sticks.map(s => {
-    const iss = stickIssues(s).filter(i => i.level !== "info");
-    return `<div class="panel stickline"><div class="row">${stickSummary(s)}<span class="grow"></span>
-      ${s.online ? `<button class="primary small" onclick="location.hash='#/stick'">Install…</button>` : ""}<button class="small" onclick="location.hash='#/stick'">Details</button></div>
-      ${iss.length ? `<ul class="issues">${iss.map(i => `<li class="${i.level}">${i.html}</li>`).join("")}</ul>` : ""}</div>`;
-  }).join("") : `<div class="panel small dim">No memory stick found: set PPSSPP's MUSIC folder on Setup, or connect your PSP by USB (USB mode).</div>`;
-  for (const s of v.sticks) for (const x of s.songs) {
-    const row = document.querySelector(`.card[data-f="${x.folder}"] .row`);
-    if (!row) continue;
-    const t = !x.built ? null : x.state === "installed" ? (x.listed ? ["ok", "✓"] : ["warn", "hidden"]) : x.state === "missing" ? ["", "not copied"] : ["warn", "older"];
-    if (t) row.insertAdjacentHTML("beforeend", `<span class="badge ${t[0]}" title="${esc(s.label)}${s.online ? "" : " (last check)"}">${stickShort(s)}: ${t[1]}</span>`);
-  }
-}
 async function showSticks() {
   $("#crumb").innerHTML = `<a href="#/">Songs</a> / Memory stick`;
   $("#main").innerHTML = `<div class="panel dim">Looking at the memory sticks…</div>`;
@@ -1358,7 +1429,8 @@ function bindUpdatePanel() {
 
 // ---------- builds ----------
 let es = null;
-function showBuildPanel(show = true) { $("#buildPanel").classList.toggle("hidden", !show); }
+// the Build log button in the top bar appears once a build has run in this session (or a stored log was opened)
+function showBuildPanel(show = true) { $("#buildPanel").classList.toggle("hidden", !show); if (show) $("#buildToggle").classList.remove("hidden"); }
 $("#buildToggle").onclick = () => { showBuildPanel($("#buildPanel").classList.contains("hidden")); followBuild(); };
 $("#buildClose").onclick = () => showBuildPanel(false);
 async function runBuild(folder, from) {

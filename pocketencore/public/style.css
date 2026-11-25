@@ -271,3 +271,57 @@ table.t.sticktable td:nth-child(5), table.t.sticktable th:nth-child(5), table.t.
 .anpreview .pvempty b { color: var(--text); font-size: 13px; }
 /* Easy / Advanced Edit Mode switch */
 button.advmode.on { background: var(--warn-line); border-color: var(--warn); }
+
+/* ---------- UI revamp (ui-revamp branch): top bar, Songs home, Settings ---------- */
+.topnav { display: flex; gap: 2px; }
+.topnav a { color: var(--dim); padding: 5px 11px; border-radius: 6px; }
+.topnav a:hover { color: var(--text); background: var(--panel2); }
+.topnav a.on { color: var(--text); background: var(--panel2); font-weight: 600; }
+.topnav a.warn { color: var(--warn); }
+.navlink.help.on { color: var(--text); border-color: var(--accent); }
+body.onboarding .topnav { display: none; }
+button.big, a.btn.big { padding: 9px 18px; font-size: 15px; }
+a.btn { display: inline-block; padding: 4px 10px; border: 1px solid var(--control-line); border-radius: 4px; color: var(--text); background: var(--panel); text-decoration: none !important; }
+a.btn:hover { border-color: var(--accent); }
+.home, .settings { display: grid; gap: 16px; max-width: 1400px; }
+.home h1, .settings h1 { margin: 0; font-size: 22px; }
+.home h2, .settings h2 { margin: 0; font-size: 16px; }
+.notice { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; background: var(--panel); }
+.notice.warn { border-color: var(--warn-line); }
+.notice.bad { border-color: var(--bad); }
+.notice.ok { border-color: var(--ok-line); }
+.notice ul { margin: 6px 0; padding-left: 20px; }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 18px 20px; border: 1px solid var(--accent); border-radius: 10px; background: var(--panel); }
+.hero h1 { margin-bottom: 6px; }
+.hero p { margin: 0; color: var(--dim); max-width: 80ch; }
+.tasks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.task { display: grid; gap: 6px; align-content: start; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.task p { margin: 0; }
+.home .bar { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.home .bar input[type=search] { width: 220px; }
+.songgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.songcard { display: grid; gap: 6px; align-content: start; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.songcard.hidden { display: none; }
+.songcard .songtitle { color: var(--text); font-weight: 600; font-size: 15px; justify-self: start; text-decoration: none !important; }
+.songcard .songtitle:hover { text-decoration: underline !important; }
+.songcard .actions { margin-top: 4px; }
+.addsong { display: grid; place-content: center; gap: 4px; text-align: center; min-height: 120px; border: 2px dashed var(--accent); border-radius: 8px; color: var(--accent); text-decoration: none !important; }
+.addsong:hover { background: var(--panel); }
+.state { display: flex; gap: 7px; align-items: center; font-size: 13px; }
+.sdot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--line); }
+.sdot.ok { background: var(--ok); } .sdot.todo { background: var(--warn); } .sdot.new { background: var(--dim); }
+.settings .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.settings .grid2 > .panel { margin: 0; display: grid; gap: 8px; }
+.settings .panel h2.gap { margin-top: 8px; }
+.settings .form { grid-template-columns: 210px minmax(0, 1fr); }
+.settings .form .inline input { flex: 1; min-width: 0; }
+.settings details summary { cursor: pointer; }
+.seg button.on { background: var(--primary); border-color: var(--accent); }
+.sw { display: flex; gap: 8px; align-items: center; cursor: pointer; font-weight: 600; }
+.sw input { appearance: none; width: 36px; height: 20px; border-radius: 999px; background: var(--line); position: relative; margin: 0; cursor: pointer; border: 1px solid var(--control-line); }
+.sw input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--text); transition: left .15s; }
+.sw input:checked { background: var(--warn); } .sw input:checked::after { left: 18px; }
+.sw input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 860px) { .hero, .tasks, .settings .grid2 { grid-template-columns: 1fr; } .settings .form { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .sw input::after { transition: none; } }
+.settings p, .home p { margin: 0; }
