@@ -439,6 +439,7 @@ const folderMb = x => +(Object.values(x.files).reduce((n, y) => n + y.size, 0) /
 function stickView(st, scan, src, online, at) {
   scan = scan || {};
   const lib = new Set(songList()), mine = new Set(stick.dbHistory().map(h => h.sha1)), libId = stick.libraryId();
+  const arch = new Set(archivedList()), off = new Set(readOff()[st.id] || []);
   const A = scan.active, srcDb = src.active;
   let db = null;
   if (A) {
@@ -451,29 +452,137 @@ function stickView(st, scan, src, online, at) {
   const listed = new Set(db ? db.customs : []);
   const names = f => {
     try { const S = readSong(f); return { title: S.title, artist: S.artist }; } catch { }
+    try { const S = JSON.parse(fs.readFileSync(path.join(ARCHIVE, f, "song.json"), "utf8")); return { title: S.title, artist: S.artist }; } catch { }
     const s = scan.songs && scan.songs[f] && scan.songs[f].stamp;
     if (s && s.title) return { title: s.title, artist: s.artist };
     const c = A && A.textOk && (A.customs || []).find(x => x.folder === f);
     return c ? { title: c.title, artist: c.artist } : { title: null, artist: null };
   };
   const songs = [];
-  for (const f of new Set([...Object.keys(src.songs), ...Object.keys(scan.songs || {})])) {
+  // every song of the library (also those not made yet), every song built, every song folder on the stick
+  for (const f of new Set([...lib, ...Object.keys(src.songs), ...Object.keys(scan.songs || {})])) {
     const a = src.songs[f], b = scan.songs && scan.songs[f];
-    let state = !b ? "missing" : !a ? "extra" : sameBuild(a, b, f) ? "installed" : "different";
+    let state = !b ? "missing" : !a || !lib.has(f) ? "extra" : sameBuild(a, b, f) ? "installed" : "different";
     if (state === "different" && a.stamp && b.stamp && b.stamp.builtAt && a.stamp.builtAt && b.stamp.builtAt < a.stamp.builtAt) state = "older";
+    // off: the user switched it off on the Memory stick page (so it isn't suggested again); archived: in songs/.archive
     songs.push({ folder: f, ...names(f), state, inLibrary: lib.has(f), built: !!a, listed: listed.has(f), mb: a ? folderMb(a) : b ? folderMb(b) : 0,
-      theirs: !!(b && b.stamp && b.stamp.library && b.stamp.library !== libId) });
+      stickMb: b ? folderMb(b) : 0, theirs: !!(b && b.stamp && b.stamp.library && b.stamp.library !== libId), stamped: !!(b && b.stamp),
+      off: off.has(f), archived: arch.has(f) });
   }
   songs.sort((x, y) => x.folder.localeCompare(y.folder));
   return { id: st.id, kind: st.kind, label: st.label, music: st.music, online, at: at || new Date().toISOString(), exists: !!scan.exists, db, songs,
-    srcDb: srcDb ? { file: srcDb.file, customs: (srcDb.customs || []).map(c => c.folder) } : null };
+    srcDb: srcDb ? { file: srcDb.file, customs: (srcDb.customs || []).map(c => c.folder) } : null, freeMb: online ? freeMb(st.music) : null };
+}
+// free space where a MUSIC folder is (or would be), in MB
+function freeMb(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    if (fs.existsSync(d)) { try { const s = fs.statfsSync(d); return Math.round(s.bavail * s.bsize / 1048576); } catch { return null; } }
+    if (path.dirname(d) === d) return null;
+  }
 }
 function sticksView() {
   const s = settings.load(), src = stick.scanMusic(OUT), conn = stick.connected(s.music);
   const out = conn.map(st => { const scan = stick.scanMusic(st.music); try { stick.remember(st, scan); } catch { } return stickView(st, scan, src, true); });
   // an unplugged PSP: its last check
   for (const r of Object.values(stick.remembered())) if (r.kind === "psp" && !conn.some(c => c.id === r.id)) out.push(stickView(r, r.scan, src, false, r.at));
-  return { sticks: out, output: { db: src.active ? { file: src.active.file, customs: (src.active.customs || []).map(c => c.folder) } : null, songs: Object.keys(src.songs) } };
+  const archived = archivedList().map(f => { try { const S = JSON.parse(fs.readFileSync(path.join(ARCHIVE, f, "song.json"), "utf8")); return { folder: f, title: S.title, artist: S.artist, imported: !!S.imported }; } catch { return { folder: f, title: f }; } });
+  return { sticks: out, archived, output: { db: src.active ? { file: src.active.file, customs: (src.active.customs || []).map(c => c.folder) } : null, songs: Object.keys(src.songs) } };
+}
+
+// ---------- the Memory stick page: "Add in game" switches -> one plan -> apply (scripts/stickapply.js) ----------
+// The memory stick ends up with exactly the songs switched on, and a song database of yours that lists exactly them.
+// Songs switched off are removed from the stick (they stay in your library) and remembered per stick, so the page
+// doesn't suggest them again. Song folders that aren't in your library are only touched by an explicit Remove.
+const ARCHIVE = path.join(SONGS, ".archive"), OFF_FILE = path.join(SONGS, ".db", "stick-off.json");
+function archivedList() { return fs.existsSync(ARCHIVE) ? fs.readdirSync(ARCHIVE).filter(d => FOLDER_RE.test(d) && fs.existsSync(path.join(ARCHIVE, d, "song.json"))) : []; }
+function readOff() { try { return JSON.parse(fs.readFileSync(OFF_FILE, "utf8")); } catch { return {}; } }
+function writeOff(o) { fs.mkdirSync(path.dirname(OFF_FILE), { recursive: true }); fs.writeFileSync(OFF_FILE, JSON.stringify(o, null, 1)); }
+function onlineStick(id) {
+  const st = stick.connected(settings.load().music).find(x => x.id === id);
+  if (!st) throw httpError(404, "that memory stick isn't connected");
+  return st;
+}
+const ourDb = db => !!db && (db.state === "current" || db.state === "yours-older");
+const brief = x => ({ folder: x.folder, title: x.title, artist: x.artist, state: x.state, mb: x.mb, stickMb: x.stickMb });
+// b = { stick, want: [folders switched on] }
+function stickPlan(b) {
+  const st = onlineStick(b.stick), v = stickView(st, stick.scanMusic(st.music), stick.scanMusic(OUT), true);
+  const want = new Set((b.want || []).map(String)), mine = v.songs.filter(x => x.inLibrary);
+  const bad = [...want].filter(f => !mine.some(x => x.folder === f && x.built));
+  if (bad.length) throw httpError(400, `not made yet, or not one of your songs: ${bad.join(", ")}`);
+  const on = mine.filter(x => want.has(x.folder));
+  const copy = on.filter(x => x.state !== "installed");                       // not on it, or another build of it
+  const show = on.filter(x => x.state === "installed" && !x.listed);          // on it, but the song database hides it
+  const keep = on.filter(x => x.state === "installed" && x.listed);
+  const remove = mine.filter(x => !want.has(x.folder) && x.state !== "missing");
+  const dbSongs = on.map(x => x.folder).sort();
+  const same = ourDb(v.db) && JSON.stringify([...v.db.customs].sort()) === JSON.stringify(dbSongs);
+  // write: a new song database listing exactly the songs switched on (also after copying: their details may have
+  // changed); none: no song switched on, so your song database goes; keep: nothing to change (or someone else's stays)
+  const db = dbSongs.length ? (same && !copy.length ? "keep" : "write") : ourDb(v.db) ? "none" : "keep";
+  const others = v.songs.filter(x => !x.inLibrary && x.state !== "missing");
+  return { stick: { id: st.id, label: st.label, kind: st.kind, music: st.music }, copy: copy.map(brief), show: show.map(brief), keep: keep.map(brief),
+    remove: remove.map(brief), db, dbSongs, dbBefore: v.db ? { file: v.db.file, folder: v.db.folder, state: v.db.state, pack: v.db.pack, count: v.db.customs.length } : null,
+    others: others.map(x => ({ ...brief(x), archived: x.archived, listed: x.listed })),
+    mb: +copy.reduce((n, x) => n + x.mb, 0).toFixed(1), freeMb: v.freeMb,
+    off: mine.filter(x => x.built && !want.has(x.folder)).map(x => x.folder),
+    any: !!(copy.length || remove.length || db !== "keep") };
+}
+const stickArgs = (music, { copy = [], remove = [], db = null, dbNone = false }) => [path.join(SCRIPTS, "stickapply.js"), "--from", OUT, "--to", music,
+  ...(copy.length ? ["--copy", copy.join(",")] : []), ...(db ? ["--db", db.join(",")] : dbNone ? ["--db-none"] : []), ...(remove.length ? ["--remove", remove.join(",")] : [])];
+const rememberStick = st => () => { try { stick.remember(st, stick.scanMusic(st.music)); } catch { } };
+function startStickApply(b) {
+  const p = stickPlan(b);
+  if (!p.any) throw httpError(400, "nothing to change: the memory stick already has these songs");
+  const st = onlineStick(b.stick);
+  const args = stickArgs(st.music, { copy: p.copy.map(x => x.folder), remove: p.remove.map(x => x.folder), db: p.db === "write" ? p.dbSongs : null, dbNone: p.db === "none" });
+  return runJob(st.label, "stick", [{ args, label: `# ${new Date().toISOString()} memory stick: ${st.label} (${st.music})`,
+    onDone: code => { rememberStick(st)(); if (code === 0) { const o = readOff(); o[st.id] = p.off; writeOff(o); } } }], path.join(SONGS, ".db", "stick.log"));
+}
+// a song database of yours that lists some of the folders being removed: written again without them
+function dbWithout(v, folders) {
+  if (!ourDb(v.db) || !v.db.customs.some(f => folders.includes(f))) return {};
+  const rest = v.db.customs.filter(f => !folders.includes(f) && v.songs.some(x => x.folder === f && x.inLibrary && x.built && x.state !== "missing"));
+  return rest.length ? { db: rest } : { dbNone: true };
+}
+// Remove from memory stick: custom song folders (Z...) that aren't in your library (archived songs, a friend's pack,
+// old test songs). Never your library's songs (switch those off instead) and never official songs (no Z folders).
+function startStickRemove(b) {
+  const st = onlineStick(b.stick), v = stickView(st, stick.scanMusic(st.music), stick.scanMusic(OUT), true);
+  const folders = (b.folders || []).map(String);
+  if (!folders.length) throw httpError(400, "no folders to remove");
+  for (const f of folders) {
+    const x = v.songs.find(y => y.folder === f && y.state !== "missing");
+    if (!x) throw httpError(404, `${f} isn't on the memory stick`);
+    if (x.inLibrary) throw httpError(400, `${f} is one of your songs: switch it off instead`);
+  }
+  return runJob(st.label, "stick", [{ args: stickArgs(st.music, { remove: folders, ...dbWithout(v, folders) }),
+    label: `# ${new Date().toISOString()} remove from ${st.label}: ${folders.join(", ")}`, onDone: rememberStick(st) }], path.join(SONGS, ".db", "stick.log"));
+}
+// Archive: songs/<F> moves to songs/.archive/<F> (nothing deleted). removeFrom: sticks to take its folder off now.
+function archiveSong(b) {
+  const f = String(b.folder || "");
+  if (!FOLDER_RE.test(f) || !fs.existsSync(path.join(SONGS, f, "song.json"))) throw httpError(404, "no such song");
+  if (build && !build.done) throw httpError(409, `wait for the build of ${build.folder} to finish`);
+  if (fs.existsSync(path.join(ARCHIVE, f))) throw httpError(409, `there is already an archived ${f}: restore or rename it first`);
+  const sticks = (b.removeFrom || []).map(onlineStick);
+  fs.mkdirSync(ARCHIVE, { recursive: true });
+  fs.renameSync(path.join(SONGS, f), path.join(ARCHIVE, f));
+  const o = readOff(); for (const k of Object.keys(o)) o[k] = o[k].filter(x => x !== f); writeOff(o);
+  const steps = [];
+  for (const st of sticks) {
+    const v = stickView(st, stick.scanMusic(st.music), stick.scanMusic(OUT), true);
+    if (!v.songs.some(x => x.folder === f && x.state !== "missing")) continue;
+    steps.push({ args: stickArgs(st.music, { remove: [f], ...dbWithout(v, [f]) }), label: `# ${new Date().toISOString()} archived ${f}: removing it from ${st.label}`, onDone: rememberStick(st) });
+  }
+  return { archived: f, started: steps.length ? runJob(f, "stick", steps, path.join(SONGS, ".db", "stick.log")).started : null };
+}
+function restoreSong(b) {
+  const f = String(b.folder || "");
+  if (!FOLDER_RE.test(f) || !fs.existsSync(path.join(ARCHIVE, f, "song.json"))) throw httpError(404, "no such archived song");
+  if (fs.existsSync(path.join(SONGS, f))) throw httpError(409, `there is already a song in songs\\${f}`);
+  fs.renameSync(path.join(ARCHIVE, f), path.join(SONGS, f));
+  return { restored: f };
 }
 // what an install would do. b = { stick, source: "library" (out/MUSIC) | "pack:<id>", songs?: [...], db?: bool }
 function installPlan(b) {
@@ -829,6 +938,14 @@ async function route(req, res) {
     return json(res, { dir: b.dir });
   }
   if (what === "sticks" && M === "GET") return json(res, sticksView());
+  if (what === "stick" && M === "POST") {
+    const b = await body(req);
+    if (folder === "plan") return json(res, stickPlan(b));
+    if (folder === "apply") return json(res, { started: startStickApply(b).started });
+    if (folder === "remove") return json(res, { started: startStickRemove(b).started });
+  }
+  if (what === "archive" && M === "POST") return json(res, archiveSong(await body(req)));
+  if (what === "restore" && M === "POST") return json(res, restoreSong(await body(req)));
   if (what === "install" && M === "POST") {
     const b = await body(req);
     if (b.dry) { const p = installPlan(b); return json(res, { ...p, stick: { id: p.stick.id, label: p.stick.label, music: p.stick.music } }); }

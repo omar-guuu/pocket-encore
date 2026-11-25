@@ -15,7 +15,8 @@ const { execFileSync } = require("child_process");
 const game = require("./game.js");
 
 const TOOLS = path.resolve(__dirname, "..");
-const FILE = path.join(TOOLS, "settings.json");
+// PE_SETTINGS: another settings file (tests point PPSSPP's memory stick at a copy, so the real one is never touched)
+const FILE = process.env.PE_SETTINGS ? path.resolve(process.env.PE_SETTINGS) : path.join(TOOLS, "settings.json");
 const LOCAL = process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || "", "AppData", "Local");
 const KEYS = ["music", "iso", "python", "at3tool", "mid2rbu"];
 

@@ -108,9 +108,10 @@ async function saveGuard(g) {
 }
 // true when it is fine to leave the page: saved, or the changes discarded
 async function confirmLeave(g) {
-  if (!g.save) return await ask("Leave without creating the song?", "What you've filled in will be lost.", [
-    { label: "Discard new song", value: "discard", kind: "danger" },
-    { label: "Keep editing", value: null }]) === "discard";
+  if (!g.save) {  // nothing to save: leave (discard) or stay. g.leave words it for the page (default: New song)
+    const L = g.leave || { title: "Leave without creating the song?", body: "What you've filled in will be lost.", discard: "Discard new song" };
+    return await ask(L.title, L.body, [{ label: L.discard, value: "discard", kind: "danger" }, { label: "Keep editing", value: null }]) === "discard";
+  }
   const a = await ask(`Leave without saving ${g.what}?`, "Your changes are only kept if you save them.", [
     { label: "Save and leave", value: "save", kind: "primary" },
     { label: "Discard changes", value: "discard", kind: "danger" },
@@ -240,7 +241,7 @@ function songState(s, x) {
   if (s.status === "not built") return ["todo", "Not made yet"];
   if (s.status === "changed since build") return ["todo", "Changed: rebuild it to play the new version"];
   if (!x) return ["", "Made"];
-  if (x.state === "missing") return ["new", "Not on your memory stick yet"];
+  if (x.state === "missing") return x.off ? ["", "Not added in game"] : ["new", "Not on your memory stick yet"];
   if (x.state === "installed") return x.listed ? ["ok", "On your memory stick"] : ["todo", "On your memory stick, but the game doesn't list it yet"];
   return ["todo", "Changed: update your memory stick"];
 }
@@ -260,7 +261,7 @@ async function libraryStickPanel(list) {
   if (!st) { line.innerHTML = `No memory stick found yet. Set PPSSPP's memory stick on <a href="#/setup">Settings</a>, or connect your PSP by USB.`; return; }
   const where = st.kind === "ppsspp" ? "in PPSSPP" : "on your PSP";
   const mine = st.songs.filter(x => x.built && x.inLibrary), ok = mine.filter(x => x.state === "installed" && x.listed).length;
-  const upd = mine.filter(x => x.state === "older" || x.state === "different" || (x.state === "installed" && !x.listed)).length, notIn = mine.filter(x => x.state === "missing").length;
+  const upd = mine.filter(x => x.state === "older" || x.state === "different" || (x.state === "installed" && !x.listed)).length, notIn = mine.filter(x => x.state === "missing" && !x.off).length;
   const other = st.db && st.db.state === "other";
   line.innerHTML = other ? `<b>The game is showing someone else's song list</b>, so your custom songs are hidden. Update your memory stick to put yours back.`
     : `${ok} of ${mine.length} custom songs are installed ${where}${upd ? ` – ${upd} ${upd > 1 ? "need" : "needs"} an update` : ""}${notIn ? `${upd ? "," : " –"} ${notIn} not installed` : ""}.${st.online ? "" : ` <span class="dim">(last checked ${esc(whenTxt(st.at))})</span>`}`;
@@ -580,83 +581,285 @@ async function showPackEdit(id) {
 // /api/sticks: PPSSPP's memory stick (the MUSIC folder on Setup) and a PSP connected by USB; an unplugged PSP shows
 // its last check. Song states: installed · older / different (another build) · missing · extra (not built here).
 let STK = null;
-const STATE_TXT = { installed: ["ok", "installed"], older: ["warn", "older build"], different: ["warn", "different build"], missing: ["", "not copied"], extra: ["", "not in your output"] };
-const stickShort = s => s.kind === "ppsspp" ? "PPSSPP" : "PSP";
 const whenTxt = iso => { const d = new Date(iso), days = Math.floor((Date.now() - d) / 86400000); return days < 1 ? `today ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : days < 2 ? "yesterday" : `${days} days ago (${d.toLocaleDateString()})`; };
-// what is wrong with a stick, in words: [{ level: "bad" | "warn" | "info", html, act? }]
-function stickIssues(s) {
-  const out = [], db = s.db, mine = s.songs.filter(x => x.inLibrary), foreign = s.songs.filter(x => x.state === "extra" && !x.inLibrary);
-  if (!s.exists) { out.push({ level: "info", html: `No <span class="mono">MUSIC</span> folder on it yet: installing creates it.` }); return out; }
-  if (!db || db.state === "official") {
-    if (s.srcDb) out.push({ level: "warn", html: `No custom song database on it: the game lists only official songs. Install to copy yours.` });
-  } else if (db.state === "other") {
-    const list = db.customs.map(esc).join(", ") || "no custom songs";
-    out.push({ level: "bad", html: `The game uses <span class="mono">${esc(db.file)}</span>${db.pack ? ` (pack "${esc(db.pack)}")` : ""} from <b>another build</b>, not yours: it lists only ${list}. `
-      + `Every other custom song on this memory stick is hidden in the game.${db.textOk ? "" : " Its names don't match it either (titles in the game are wrong): its TEXT files belong to a different database."}` });
-  } else if (db.state === "yours-older") out.push({ level: "warn", html: `The song database on it (<span class="mono">${esc(db.file)}</span>) is an older build of yours: install to update it.` });
-  if (db && db.others && db.others.length) out.push({ level: "info", html: `${db.others.length} older song database file${db.others.length > 1 ? "s" : ""} in <span class="mono">${esc(db.folder)}</span> (unused; installing removes them).` });
-  if (db && db.tie) out.push({ level: "warn", html: `Two folders have a song database with the same number (${db.tie.map(esc).join(", ")}): which one the game uses is not certain.` });
-  for (const f of foreign) out.push({ level: "warn", html: `<b>${esc(f.title || f.folder)}</b> <span class="mono small">${esc(f.folder)}</span> is on it but not in your library${f.listed ? " (only the current database lists it)" : ", so the game hides it"}. Import it to keep it listed with your songs.`, act: { importDir: s.music + "\\" + f.folder, folder: f.folder } });
-  const toCopy = mine.filter(x => x.built && x.state !== "installed").length;
-  if (toCopy) out.push({ level: "warn", html: `${toCopy} of your built song${toCopy > 1 ? "s are" : " is"} not on it, or an older build.` });
-  const hidden = mine.filter(x => x.state !== "missing" && !x.listed && db && db.state !== "other");
-  if (hidden.length) out.push({ level: "warn", html: `Hidden in the game (the database doesn't list them): ${hidden.map(x => esc(x.title || x.folder)).join(", ")}.` });
-  return out;
-}
-function stickSummary(s) {
-  const mine = s.songs.filter(x => x.built), ok = mine.filter(x => x.state === "installed" && x.listed).length;
-  const db = s.db && s.db.state !== "official" ? { current: ["ok", "up to date"], "yours-older": ["warn", "older"], other: ["bad", "another build's"] }[s.db.state] : ["warn", "none"];
-  return `<b>${esc(s.label)}</b> ${s.online ? "" : `<span class="badge">unplugged · checked ${esc(whenTxt(s.at))}</span>`}
-    <span class="badge ${ok === mine.length && mine.length ? "ok" : "warn"}">${ok} of ${mine.length} songs in the game</span>
-    <span class="badge ${db[0]}">song database: ${db[1]}</span>`;
-}
 async function loadSticks() { STK = await api("GET", "/api/sticks"); return STK; }
+// ---------- the Memory stick page ----------
+// Every custom song has an "Add in game" switch: the list shows what the memory stick will have. Nothing changes until
+// Review and apply (POST /api/stick/apply: copies songs, writes a song database that lists exactly the songs switched
+// on, removes the ones switched off; they stay in your songs). Archive and Remove from memory stick live here only.
+const SP = { stick: null, plan: {}, filter: "all", q: "", view: "list", target: null, v: null };
+const SCHIP = { ok: ["ok", "Installed", "Up to date"], upd: ["todo", "Update ready", "You changed it since it was installed"],
+  new: ["new", "Not installed", "Not on the memory stick yet"], hidden: ["todo", "Not shown in the game", "On the memory stick, but the song list doesn't show it"],
+  notmade: ["new", "Not made yet", "Make the song first, then add it in game"] };
+const rowState = x => !x.built ? "notmade" : x.state === "missing" ? "new" : x.state === "installed" ? (x.listed ? "ok" : "hidden") : "upd";
+const stickWhere = s => s && s.kind === "psp" ? "your PSP's memory stick" : "PPSSPP's memory stick";
+const sameSet = (a, b) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+const sizeTxt = mb => mb >= 1024 ? (mb / 1024).toFixed(1) + " GB" : (Math.round(mb * 10) / 10) + " MB";
+const songName = x => x.title || x.folder;
+const ourStickDb = s => !!s.db && (s.db.state === "current" || s.db.state === "yours-older");
+// your songs on this stick, with the switch: default on, except songs not made yet and songs you switched off before
+function stickRowsOf(s) {
+  return s.songs.filter(x => x.inLibrary).map(x => {
+    const st = rowState(x), def = st === "notmade" ? false : st === "new" ? !x.off : true;
+    return { ...x, st, def, want: st === "notmade" ? false : SP.plan[x.folder] ?? def };
+  }).sort((a, b) => String(songName(a)).localeCompare(String(songName(b))));
+}
+// what applying would do (the server works it out the same way: stickPlan in server.js)
+function stickPending(s, rows) {
+  const copy = rows.filter(r => r.want && (r.st === "new" || r.st === "upd")), show = rows.filter(r => r.want && r.st === "hidden"),
+    rm = rows.filter(r => !r.want && ["ok", "upd", "hidden"].includes(r.st)), keep = rows.filter(r => r.want && r.st === "ok");
+  const on = rows.filter(r => r.want).map(r => r.folder);
+  const db = on.length ? (ourStickDb(s) && sameSet(s.db.customs, on) && !copy.length ? "keep" : "write") : ourStickDb(s) ? "none" : "keep";
+  return { copy, show, rm, keep, on, db, any: !!(copy.length || rm.length || db !== "keep") };
+}
+function stickSummaryLine(s, rows) {
+  const made = rows.filter(r => r.built), ok = rows.filter(r => r.st === "ok").length, upd = rows.filter(r => r.st === "upd" || r.st === "hidden").length;
+  if (s.db && s.db.state === "other") return `The song list on this memory stick comes from someone else's ${s.db.pack ? `pack (${esc(s.db.pack)})` : "build"}, so the game shows their songs and none of yours. Applying puts your song list back.`;
+  if (!ok && !upd) return made.length ? `None of your ${made.length} custom songs are on this memory stick yet.` : `You haven't made a custom song yet.`;
+  return `${ok} of ${made.length} custom songs are installed ${s.kind === "psp" ? "on your PSP" : "in PPSSPP"}${upd ? ` – ${upd} ${upd > 1 ? "need" : "needs"} an update` : ""}.`;
+}
 async function showSticks() {
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / Memory stick`;
-  $("#main").innerHTML = `<div class="panel dim">Looking at the memory sticks…</div>`;
-  const v = await loadSticks();
-  const stickHtml = s => {
-    const iss = stickIssues(s);
-    const rows = s.songs.map(x => {
-      const st = STATE_TXT[x.state], can = s.online && x.built;
-      const pre = can && x.state !== "installed";
-      return `<tr data-f="${esc(x.folder)}"><td>${can ? `<input type="checkbox" aria-label="Copy ${esc(x.title || x.folder)}" ${pre ? "checked" : ""}>` : ""}</td>
-        <td>${esc(x.title || "(unknown)")} <span class="dim small mono">${esc(x.folder)}</span>${x.inLibrary ? "" : ' <span class="badge">not in your library</span>'}</td>
-        <td><span class="badge ${st[0]}">${st[1]}</span></td>
-        <td>${x.state === "missing" ? "" : x.listed ? '<span class="badge ok">listed</span>' : '<span class="badge warn">hidden</span>'}</td>
-        <td class="small">${x.mb || ""}</td>
-        <td>${!x.inLibrary && x.state === "extra" ? `<button class="small" data-import="${esc(s.music + "\\" + x.folder)}">Import…</button>` : ""}</td></tr>`;
-    }).join("");
-    return `<div class="panel stick" data-id="${esc(s.id)}"><div class="row">${stickSummary(s)}<span class="grow"></span>${s.online ? `<button class="small" data-a="rescan">Check again</button>` : ""}</div>
-      <div class="small dim mono" style="margin:4px 0 8px">${esc(s.music)}</div>
-      ${s.db ? `<div class="small">The game uses <span class="mono">${esc(s.db.folder)}\\${esc(s.db.file)}</span>${s.db.pack ? `, pack "${esc(s.db.pack)}"` : ""}${s.db.state !== "official" ? `, listing ${s.db.customs.length} custom song${s.db.customs.length === 1 ? "" : "s"}` : " (official)"}.
-        ${s.srcDb ? `Your last build: <span class="mono">${esc(s.srcDb.file)}</span>, ${s.srcDb.customs.length} songs.` : ""}</div>` : ""}
-      ${iss.length ? `<ul class="issues">${iss.map(i => `<li class="${i.level}">${i.html}</li>`).join("")}</ul>` : ""}
-      <table class="t sticktable"><tr><th></th><th>Song</th><th>On the memory stick</th><th>In the game</th><th>MB</th><th></th></tr>${rows}</table>
-      ${s.online ? `<div class="actions" style="margin-top:8px"><button class="primary" data-a="install">Install selected…</button>
-        <label class="small"><input type="checkbox" data-a="db" ${s.db && s.db.state === "current" ? "" : "checked"}> replace the song database with yours</label>
-        <span class="grow"></span><button data-a="all">Select changed</button><button data-a="none">Clear</button></div>`
-        : `<p class="small dim">Connect the PSP by USB (Settings → USB Connection) to install or check it again.</p>`}</div>`;
+  Object.assign(SP, { plan: {}, filter: "all", q: "", view: "list", target: null });
+  $("#main").innerHTML = `<div class="panel dim">Looking at your memory stick…</div>`;
+  SP.v = await loadSticks();
+  if (!SP.stick || !SP.v.sticks.some(s => s.id === SP.stick)) SP.stick = (SP.v.sticks.find(s => s.online && s.kind === "ppsspp") || SP.v.sticks.find(s => s.online) || SP.v.sticks[0] || { id: "ppsspp" }).id;
+  GUARD = { what: "your switch changes", dirty: () => !!$(".stickpage") && Object.keys(SP.plan).length > 0 && ["list", "review"].includes(SP.view),
+    leave: { title: "Leave without applying your changes?", body: "Your switch changes aren't on the memory stick yet.", discard: "Discard changes" } };
+  renderSticks();
+}
+// re-render, keeping the keyboard focus on the same control (a switch, a filter, the search box)
+function renderSticks() {
+  const a = document.activeElement, keyOf = el => !el || el === document.body ? null
+    : el.id ? "#" + el.id : ["want", "filter", "allwant", "dev", "archive", "restore", "rmone"].map(k => el.dataset[k] != null ? `[data-${k}="${el.dataset[k]}"]` : null).find(Boolean);
+  const key = keyOf(a), caret = a && a.id === "stq" ? a.selectionStart : null;
+  const v = SP.v, s = v.sticks.find(x => x.id === SP.stick);
+  const views = { list: stickListHtml, review: stickReviewHtml, applying: stickApplyingHtml, done: stickDoneHtml, failed: stickFailedHtml, archive: stickArchiveHtml, remove: stickRemoveHtml };
+  const body = !s ? stickMissingHtml(SP.stick) : !s.online ? stickOfflineHtml(s) : views[SP.view](s);
+  $("#main").innerHTML = `<div class="stickpage"><div class="bar"><h1>Memory stick</h1>${stickTabs(v)}</div>${body}</div>`;
+  bindSticks(s);
+  const back = key && $(key);
+  if (back) { back.focus(); if (caret != null) back.setSelectionRange(caret, caret); }
+}
+function stickTabs(v) {
+  const list = v.sticks.map(s => [s.id, s.kind === "ppsspp" ? "PPSSPP on this computer" : s.online ? `PSP by USB (${s.drive || s.label.replace(/.*\((.*)\).*/, "$1")})` : "PSP (not connected)"]);
+  if (!v.sticks.some(s => s.kind === "ppsspp")) list.unshift(["ppsspp", "PPSSPP on this computer"]);
+  if (!v.sticks.some(s => s.kind === "psp")) list.push(["psp", "PSP by USB"]);
+  const busy = SP.view === "applying";
+  return `<div class="seg devtabs" role="tablist" aria-label="Memory stick">${list.map(([id, n]) => `<button role="tab" data-dev="${esc(id)}" class="${SP.stick === id ? "on" : ""}" aria-selected="${SP.stick === id}" ${busy ? "disabled" : ""}>${esc(n)}</button>`).join("")}</div>`;
+}
+function stickMissingHtml(id) {
+  if (id === "ppsspp") return `<div class="panel"><h2>PPSSPP's memory stick isn't set yet</h2>
+    <p>Pocket Encore needs to know where PPSSPP keeps its memory stick. <a href="#/setup">Open Settings</a> to set it.</p></div>`;
+  return `<div class="panel"><h2>No PSP connected</h2><ol class="steps"><li>Connect your PSP to this computer with a USB cable.</li>
+    <li>On the PSP, open <b>Settings → USB Connection</b>.</li><li>Then <button class="linkbtn" id="spRescan">check again</button>: Pocket Encore shows its songs here.</li></ol></div>`;
+}
+function stickOfflineHtml(s) {
+  const mine = s.songs.filter(x => x.inLibrary && x.state !== "missing").length;
+  return `<div class="panel"><h2>Your PSP isn't connected</h2><ol class="steps"><li>Connect your PSP to this computer with a USB cable.</li>
+    <li>On the PSP, open <b>Settings → USB Connection</b>.</li><li>Then <button class="linkbtn" id="spRescan">check again</button>.</li></ol>
+    <p class="small dim">Last time (${esc(whenTxt(s.at))}): ${mine} of your custom song${mine === 1 ? " was" : "s were"} on it.</p></div>`;
+}
+function stickListHtml(s) {
+  const rows = stickRowsOf(s), P = stickPending(s, rows);
+  const FILTERS = [["all", "All", () => true], ["ok", "Installed", r => r.st === "ok"], ["upd", "Update ready", r => r.st === "upd"], ["new", "Not installed", r => r.st === "new"],
+    ["hidden", "Not shown in the game", r => r.st === "hidden"], ["notmade", "Not made yet", r => r.st === "notmade"]].filter(([k, , f]) => k === "all" || rows.some(f));
+  const fdef = FILTERS.find(f => f[0] === SP.filter) || FILTERS[0], q = SP.q.toLowerCase();
+  const shown = rows.filter(fdef[2]).filter(r => !q || `${r.title} ${r.artist} ${r.folder}`.toLowerCase().includes(q));
+  const can = shown.filter(r => r.st !== "notmade"), onN = can.filter(r => r.want).length, all = fdef[0] === "all" && !q;
+  const nNew = P.copy.filter(r => r.st === "new").length, nUpd = P.copy.length - nNew;
+  const parts = [nNew && `${nNew} to install`, nUpd && `${nUpd} to update`, P.show.length && `${P.show.length} to show in the game again`, P.rm.length && `${P.rm.length} to remove`].filter(Boolean);
+  const effect = r => r.st === "notmade" ? "" : r.st === "new" ? (r.want ? "Will be installed" : "Stays off the memory stick")
+    : !r.want ? "Will be removed from the memory stick (it stays in your songs)" : r.st === "upd" ? "Will be updated" : r.st === "hidden" ? "Will be shown in the game again" : "";
+  const others = s.songs.filter(x => !x.inLibrary && !x.archived && x.state !== "missing");
+  const other = s.db && s.db.state === "other";
+  const row = r => { const [k, label, sub] = SCHIP[r.st], e = effect(r);
+    return `<div class="srow${r.want !== r.def ? " changed" : ""}" data-f="${esc(r.folder)}">
+      <div class="rt"><a href="#/song/${esc(r.folder)}" class="sname">${esc(songName(r))}</a><span class="small dim">${esc(r.artist || "")}${r.mb ? ` · ${r.mb} MB` : ""}</span></div>
+      <div class="rs"><span class="state"><span class="sdot ${k}" aria-hidden="true"></span>${label}</span><span class="small dim">${sub}</span>${e ? `<span class="small effect">${e}</span>` : ""}</div>
+      <div class="ctl">${r.st === "notmade" ? `<a class="btn small" href="#/song/${esc(r.folder)}">Make the song</a>`
+        : `<label class="sw"><input type="checkbox" data-want="${esc(r.folder)}" aria-label="Add ${esc(songName(r))} in game" ${r.want ? "checked" : ""}><span aria-hidden="true">Add in game</span></label>`}
+        <button class="small" data-archive="${esc(r.folder)}" aria-label="Archive ${esc(songName(r))}">Archive</button></div></div>`; };
+  const archived = SP.v.archived || [], onStick = f => s.songs.find(x => x.folder === f && x.state !== "missing");
+  const archOn = archived.filter(a => onStick(a.folder));
+  return `${other ? `<div class="notice warn"><b>${stickSummaryLine(s, rows)}</b></div>` : ""}
+    <div class="panel lead"><p><b>${other ? "Your songs are switched on below." : stickSummaryLine(s, rows)}</b></p>
+      <p class="small dim">The switches below show what the memory stick will have. Nothing changes until you press <b>Review and apply</b>.</p></div>
+    <section class="panel"><div class="bar"><h2>Your custom songs <span class="small dim">· ${rows.length}</span></h2>
+        <input type="search" id="stq" placeholder="Find a song…" aria-label="Find a song" value="${esc(SP.q)}"></div>
+      <div class="listtools">
+        <div class="chips" role="group" aria-label="Show">${FILTERS.map(([k, n, f]) => `<button class="fchip ${fdef[0] === k ? "on" : ""}" data-filter="${k}" aria-pressed="${fdef[0] === k}">${n} <span>${rows.filter(f).length}</span></button>`).join("")}</div>
+        <div class="actions"><span class="small dim" aria-live="polite">${onN} of ${can.length} ${all ? "" : "shown "}added in game</span>
+          <button class="small" data-allwant="1" ${onN === can.length ? "disabled" : ""}>${all ? "Add all in game" : `Add these ${can.length} in game`}</button>
+          <button class="small" data-allwant="0" ${onN === 0 ? "disabled" : ""}>${all ? "Remove all from game" : `Remove these ${can.length} from game`}</button>
+          ${Object.keys(SP.plan).length ? `<button class="linkbtn small" id="spUndo">Undo my changes</button>` : ""}</div></div>
+      ${shown.length ? `<div class="srows">${shown.map(row).join("")}</div>` : `<p class="small dim">${rows.length ? "No songs match." : `No songs yet: <a href="#/new">make your first song</a>.`}</p>`}
+    </section>
+    ${others.length ? `<details class="panel others" ${other ? "open" : ""}><summary><b>${others.length} other song${others.length > 1 ? "s" : ""} on the memory stick</b> <span class="small dim">· not in your library</span></summary>
+      <p class="small">${other ? "These came with the other pack. The game lists them now; after you apply, it won't, unless you add them to your library first."
+        : "Song folders that aren't in your library (a friend's pack, or songs from an older library). The game doesn't list them; they only take up space."}</p>
+      <div class="srows">${others.map(x => `<div class="srow"><div class="rt"><b>${esc(songName(x))}</b><span class="small dim">${esc(x.artist || "")}${x.artist ? " · " : ""}<span class="mono">${esc(x.folder)}</span> · ${x.stickMb} MB</span></div>
+        <div class="rs"><span class="state"><span class="sdot" aria-hidden="true"></span>Not in your library</span>${x.listed ? `<span class="small dim">The game lists it now</span>` : ""}</div>
+        <div class="ctl"><button class="small" data-import="${esc(s.music + "\\" + x.folder)}" aria-label="Add ${esc(songName(x))} to my library">Add to my library</button>
+          <button class="small" data-rmone="${esc(x.folder)}" aria-label="Remove ${esc(songName(x))} from the memory stick">Remove from memory stick</button></div></div>`).join("")}</div>
+      ${others.length > 1 ? `<div class="actions"><button data-rmone="**">Remove all ${others.length} from the memory stick</button></div>` : ""}</details>` : ""}
+    ${archived.length ? `<details class="panel"><summary><b>Archived songs</b> <span class="small dim">· ${archived.length} · kept on your computer, not in your song list${archOn.length ? ` · ${archOn.length} still on the memory stick` : ""}</span></summary>
+      <p class="small">Archived songs aren't in the game's song list. ${archOn.length ? "Some still have their folder on the memory stick: they only take up space. " : ""}Restore one to bring it back to your custom songs.</p>
+      <div class="srows">${archived.map(a => { const x = onStick(a.folder); return `<div class="srow"><div class="rt"><b>${esc(songName(a))}</b><span class="small dim">${esc(a.artist || "")}</span></div>
+        <div class="rs"><span class="state"><span class="sdot" aria-hidden="true"></span>Archived</span><span class="small dim">${x ? `Its folder is still on the memory stick${x.listed ? " (the game lists it until you apply your next changes)" : " (the game doesn't list it)"}` : "Not on the memory stick"}</span></div>
+        <div class="ctl"><button class="small" data-restore="${esc(a.folder)}" aria-label="Restore ${esc(songName(a))}">Restore</button>${x ? `<button class="small" data-rmone="${esc(a.folder)}" aria-label="Remove ${esc(songName(a))} from the memory stick">Remove from memory stick</button>` : ""}</div></div>`; }).join("")}</div>
+      ${archOn.length > 1 ? `<div class="actions"><button data-rmone="*">Remove all ${archOn.length} from the memory stick</button></div>` : ""}</details>` : ""}
+    <p class="small dim">Got songs from someone? Add them on the <a href="#/packs">Share</a> page.</p>
+    <details class="panel"><summary>Details for experts</summary><p class="small dim"><span class="mono">${esc(s.music)}</span>${s.freeMb != null ? ` · ${sizeTxt(s.freeMb)} free` : ""}
+      · song list ${s.db ? `<span class="mono">${esc(s.db.folder)}\\${esc(s.db.file)}</span> (${s.db.state === "official" ? "the game's own" : s.db.state === "other" ? `someone else's${s.db.pack ? `: ${esc(s.db.pack)}` : ""}` : "yours"}, ${s.db.customs.length} custom songs)` : "none (the game lists its own songs only)"}
+      · each song is a folder named after it (${rows.slice(0, 2).map(r => esc(r.folder)).join(", ")}${rows.length > 2 ? "…" : ""}).</p></details>
+    <div class="applybar"><span>${P.any ? `<b>${parts.join(", ") || "Your song list will be updated"}</b>` : `<span class="dim">The memory stick matches your library. Nothing to apply.</span>`}</span>
+      <button class="primary big" id="spReview" ${P.any ? "" : "disabled"}>Review and apply</button></div>`;
+}
+const whatLi = (mark, html) => `<li><span class="mark ${mark}" aria-hidden="true">${mark === "ok" ? "✓" : mark === "rm" ? "−" : "·"}</span><span>${html}</span></li>`;
+function stickReviewHtml(s) {
+  const rows = stickRowsOf(s), P = stickPending(s, rows), names = l => esc(l.map(songName).join(", "));
+  const fresh = P.copy.filter(r => r.st === "new"), upd = P.copy.filter(r => r.st === "upd");
+  const mb = P.copy.reduce((a, r) => a + r.mb, 0), freed = P.rm.reduce((a, r) => a + (r.stickMb || 0), 0) + upd.reduce((a, r) => a + (r.stickMb || 0), 0);
+  const others = s.songs.filter(x => !x.inLibrary && x.state !== "missing"), other = s.db && s.db.state === "other";
+  const short = s.freeMb != null && mb - freed > s.freeMb;
+  return `<section class="panel review"><h2>Apply these changes to ${stickWhere(s)}?</h2>
+    <ul class="what">
+      ${fresh.length ? whatLi("ok", `<b>Installs</b> ${names(fresh)}.`) : ""}
+      ${upd.length ? whatLi("ok", `<b>Updates</b> ${names(upd)} with your latest changes.`) : ""}
+      ${P.show.length ? whatLi("ok", `<b>Shows again</b> ${names(P.show)} in the game.`) : ""}
+      ${P.rm.length ? whatLi("rm", `<b>Removes</b> ${names(P.rm)} from the memory stick. ${P.rm.length > 1 ? "They stay" : "It stays"} in your library, so you can install ${P.rm.length > 1 ? "them" : "it"} again any time.`) : ""}
+      ${P.db === "write" ? whatLi("ok", `<b>Updates your song list</b> so the game lists exactly the ${P.on.length} song${P.on.length > 1 ? "s" : ""} switched on${other ? `, replacing the other ${s.db.pack ? `pack's (${esc(s.db.pack)})` : "build's"} song list` : ""}.`) : ""}
+      ${P.db === "none" ? whatLi("rm", `<b>Removes your song list:</b> no custom song is switched on, so the game lists only its own songs.`) : ""}
+      ${P.keep.length ? whatLi("", `<b>Not touched:</b> ${names(P.keep)}.`) : ""}
+      ${others.length ? whatLi("", other && P.db === "write" ? `<b>The other pack's songs</b> (${names(others)}) stay on the memory stick, but the game stops listing them.`
+        : `<b>${others.length === 1 ? "1 other song folder" : `The ${others.length} other song folders`}</b> on the memory stick ${others.length === 1 ? "is" : "are"} not touched.`) : ""}
+    </ul>
+    <p class="small ${short ? "warnline" : "dim"}">Copies ${sizeTxt(mb)}${s.freeMb != null ? ` · ${sizeTxt(s.freeMb)} free on the memory stick` : ""}.${short ? " Not enough space: switch some songs off, or free some space on the memory stick first." : ""}
+      ${s.kind === "ppsspp" ? "If the game is running in PPSSPP, restart it afterwards." : "Keep the PSP connected until it's done."}</p>
+    <div class="actions"><button id="spBack">Back</button><span class="grow"></span><button class="primary big" id="spApply" ${short ? "disabled" : ""}>Apply changes</button></div></section>`;
+}
+function stickApplyingHtml(s) {
+  return `<section class="panel"><h2>${esc(SP.busyTitle || `Updating ${stickWhere(s)}…`)}</h2>
+    <div class="meter" aria-hidden="true"><i id="spMeter" style="width:${SP.total ? Math.round(100 * Math.min(SP.done, SP.total) / SP.total) : 5}%"></i></div>
+    <p class="small dim" id="spLine" aria-live="polite">${esc(SP.last || "Starting…")}</p>
+    <p class="small dim">${s.kind === "psp" ? "Keep the PSP connected until it's done." : "This takes a few seconds per song."}</p></section>`;
+}
+function stickDoneHtml(s) {
+  return `<section class="panel donebox"><h2>${esc(SP.doneTitle || "Memory stick updated")}</h2>
+    <p>${s.kind === "psp" ? "On your PSP, end the USB connection, then start Rock Band Unplugged: your custom songs are in the song list."
+      : "Start Rock Band Unplugged in PPSSPP, or restart it if it's running: your custom songs are in the song list."}</p>
+    <div class="actions"><button class="primary" id="spBack">Back to the memory stick</button><a class="btn" href="#/">Back to my songs</a></div></section>`;
+}
+function stickFailedHtml(s) {
+  return `<section class="panel notice bad"><h2>The memory stick wasn't fully updated</h2>
+    <p>${esc(SP.err && SP.err.length ? SP.err.join(" ") : "Something went wrong.")}</p>
+    <p class="small dim">Songs already copied are complete: a copy that stops halfway never leaves half a song. The Build log (top right) shows every step.</p>
+    <div class="actions"><button class="primary" id="spBack">Back to the memory stick</button><button id="spLog">Show the log</button></div></section>`;
+}
+function stickArchiveHtml(s) {
+  const x = s.songs.find(y => y.folder === SP.target);
+  if (!x) { SP.view = "list"; return stickListHtml(s); }
+  const on = x.state !== "missing";
+  return `<section class="panel review"><h2>Archive ${esc(songName(x))}?</h2>
+    <ul class="what">${whatLi("", `<b>It leaves your songs</b> and the game's song list.`)}
+      ${whatLi("ok", `<b>Nothing is deleted:</b> its audio, chart and settings are kept on your computer. Restore it any time from <i>Archived songs</i> on this page.`)}</ul>
+    ${on ? `<label class="sw wrap"><input type="checkbox" id="archRm" checked><span>Also remove it from ${stickWhere(s)} now (frees ${x.stickMb || x.mb} MB)</span></label>
+      <p class="small dim">Leave it unticked to keep its folder on the memory stick; the game stops listing it when you next apply changes on this page.</p>` : ""}
+    <div class="actions"><button id="spBack">Cancel</button><span class="grow"></span><button class="primary big" id="archGo">Archive</button></div></section>`;
+}
+function stickRemoveTargets(s) {
+  const onStick = f => s.songs.find(x => x.folder === f && x.state !== "missing" && !x.inLibrary);
+  if (SP.target === "*") return (SP.v.archived || []).map(a => onStick(a.folder)).filter(Boolean);
+  if (SP.target === "**") return s.songs.filter(x => !x.inLibrary && !x.archived && x.state !== "missing");
+  const x = onStick(SP.target); return x ? [x] : [];
+}
+function stickRemoveHtml(s) {
+  const list = stickRemoveTargets(s), n = list.length, one = n === 1;
+  if (!n) { SP.view = "list"; return stickListHtml(s); }
+  const archived = list.every(x => x.archived), listed = list.some(x => x.listed) && ourStickDb(s);
+  return `<section class="panel review"><h2>Remove ${one ? esc(songName(list[0])) : n + " song folders"} from the memory stick?</h2>
+    <p>${archived ? (one ? "This is an archived song: it stays in your archive on your computer." : `These are archived songs: ${esc(list.map(songName).join(", "))}. They stay in your archive on your computer.`)
+      : one ? "It isn't in your library: Pocket Encore has no copy of it, so once it's removed, it's gone from the memory stick."
+      : `They aren't in your library (${esc(list.map(songName).join(", "))}): Pocket Encore has no copy of them, so once they're removed, they're gone from the memory stick.`}</p>
+    <ul class="what">${whatLi("rm", `${one ? "Its folder is" : "Their folders are"} deleted from the memory stick (${sizeTxt(list.reduce((a, x) => a + x.stickMb, 0))}).`)}
+      ${whatLi("", listed ? "Your song list is updated so it stops listing " + (one ? "it" : "them") + ". Your custom songs are not touched." : "Your custom songs and your song list are not touched.")}
+      ${whatLi("", archived ? `To play ${one ? "it" : "them"} again later, restore ${one ? "it" : "them"} and install from this page.` : `To play ${one ? "it" : "them"} again, add ${one ? "it" : "them"} from the pack or folder ${one ? "it" : "they"} came from.`)}</ul>
+    <div class="actions"><button id="spBack">Back</button><span class="grow"></span><button class="danger big" id="rmGo">Remove ${one ? "this folder" : n + " folders"}</button></div></section>`;
+}
+// a memory stick job (apply, remove, archive): progress on the page, then Done or what went wrong
+function followStick(total, busyTitle, doneTitle) {
+  Object.assign(SP, { view: "applying", done: 0, total, last: "", err: [], busyTitle, doneTitle });
+  renderSticks();
+  $("#buildToggle").classList.remove("hidden");
+  window.onBuildLine = l => {
+    if (/^\s{2}\S/.test(l)) SP.done++;
+    if (/ERROR/.test(l)) SP.err.push(l.replace(/^\s*ERROR:\s*/, ""));
+    if (l.trim() && !l.startsWith("#")) SP.last = l.trim();
+    const m = $("#spMeter"); if (m && SP.total) m.style.width = Math.round(100 * Math.min(SP.done, SP.total) / SP.total) + "%";
+    const t = $("#spLine"); if (t) t.textContent = SP.last;
   };
-  $("#main").innerHTML = `<div class="panel small"><b>Memory sticks.</b> Every build stamps its song folders (<span class="mono">PESONG.JSON</span>) and song database
-      (<span class="mono">ZZCUSTOMDB\\PEDB.JSON</span>), so Pocket Encore can tell what is on a memory stick: PPSSPP's (the MUSIC folder on Setup) and a PSP
-      connected by USB. An unplugged PSP shows its last check. The game itself ignores these files.</div>
-    ${v.sticks.map(stickHtml).join("") || `<div class="panel dim">No memory stick found: set PPSSPP's MUSIC folder on Setup, or connect the PSP by USB.</div>`}
-    <div class="panel"><h4>Import songs</h4>
-      <p class="small dim">Songs someone shared (a pack folder, its MUSIC folder or one song folder; unzip it first). They join your library with their chart and
-      audio as shipped, so your song database lists them with your songs. Don't copy someone else's <span class="mono">ZZCUSTOMDB</span> onto your memory stick: it replaces yours.</p>
-      <div class="inline"><input type="text" id="im_dir" style="flex:1" placeholder="Folder with the shared songs" value="${esc(localStorage.importDir || "")}"><button onclick="pickInto('#im_dir', null, true)">Browse…</button><button class="primary" id="im_go">Look for songs</button></div></div>`;
-  document.querySelectorAll(".panel.stick").forEach(p => {
-    const s = v.sticks.find(x => x.id === p.dataset.id);
-    const boxes = () => [...p.querySelectorAll("tr[data-f] input")];
-    const btn = a => p.querySelector(`[data-a="${a}"]`);
-    if (btn("rescan")) btn("rescan").onclick = () => showSticks();
-    if (btn("all")) btn("all").onclick = () => boxes().forEach(b => { const x = s.songs.find(y => y.folder === b.closest("tr").dataset.f); b.checked = x.state !== "installed"; });
-    if (btn("none")) btn("none").onclick = () => boxes().forEach(b => { b.checked = false; });
-    if (btn("install")) btn("install").onclick = () => installTo(s.id, "library", boxes().filter(b => b.checked).map(b => b.closest("tr").dataset.f), btn("db").checked);
-    p.querySelectorAll("[data-import]").forEach(b => b.onclick = () => importFrom(b.dataset.import));
+  window.onBuildEnd = async code => {
+    window.onBuildLine = window.onBuildEnd = null;
+    if (!/^#\/stick/.test(location.hash) || SP.view !== "applying") return false;
+    SP.plan = {}; SP.view = code === "0" ? "done" : "failed";
+    try { SP.v = await loadSticks(); } catch { }
+    renderSticks();
+    return true;
+  };
+  followBuild();
+}
+function bindSticks(s) {
+  const on = (sel, fn) => document.querySelectorAll(sel).forEach(b => b.onclick = fn);
+  const go = view => { SP.view = view; renderSticks(); window.scrollTo(0, 0); };
+  on("[data-dev]", async e => {
+    const id = e.currentTarget.dataset.dev; if (id === SP.stick) return;
+    if (Object.keys(SP.plan).length && await ask("Discard your changes?", "Your switch changes for this memory stick aren't applied yet.", [
+      { label: "Discard changes", value: "y", kind: "danger" }, { label: "Keep them", value: null }]) !== "y") return;
+    Object.assign(SP, { stick: id, plan: {}, view: "list" }); renderSticks();
   });
-  $("#im_go").onclick = () => { const d = $("#im_dir").value.trim(); if (!d) return toast("Pick the folder with the shared songs first.", true); localStorage.importDir = d; importFrom(d); };
+  on("#spRescan", () => showSticks());
+  if (!s || !s.online) return;
+  const rows = SP.view === "list" ? stickRowsOf(s) : [];
+  const setWant = (f, w) => { const r = rows.find(x => x.folder === f); if (!r || r.st === "notmade") return; if (w === r.def) delete SP.plan[f]; else SP.plan[f] = w; };
+  document.querySelectorAll("[data-want]").forEach(b => b.onchange = () => { setWant(b.dataset.want, b.checked); renderSticks(); });
+  on("[data-filter]", e => { SP.filter = e.currentTarget.dataset.filter; renderSticks(); });
+  if ($("#stq")) $("#stq").oninput = e => { SP.q = e.target.value; renderSticks(); };
+  on("[data-allwant]", e => {
+    const w = e.currentTarget.dataset.allwant === "1";
+    document.querySelectorAll("[data-want]").forEach(b => setWant(b.dataset.want, w));  // the songs shown (filter and search)
+    renderSticks();
+  });
+  on("#spUndo", () => { SP.plan = {}; renderSticks(); });
+  on("[data-archive]", e => { SP.target = e.currentTarget.dataset.archive; go("archive"); });
+  on("[data-rmone]", e => { SP.target = e.currentTarget.dataset.rmone; go("remove"); });
+  on("[data-import]", e => importFrom(e.currentTarget.dataset.import));
+  on("[data-restore]", async e => {
+    const f = e.currentTarget.dataset.restore, a = (SP.v.archived || []).find(x => x.folder === f);
+    try { await api("POST", "/api/restore", { folder: f }); } catch (err) { return fail("Couldn't restore the song")(err); }
+    toast(`${a ? songName(a) : f} is back in your songs.`);
+    SP.v = await loadSticks(); renderSticks();
+  });
+  on("#spReview", () => go("review"));
+  on("#spBack", async () => { if (SP.view === "done" || SP.view === "failed") { SP.v = await loadSticks(); } go("list"); });
+  on("#spLog", () => { showBuildPanel(true); followBuild(); });
+  on("#spApply", async () => {
+    const r = stickRowsOf(s), P = stickPending(s, r);
+    try { await api("POST", "/api/stick/apply", { stick: s.id, want: P.on }); } catch (err) { return fail("Couldn't update the memory stick")(err); }
+    followStick(P.copy.length + P.rm.length + (P.db !== "keep" ? 1 : 0), `Updating ${stickWhere(s)}…`, "Memory stick updated");
+  });
+  on("#archGo", async () => {
+    const x = s.songs.find(y => y.folder === SP.target), rm = !!($("#archRm") && $("#archRm").checked);
+    let r; try { r = await api("POST", "/api/archive", { folder: SP.target, removeFrom: rm ? [s.id] : [] }); } catch (err) { return fail("Couldn't archive the song")(err); }
+    delete SP.plan[SP.target];
+    if (r.started) return followStick(2, `Archiving ${songName(x)}…`, `${songName(x)} is archived and off the memory stick`);
+    toast(`${songName(x)} is archived.`);
+    SP.v = await loadSticks(); go("list");
+  });
+  on("#rmGo", async () => {
+    const list = stickRemoveTargets(s);
+    try { await api("POST", "/api/stick/remove", { stick: s.id, folders: list.map(x => x.folder) }); } catch (err) { return fail("Couldn't remove it from the memory stick")(err); }
+    followStick(list.length + 1, "Removing from the memory stick…", list.length === 1 ? `${songName(list[0])} is off the memory stick` : `${list.length} song folders removed`);
+  });
 }
 // install: show what will happen, then copy (a job in the build log panel)
 async function installTo(stickId, source, songs, db) {
@@ -940,7 +1143,8 @@ function songStatus(s, x) {
   if (s.status === "not built") return ["todo", "Not made yet", `<button class="primary" data-sg="rebuild">Make the song</button>`];
   if (s.status === "changed since build") return ["todo", "Your changes are saved but not in the game yet", `<button class="primary" data-sg="rebuild">Rebuild song</button>`];
   if (!x) return ["ok", "Built", ""];
-  if (x.state === "missing") return ["todo", "Built · not on the memory stick yet", `<a class="btn primary" href="#/stick">Install on memory stick</a>`];
+  if (x.state === "missing") return x.off ? ["", "Built · not added in game (switched off on the Memory stick page)", `<a class="btn" href="#/stick">Memory stick</a>`]
+    : ["todo", "Built · not on the memory stick yet", `<a class="btn primary" href="#/stick">Install on memory stick</a>`];
   if (x.state === "installed") return x.listed ? ["ok", "In the game · up to date", ""] : ["todo", "On the memory stick, but the game doesn't list it yet", `<a class="btn primary" href="#/stick">Update on memory stick</a>`];
   return ["todo", "Built · the memory stick has an older version", `<a class="btn primary" href="#/stick">Update on memory stick</a>`];
 }
@@ -1632,13 +1836,13 @@ function followBuild() {
   log.innerHTML = "";
   es = new EventSource("/api/build");
   let kind = "";
-  es.addEventListener("start", e => { const d = JSON.parse(e.data); kind = d.from; $("#buildTitle").textContent = d.from === "install" ? `Install to the ${d.folder}` : d.from === "pack" ? `Build ${d.folder}` : d.from === "many" ? `Build ${d.folder}` : `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
+  es.addEventListener("start", e => { const d = JSON.parse(e.data); kind = d.from; $("#buildTitle").textContent = d.from === "install" ? `Install to the ${d.folder}` : d.from === "stick" ? `Memory stick: ${d.folder}` : d.from === "pack" ? `Build ${d.folder}` : d.from === "many" ? `Build ${d.folder}` : `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
   es.addEventListener("line", e => { const l = JSON.parse(e.data); logLine(log, l); if (window.onBuildLine) window.onBuildLine(l); });
   es.addEventListener("end", e => {
     const code = JSON.parse(e.data);
     es.close(); es = null;
     if (code === "none") { $("#buildTitle").textContent = "Build"; $("#buildState").innerHTML = '<span class="dim">nothing built yet in this session (a song\'s "Last log" button shows its log from disk)</span>'; return; }
-    $("#buildState").innerHTML = code === "0" ? (kind === "install"
+    $("#buildState").innerHTML = code === "0" ? (kind === "install" || kind === "stick"
       ? '<span class="badge ok">installed</span> <span class="small dim">restart the game to see the changes (on a PSP, end the USB connection first)</span>'
       : kind === "pack"
       ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: Install… on the Packs page copies it to the memory stick</span>'

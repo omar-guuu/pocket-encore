@@ -413,3 +413,38 @@ details.menu .menubox button { text-align: left; }
 .unsaved.hidden { display: none; }
 @media (max-width: 860px) { .pane .grid2 { grid-template-columns: 1fr; } .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pane .form { grid-template-columns: 1fr; } }
 .pane .tiers { grid-template-columns: 1fr; }
+
+/* ---------- UI revamp: Memory stick page ---------- */
+.stickpage { display: grid; gap: 14px; max-width: 1400px; }
+.stickpage .bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.stickpage h1 { margin: 0; font-size: 22px; }
+.stickpage h2 { margin: 0; font-size: 16px; }
+.stickpage p { margin: 0; }
+.stickpage .panel { margin: 0; display: grid; gap: 10px; }
+.stickpage details.panel summary { cursor: pointer; }
+.stickpage details.panel:not([open]) { gap: 0; }
+.stickpage input[type=search] { width: 220px; max-width: 100%; }
+.stickpage ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.devtabs button { padding: 6px 12px; }
+.listtools { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.fchip { border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.fchip span { color: var(--dim); margin-left: 2px; }
+.fchip.on { background: var(--primary); border-color: var(--accent); }
+.fchip.on span { color: var(--text); }
+.srows { display: grid; gap: 6px; }
+.srow { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: 12px; align-items: center; padding: 8px 12px; border-radius: 6px; background: var(--panel2); border: 1px solid transparent; }
+.srow.changed { border-color: var(--accent); }
+.srow .rt, .srow .rs { display: grid; gap: 2px; min-width: 0; }
+.srow .sname { color: var(--text); font-weight: 600; text-decoration: none !important; }
+.srow .sname:hover { text-decoration: underline !important; }
+.srow .effect { color: var(--accent); font-weight: 600; }
+.srow .ctl { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+.srow .sw { font-weight: 400; font-size: 13px; }
+.sw.wrap { white-space: normal; font-weight: 400; }
+.applybar { position: sticky; bottom: 0; z-index: 4; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; box-shadow: 0 -4px 14px rgba(0,0,0,.2); }
+.applybar:has(button:not([disabled])) { border-color: var(--accent); }
+.stickpage .review { max-width: 900px; }
+.mark.rm { color: var(--bad); border-color: var(--bad-line); }
+button.danger.big { padding: 9px 18px; }
+@media (max-width: 860px) { .srow { grid-template-columns: minmax(0, 1fr); } .srow .ctl { justify-content: flex-start; } }
