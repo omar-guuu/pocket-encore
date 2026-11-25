@@ -115,6 +115,13 @@ function writeSong(folder, S) {
 }
 const mtime = f => { try { return fs.statSync(f).mtimeMs; } catch { return 0; } };
 
+// what the audio stages (prepwav, lead-in, loudness, at3tool, preview) read: the stems and the song.json keys they use
+function audioInputsHash(folder) {
+  const dir = songDir(folder), S = readSong(folder), h = crypto.createHash("sha1");
+  h.update(JSON.stringify({ stems: S.stems || {}, gain: S.gain, leadIn: S.leadIn, countIn: !!S.countIn, tail: S.tail, loudness: S.loudness, preview: S.preview }));
+  for (const k of Object.keys(S.stems || {})) { const p = path.resolve(dir, S.stems[k]); try { const st = fs.statSync(p); h.update(`${p}\0${st.size}\0${st.mtimeMs}`); } catch { h.update(p + "\0missing"); } }
+  return h.digest("hex");
+}
 // ---------- build inputs: a hash of everything a build reads from the song folder ----------
 // Stored in build/inputs.json after a successful build; "changed since build" compares against it.
 function inputsHash(folder) {
@@ -338,12 +345,22 @@ function checkSetup() {
 }
 function songBuildStep(folder, from = "audio") {
   const hash = inputsHash(folder), B = path.join(songDir(folder), "build");
+  // the audio inputs the built audio came from: new on an audio build, carried over on a chart build (the audio wasn't redone)
+  const audioHash = from === "audio" ? audioInputsHash(folder) : (readInputs(folder) || {}).audioHash;
   return { args: [path.join(SCRIPTS, "mksong.js"), path.join(songDir(folder), "song.json"), "--from", from],
-    onDone: code => { if (code === 0) { fs.mkdirSync(B, { recursive: true }); fs.writeFileSync(path.join(B, "inputs.json"), JSON.stringify({ hash, from, at: new Date().toISOString() })); } } };
+    onDone: code => { if (code === 0) { fs.mkdirSync(B, { recursive: true }); fs.writeFileSync(path.join(B, "inputs.json"), JSON.stringify({ hash, audioHash, from, at: new Date().toISOString() })); } } };
+}
+const readInputs = folder => { try { return JSON.parse(fs.readFileSync(path.join(songDir(folder), "build", "inputs.json"), "utf8")); } catch { return null; } };
+// Rebuild song: the audio stages only when something they read changed (or nothing says what the audio was built from)
+function autoStage(folder) {
+  const S = readSong(folder), I = readInputs(folder);
+  if (S.imported || !fs.existsSync(path.join(songDir(folder), "build", "audio.json")) || !I || !I.audioHash) return "audio";
+  return I.audioHash === audioInputsHash(folder) ? "chart" : "audio";
 }
 function startBuild(folder, from) {
-  if (!["audio", "chart", "db"].includes(from)) throw httpError(400, "bad stage");
+  if (!["audio", "chart", "db", "auto"].includes(from)) throw httpError(400, "bad stage");
   readSong(folder);
+  if (from === "auto") from = autoStage(folder);
   checkSetup();
   const step = songBuildStep(folder, from);
   step.label = `# ${new Date().toISOString()} mksong ${folder} --from ${from}`;
@@ -752,7 +769,7 @@ async function route(req, res) {
   }
   if (what === "build" && M === "POST") {
     const b = startBuild(folder, u.searchParams.get("from") || "audio");
-    return json(res, { started: b.started });
+    return json(res, { started: b.started, from: b.from });
   }
   if (what === "build" && M === "GET") {  // server-sent events: the running (or last) build's output
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });

@@ -891,71 +891,130 @@ function showHelp(topic) {
 }
 
 // ---------- song page ----------
+// ---------- song page: status and the next step above the title, then Song info | Audio | Chart | Effects & Band Anims ----------
+const TIER_NAMES = ["Warmup", "Apprentice", "Solid", "Moderate", "Challenging", "Nightmare", "Impossible"];
+// the game's Choose Difficulty screen: five marks; empty circles = Warmup, white dots up to Nightmare, five red rock hands = Impossible
+const ROCK_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="5.5" y="1.5" width="3.4" height="12" rx="1.7"/><rect x="15.6" y="3" width="3.2" height="10.5" rx="1.6"/><rect x="8.6" y="8.6" width="7.2" height="4.6" rx="2"/><rect x="5.5" y="10.5" width="13.3" height="11" rx="3.4"/><rect x="3" y="13" width="9" height="3.6" rx="1.8"/></svg>`;
+const SLOT_LABEL = { drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", fill: "Backing track" };
 async function showSong(folder, tab) {
   CUR = await api("GET", `/api/song/${folder}`);
-  const S = CUR.song;
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / ${esc(S.title)} <span class="dim">(${esc(folder)})</span> ${statusBadge(CUR)}`;
-  const tabs = [["details", "Details"], ["editor", "Chart"], ["anims", "Effects & Band Anims"], ["json", "song.json"]];
-  $("#main").innerHTML = `<div class="tabs">${tabs.map(([k, n]) => `<button class="${k === tab ? "on" : ""}" onclick="location.hash='#/song/${folder}/${k}'">${n}</button>`).join("")}
-    <span class="grow"></span>${buildButtons(folder)}</div><div id="tab"></div>`;
-  if ((tab === "editor" || tab === "anims") && S.imported) { $("#tab").innerHTML = `<div class="panel">This song was imported from someone else's pack: its chart and audio are played as they were shipped, so the gems, effects and band animations can't be edited here. Its details (title, tiers…) can be changed on the Details tab.</div>`; return; }
+  const S = CUR.song, adv = window.editMode() === "advanced";
+  const tabs = S.imported ? [["details", "Song info"]] : [["details", "Song info"], ["audio", "Audio"], ["editor", "Chart"], ["anims", "Effects & Band Anims"], ...(adv ? [["json", "song.json"]] : [])];
+  if (!tabs.some(t => t[0] === tab)) tab = "details";
+  const compact = tab === "editor" || tab === "anims";
+  const fx = Array.isArray(S.effects) ? S.effects.length : S.effects ? 1 : 0;
+  const facts = S.imported ? [] : [["Audio", `${Object.keys(S.stems || {}).length} tracks`], ["Chart", CUR.chartSource === "edited" ? "edited by you" : CUR.chartSource === "midi" ? "from your MIDI" : "made from the audio"],
+    ["Effects", fx ? `${fx} effect${fx > 1 ? "s" : ""}` : "none"], ["Built", CUR.builtAt ? new Date(CUR.builtAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "not yet"]];
+  $("#main").innerHTML = `<div class="songpage${compact ? " compact" : ""}">
+    <div class="shtop"><a href="#/">← Your songs</a>${compact ? `<b class="shname">${esc(S.title)}</b>` : ""}<span class="grow"></span>
+      ${compact ? "" : `<span id="sgMode">${window.editModeButton()}</span>`}
+      <details class="menu"><summary>More</summary><div class="menubox">
+        <button onclick="openFolder('${folder}','outsong')">Open the song's game files</button><button onclick="openFolder('${folder}','song')">Open the song's folder</button>
+        ${CUR.buildLog ? `<button onclick="showStoredLog('${folder}')">Show the last build log</button>` : ""}</div></details></div>
+    <div class="status" id="sgStatus" role="status">${songStatusHtml(songStatus(CUR, null))}</div>
+    ${compact ? "" : `<div class="shtitle"><h1>${esc(S.title)}</h1><p class="dim">${esc(S.artist)}${S.year ? " · " + esc(S.year) : ""}${S.genre ? " · " + esc(S.genre) : ""}${S.imported ? " · shared with you" : ""}</p></div>
+      ${facts.length ? `<ol class="facts">${facts.map(([k, v]) => `<li><span class="small dim">${k}</span><b>${esc(v)}</b></li>`).join("")}</ol>` : ""}`}
+    <nav class="songtabs" role="tablist" aria-label="Song">${tabs.map(([k, n]) => `<a role="tab" href="#/song/${folder}/${k}" data-tab="${k}" class="${k === tab ? "on" : ""}" aria-selected="${k === tab}">${n}</a>`).join("")}</nav>
+    <div id="tab"></div></div>`;
+  document.querySelectorAll(".songtabs [data-tab]").forEach(a => a.onclick = e => {
+    // Song info and Audio are one form: switching between them keeps unsaved changes
+    if ((a.dataset.tab === "details" || a.dataset.tab === "audio") && document.querySelector(`.pane[data-pane="${a.dataset.tab}"]`)) { e.preventDefault(); showPane(a.dataset.tab); }
+  });
+  bindSongStatus(folder);
+  songStatusFromStick(folder);
   if (tab === "editor") { document.body.classList.add("editing"); return window.openEditor($("#tab"), folder, CUR); }
   if (tab === "anims") { document.body.classList.add("editing"); return window.openAnims($("#tab"), folder, CUR); }
   if (tab === "json") return showJson(folder);
-  showDetails(folder);
+  showDetails(folder, tab);
 }
-function buildButtons(folder) {
-  if (CUR && CUR.song.imported) return `<span class="actions">
-    <button class="primary" onclick="runBuild('${folder}','audio')" title="Puts the imported song in out\\MUSIC and builds the song database">Build</button>
-    <button onclick="openFolder('${folder}','outsong')" title="The built song folder in out\\MUSIC">Open output folder</button>
-    ${CUR.buildLog ? `<button onclick="showStoredLog('${folder}')" title="The last build's log, from disk">Last log</button>` : ""}</span>`;
-  return `<span class="actions">
-    <button class="primary" onclick="runBuild('${folder}','audio')" title="Audio, preview, chart and song database (mksong.js)">Build</button>
-    <button onclick="runBuild('${folder}','chart')" title="Chart and song database only: reuses the audio from the last build">Rebuild chart</button>
-    <button onclick="openFolder('${folder}','outsong')" title="The built song folder in out\\MUSIC">Open output folder</button>
-    ${CUR && CUR.buildLog ? `<button onclick="showStoredLog('${folder}')" title="The last build's log, from disk">Last log</button>` : ""}
-  </span>`;
+function showPane(k) {
+  document.querySelectorAll(".pane").forEach(p => p.hidden = p.dataset.pane !== k);
+  document.querySelectorAll(".songtabs [data-tab]").forEach(a => { const on = a.dataset.tab === k; a.classList.toggle("on", on); a.setAttribute("aria-selected", on); });
+  const h = location.hash.replace(/\/(details|audio)$/, "") + "/" + k;
+  history.replaceState(null, "", /\/(details|audio)$/.test(location.hash) ? h : location.hash.replace(/(#\/song\/[^/]+).*/, "$1/" + k));
+  lastHash = location.hash;
 }
-
-function opt(list, cur) { return list.map(([v, n]) => `<option value="${esc(v)}" ${String(v) === String(cur ?? "") ? "selected" : ""}>${esc(n)}</option>`).join(""); }
-function stemLine(st) {
+// the song's state in plain words, with the one next step: [kind ok | todo | run, text, button html]
+function songStatus(s, x) {
+  if (s.building) return ["run", "Rebuilding the song… (Build log, top right, shows the details)", ""];
+  if (s.status === "not built") return ["todo", "Not made yet", `<button class="primary" data-sg="rebuild">Make the song</button>`];
+  if (s.status === "changed since build") return ["todo", "Your changes are saved but not in the game yet", `<button class="primary" data-sg="rebuild">Rebuild song</button>`];
+  if (!x) return ["ok", "Built", ""];
+  if (x.state === "missing") return ["todo", "Built · not on the memory stick yet", `<a class="btn primary" href="#/stick">Install on memory stick</a>`];
+  if (x.state === "installed") return x.listed ? ["ok", "In the game · up to date", ""] : ["todo", "On the memory stick, but the game doesn't list it yet", `<a class="btn primary" href="#/stick">Update on memory stick</a>`];
+  return ["todo", "Built · the memory stick has an older version", `<a class="btn primary" href="#/stick">Update on memory stick</a>`];
+}
+const songStatusHtml = ([k, t, btn]) => `<span class="sdot ${k}" aria-hidden="true"></span><span>${esc(t)}</span>${btn ? `<span class="grow"></span>${btn}` : ""}`;
+function bindSongStatus(folder) {
+  document.querySelectorAll('[data-sg="rebuild"]').forEach(b => b.onclick = async () => {
+    await runBuild(folder, "auto");
+    if (es) { CUR.building = true; $("#sgStatus").innerHTML = songStatusHtml(songStatus(CUR, null)); }
+  });
+}
+async function songStatusFromStick(folder) {
+  if (!CUR || CUR.status !== "built") return;
+  let v; try { v = await loadSticks(); } catch { return; }
+  const st = v.sticks.find(s => s.online && s.kind === "ppsspp") || v.sticks.find(s => s.online) || v.sticks[0];
+  if (!st || !$("#sgStatus") || CUR.folder !== folder) return;
+  $("#sgStatus").innerHTML = songStatusHtml(songStatus(CUR, st.songs.find(y => y.folder === folder) || { state: "missing" }));
+}
+// a track's state in plain words
+function stemPlain(st) {
   const x = st.stats, f = st.format;
-  if (!st.source) return "no stem (silence)";
-  if (st.exists === false) return '<span style="color:var(--bad)">file not found</span>';
-  const fmt = f ? `${f.ext.toUpperCase()}${f.rate ? ` ${f.rate / 1000} kHz ${f.float ? "float" : f.bits + "-bit"} ${f.ch === 1 ? "mono" : f.ch === 2 ? "stereo" : f.ch + " ch"}` : ""} ${f.mb} MB` : "";
-  if (!x) return `${fmt} · not prepared yet (build once)`;
+  if (!st.source) return "";
+  if (st.exists === false) return `<span class="warnline">The file isn't there any more: choose it again.</span>`;
+  if (!x) return `<span class="dim">Checked when the song is made.</span>`;
   if (x.note) return esc(x.note);
-  const flags = [];
-  if (x.silent) flags.push('<span style="color:var(--warn)">nearly silent</span>');
-  if (x.clip > 50) flags.push(`<span style="color:var(--warn)">clipping (${x.clip} samples)</span>`);
-  if (Math.abs(x.dc) > 1) flags.push(`<span style="color:var(--warn)">DC offset ${x.dc}%</span>`);
-  if (f && f.ext === "mp3" && f.mb / Math.max(1, x.seconds) * 8192 < 160) flags.push(`<span style="color:var(--warn)">low bitrate (~${Math.round(f.mb / x.seconds * 8192)} kbps)</span>`);
-  return `${fmt} · peak ${x.peak} dB · RMS ${x.rms} dB · sound in ${x.active}% of the song${flags.length ? " · " + flags.join(" · ") : ""}`;
+  const w = [];
+  if (x.silent) w.push("Almost silent: is this the right file?");
+  if (x.clip > 50) w.push(`Too loud in places: it may crackle (${x.clip} samples)`);
+  if (Math.abs(x.dc) > 1) w.push("Off-centre (DC offset): it may click");
+  if (f && f.ext === "mp3" && f.mb / Math.max(1, x.seconds) * 8192 < 160) w.push(`Low-quality MP3 (about ${Math.round(f.mb / x.seconds * 8192)} kbps)`);
+  return `<span class="dim">Sound in ${x.active}% of the song${f ? ` · ${f.ext.toUpperCase()} ${f.mb} MB` : ""}</span>${w.map(t => `<br><span class="warnline">${esc(t)}</span>`).join("")}`;
 }
-function checksHtml(c) {
-  if (!c || !c.items.length) return `<div class="small" style="color:var(--ok)">No problems found in the ${c && c.source === "edited" ? "edited" : "automatic"} chart.</div>`;
-  return `<ul class="checks">${c.items.map(i => `<li class="${i.level}"><span class="badge ${i.level === "error" ? "bad" : i.level === "warn" ? "warn" : ""}">${i.level}</span> ${i.part ? `<b>${esc(i.part)}</b> ` : ""}${esc(i.msg)}${i.at != null ? ` <a href="#" data-at="${i.at}" class="small">go</a>` : ""}</li>`).join("")}</ul>`;
+function tierDots(k, v) {
+  const imp = v === 6;
+  return `<div class="tier"><b>${k[0].toUpperCase() + k.slice(1)}</b><div class="dots" role="radiogroup" aria-label="${k} difficulty">
+    ${[1, 2, 3, 4, 5].map(i => `<button type="button" role="radio" aria-checked="${v === i}" aria-label="${TIER_NAMES[i]}" title="${TIER_NAMES[i]}" data-tierdot="${k}" data-v="${i}" class="${imp ? "rock" : i <= v ? "fill" : ""}">${imp ? ROCK_SVG : ""}</button>`).join("")}
+    <button type="button" role="radio" class="impos ${imp ? "on" : ""}" aria-checked="${imp}" aria-label="Impossible" title="Impossible" data-tierdot="${k}" data-v="6">${ROCK_SVG}</button></div>
+    <span class="small dim" data-tiername="${k}">${TIER_NAMES[v]}</span><input type="hidden" data-tier="${k}" value="${v}"></div>`;
 }
-// an imported song: details and tiers only (its chart and audio are as shipped)
+function bindTierDots(onChange) {
+  document.querySelectorAll("[data-tierdot]").forEach(b => b.onclick = () => {
+    const k = b.dataset.tierdot, inp = document.querySelector(`[data-tier="${k}"]`), cur = Number(inp.value), v = Number(b.dataset.v);
+    inp.value = cur === v ? v - 1 : v;
+    b.closest(".tier").outerHTML = tierDots(k, Number(inp.value));
+    bindTierDots(onChange); onChange();
+  });
+}
+// one Unsaved changes bar for the form on screen (Song info + Audio)
+function unsavedBar(save) {
+  const bar = document.createElement("div");
+  bar.className = "unsaved hidden"; bar.setAttribute("role", "region"); bar.setAttribute("aria-label", "Unsaved changes");
+  bar.innerHTML = `<b>Unsaved changes</b><span class="grow"></span><button id="usDiscard">Discard</button><button class="primary" id="usSave">Save</button>`;
+  $("#tab").appendChild(bar);
+  const check = () => bar.classList.toggle("hidden", !(GUARD && GUARD.dirty()));
+  $("#tab").addEventListener("input", check); $("#tab").addEventListener("change", check);
+  $("#usDiscard").onclick = () => { GUARD = null; route(); };
+  $("#usSave").onclick = () => save().then(() => { GUARD = null; route(); }, fail("Couldn't save the song"));
+  return check;
+}
+function aboutForm(S) {
+  return `<section class="panel"><h2>About the song</h2><p class="small dim">How it shows in the game's song list.</p><div class="form">
+      <label for="f_title">Title</label><input type="text" id="f_title" value="${esc(S.title)}" placeholder="${esc(PH.title)}">
+      <label for="f_artist">Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}" placeholder="${esc(PH.artist)}">
+      <label for="f_album">Album</label><input type="text" id="f_album" value="${esc(S.album)}" placeholder="${esc(PH.album)}">
+      <label for="f_year">Year</label><input type="number" id="f_year" value="${esc(S.year)}" placeholder="${esc(PH.year)}" style="width:100%">
+      <label for="f_genre">Genre</label><select id="f_genre">${opt(META.genres.map(g => [g, g]), S.genre)}</select>
+      <label for="f_vocals">Singer</label><select id="f_vocals">${opt([["", "(not set)"], [1, "Male singer"], [2, "Female singer"]], S.vocals)}</select></div></section>
+    <section class="panel"><h2>Difficulty in the song list</h2><p class="small dim">The marks the game shows next to the song: empty circles for Warmup, one to five dots, and five red rock hands for Impossible (the hand at the end turns it on). They don't change the notes. Click a lit dot again to take one off.</p>
+      <div class="tiers">${["band", "guitar", "bass", "drums", "vocals"].map(k => tierDots(k, (S.tiers || {})[k] ?? 0)).join("")}</div></section>`;
+}
+// an imported song: its song info and difficulty only (its chart and audio are as shipped)
 function showImportedDetails(folder) {
-  const S = CUR.song, T = S.tiers || {}, I = S.imported || {};
-  const tierSel = k => `<select data-tier="${k}">${opt([0, 1, 2, 3, 4, 5, 6].map(n => [n, n === 0 ? "0 (none)" : starStr(n).slice(0, n) + "  " + n]), T[k] ?? 0)}</select>`;
-  $("#tab").innerHTML = `<div class="grid2"><div>
-    <div class="panel"><h4>Song</h4><div class="form">
-      <label>Title</label><input type="text" id="f_title" value="${esc(S.title)}">
-      <label>Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}">
-      <label>Album</label><input type="text" id="f_album" value="${esc(S.album)}">
-      <label>Year</label><input type="number" id="f_year" value="${esc(S.year)}" style="width:100%">
-      <label>Genre</label><select id="f_genre">${opt(META.genres.map(g => [g, g]), S.genre)}</select>
-      <label>Lead vocals</label><select id="f_vocals">${opt([["", "(not set)"], [1, "male"], [2, "female"]], S.vocals)}</select>
-    </div></div>
-    <div class="panel"><h4>Difficulty tiers (0–6)</h4><div class="form">${["band", "guitar", "bass", "drums", "vocals"].map(k => `<label>${k}</label>${tierSel(k)}`).join("")}</div></div>
-  </div><div>
-    <div class="panel"><h4>Imported</h4><p class="small">From someone else's pack on ${esc(I.at ? new Date(I.at).toLocaleDateString() : "?")}; details from ${esc(I.from || "?")}${I.app ? `, made with Pocket Encore ${esc(I.app)}` : ""}.</p>
-      <p class="small dim">Its chart and audio (songs\\${esc(folder)}\\import) are played as they were shipped, so gems, effects, stems and stars can't be changed here.
-      Changing the title, tiers or genre only changes your song database: build to apply.</p></div>
-  </div></div>
-  <div class="actions"><button class="primary" id="save">Save song.json</button><button id="saveBuild">Save and build</button></div>`;
+  const S = CUR.song, I = S.imported || {};
+  $("#tab").innerHTML = `<div class="pane" data-pane="details"><div class="notice">This song was shared with you${I.at ? ` (added ${esc(new Date(I.at).toLocaleDateString())})` : ""}: its chart and audio are used as they are, so only its song info and difficulty can be changed here.</div>
+    <div class="grid2">${aboutForm(S)}</div></div>`;
   const save = async () => {
     const N = JSON.parse(JSON.stringify(S)), v = id => $(id).value.trim();
     N.title = v("#f_title"); N.artist = v("#f_artist"); setOrDelete(N, "album", v("#f_album"));
@@ -963,73 +1022,76 @@ function showImportedDetails(folder) {
     setOrDelete(N, "vocals", v("#f_vocals") ? Number(v("#f_vocals")) : "");
     N.tiers = Object.assign({}, N.tiers); document.querySelectorAll("[data-tier]").forEach(e => N.tiers[e.dataset.tier] = Number(e.value));
     if (!N.title || !N.artist) throw userError("Add a title and an artist to save the song.");
-    CUR = await api("PUT", `/api/song/${folder}`, N); markSaved(); toast("song.json saved"); return true;
+    CUR = await api("PUT", `/api/song/${folder}`, N); markSaved(); toast("Saved"); return true;
   };
-  $("#save").onclick = () => save().catch(fail("Couldn't save song.json"));
-  $("#saveBuild").onclick = () => save().then(() => runBuild(folder, "audio")).catch(fail("Couldn't save song.json"));
-  guardForm($("#tab"), "the song details", save);
+  guardForm($("#tab"), "the song info", save);
+  const check = unsavedBar(save);
+  bindTierDots(check);
 }
-async function showDetails(folder) {
+async function showDetails(folder, pane = "details") {
   if (CUR.song.imported) return showImportedDetails(folder);
-  const s = CUR, S = s.song, T = S.tiers || {}, src = S.stemSource || {};
-  const tierSel = k => `<select data-tier="${k}">${opt([0, 1, 2, 3, 4, 5, 6].map(n => [n, n === 0 ? "0 (none)" : starStr(n).slice(0, n) + "  " + n]), T[k] ?? 0)}</select>`;
-  const stemLines = s.stems.map(st => `<div class="stemrow"><label>${st.part} ${tip(st.part)}</label><input type="text" data-stem="${st.part}" value="${esc(st.source || "")}" placeholder="${esc(st.part === "fill" ? PH.stem("fill") : st.part[0].toUpperCase() + st.part.slice(1) + " stem file: Browse…")}">
-      <button onclick="pickInto('[data-stem=${st.part}]','${folder}')">Browse…</button><div class="stemstat">${stemLine(st)}</div></div>`).join("");
-  const bleed = s.bleed && s.bleed.length ? `<div class="small warnline" style="margin-top:6px">Possible bleed (stems that rise and fall together): ${s.bleed.map(b => `${b.a} ↔ ${b.b} (${(b.corr * 100).toFixed(0)}%)`).join(", ")}. Normal for a real band playing together; with AI stems it usually means one instrument leaked into another's track.</div>` : "";
+  const s = CUR, S = s.song, src = S.stemSource || {}, adv = window.editMode() === "advanced", lock = adv ? "" : "disabled";
   const B = s.built;
-  const starsTable = B ? `<table class="t"><tr><th>Difficulty</th><th>Drums</th><th>Bass</th><th>Guitar</th><th>Vocals</th><th>5★</th><th>Gold</th><th>Max</th></tr>
-    ${B.map((d, i) => `<tr><td>${DIFFS[i]}</td>${d.gems.map(n => `<td>${n}</td>`).join("")}<td>${fmtN(d.stars[4])}</td><td>${fmtN(d.stars[5])}</td><td>${fmtN(d.max)}</td></tr>`).join("")}</table>
-    <div class="small dim" style="margin-top:6px">Gems per part and star scores from the last build (estimated max × starsScale ${S.starsScale ?? 1}).</div>` : `<div class="dim">Not built yet.</div>`;
+  const starsTable = B ? `<div class="tablewrap"><table class="t"><tr><th>Difficulty</th><th>Drums</th><th>Bass</th><th>Guitar</th><th>Vocals</th><th>5★</th><th>Gold stars at</th><th>Max</th></tr>
+    ${B.map((d, i) => `<tr><td>${DIFFS[i]}</td>${d.gems.map(n => `<td>${n}</td>`).join("")}<td>${fmtN(d.stars[4])}</td><td>${fmtN(d.stars[5])}</td><td>${fmtN(d.max)}</td></tr>`).join("")}</table></div>
+    <p class="small dim">Notes per part and star scores from the last build.</p>` : `<p class="dim">Not made yet.</p>`;
+  const stems = s.stems.map(st => { const k = st.part, has = !!st.source;
+    return `<div class="slot" data-slot="${k}"><span class="mark ${has ? "ok" : ""}" aria-hidden="true">${has ? "✓" : ""}</span><b>${SLOT_LABEL[k] || k}${k === "fill" ? ' <span class="small dim">(optional)</span>' : ""}</b>
+      <span class="f"><span data-fname="${k}">${has ? esc(fileName(st.source)) : `<span class="dim">${k === "fill" ? "not added" : "missing"}</span>`}</span><br>${stemPlain(st)}</span>
+      <span class="actions"><button class="small" onclick="pickInto('[data-stem=${k}]','${folder}')">${has ? "Replace…" : "Choose…"}</button>${has && k === "fill" ? `<button class="small" data-stemrm="${k}">Remove</button>` : ""}</span>
+      <input type="hidden" data-stem="${k}" value="${esc(st.source || "")}"></div>`; }).join("");
+  const bleed = s.bleed && s.bleed.length ? `<p class="small warnline">Some tracks rise and fall together (${s.bleed.map(b => `${SLOT_LABEL[b.a] || b.a} and ${SLOT_LABEL[b.b] || b.b}`).join(", ")}). Normal for a band recorded together; with AI-split tracks it usually means one instrument leaked into another.</p>` : "";
   const au = s.audio;
-  $("#tab").innerHTML = `<div class="grid2"><div>
-    <div class="panel"><h4>Song</h4><div class="form">
-      <label>Title</label><input type="text" id="f_title" value="${esc(S.title)}" placeholder="${esc(PH.title)}">
-      <label>Artist</label><input type="text" id="f_artist" value="${esc(S.artist)}" placeholder="${esc(PH.artist)}">
-      <label>Album</label><input type="text" id="f_album" value="${esc(S.album)}" placeholder="${esc(PH.album)}">
-      <label>Year</label><input type="number" id="f_year" value="${esc(S.year)}" placeholder="${esc(PH.year)}" style="width:100%">
-      <label></label><span class="small dim fieldhelp">Sets the song's era in the game.</span>
-      <label>Genre</label><select id="f_genre">${opt(META.genres.map(g => [g, g]), S.genre)}</select>
-      <label>Lead vocals</label><select id="f_vocals">${opt([["", "(not set)"], [1, "male"], [2, "female"]], S.vocals)}</select>
-    </div></div>
-    <div class="panel"><h4>Difficulty tiers (0–6)</h4><div class="form">
-      ${["band", "guitar", "bass", "drums", "vocals"].map(k => `<label>${k}</label>${tierSel(k)}`).join("")}
-    </div></div>
-    <div class="panel"><h4>Options</h4><div class="form">
-      <label>Count-in</label><label class="inline"><input type="checkbox" id="f_countIn" ${S.countIn ? "checked" : ""}> 4 stick clicks before the music</label>
-      <label>Lead-in (s)</label><span class="inline"><input type="number" step="0.1" id="f_leadIn" value="${esc(S.leadIn ?? "")}" placeholder="auto"><span class="small dim">empty = auto (music starts ≥ 3 s, ≥ 4.5 s with count-in)</span></span>
-      <label>Stars scale</label><span class="inline"><input type="number" step="0.01" id="f_starsScale" value="${esc(S.starsScale ?? "")}" placeholder="1"><span class="small dim">&gt; 1 harder, &lt; 1 easier</span> <button class="small" id="calib">Calibrate from a play…</button></span>
-      <label>Preview start (s)</label><span class="inline"><input type="number" step="0.1" id="f_preview" value="${esc(S.preview && S.preview.start != null ? S.preview.start : "")}" placeholder="loudest 30 s" ${S.preview === false ? "disabled" : ""}>
-        <label class="small"><input type="checkbox" id="f_nopreview" ${S.preview === false ? "checked" : ""}> no preview</label></span>
-      <label>Guitar chords (%)</label><span class="inline"><input type="number" step="1" min="0" max="60" id="f_chords" value="${S.autochart && S.autochart.chords != null ? Math.round(S.autochart.chords * 100) : ""}" placeholder="auto" ${S.chart ? "disabled" : ""}><span class="small dim">${S.chart ? "not used: the gems were edited by hand" : "share of guitar gems that are chords; empty = from the music (official songs 4–49 %, median 19 %)"}</span></span>
-      <label>Loudness (LUFS)</label><input type="number" step="0.5" id="f_loudness" value="${esc(S.loudness ?? "")}" placeholder="-14">
-    </div></div>
-    <div class="panel"><h4>Chart checks</h4><div id="checks" class="dim small">checking…</div></div>
-  </div><div>
-    <div class="panel"><h4>Stems</h4>${stemLines}${bleed}
-      <div class="form" style="margin-top:10px">
-        <label>Stems origin</label><select id="f_srcType">${opt([["unknown", "unknown"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["ai", "AI separation"]], src.type || "unknown")}</select>
-        <label>Stem tool</label><input type="text" id="f_srcTool" value="${esc(src.tool || "")}" placeholder="${esc(PH.tool)}">
-        <label>Quality</label><select id="f_srcQuality">${opt([["", "(not rated)"], ["low", "low"], ["medium", "medium"], ["high", "high"]], src.quality || "")}</select>
-        <label>Notes</label><input type="text" id="f_srcNotes" value="${esc(src.notes || "")}" placeholder="bleed, missing parts…">
-      </div></div>
-    <div class="panel"><h4>Chart</h4><div class="form">
-      <label>Source MIDI</label><span class="inline"><input type="text" id="f_midi" value="${esc(S.midi || "")}" placeholder="${esc(PH.midi)}" style="flex:1"><button onclick="pickInto('#f_midi','${folder}')">Browse…</button></span>
-      <label>Gems</label><span>${s.chartSource === "edited" ? `edited in Pocket Encore (<span class="mono">${esc(S.chart)}</span>) <button class="danger" onclick="revertChart('${folder}')">Back to automatic chart</button><div class="warnline">The edited chart is in game time: changing the lead-in, the count-in or the stems' start moves the audio but not the gems.</div>` : "automatic (autochart from " + (S.midi ? "the MIDI" : "the stems") + ")"}</span>
-      <label>Audio</label><span class="small">${au ? `length ${fmtTime(au.audioSeconds)}, lead-in ${au.lead ?? 0} s, music starts at ${au.musicStart ?? "–"} s` : "not built"}</span>
-    </div></div>
-    <div class="panel"><h4>Stars and gems (last build)</h4>${starsTable}</div>
-  </div></div>
-  <div class="actions"><button class="primary" id="save">Save song.json</button><button id="saveBuild">Save and build</button><span class="dim small">Writes songs/${esc(folder)}/song.json (the old one is kept as song.json.bak).</span></div>`;
-  $("#f_nopreview").onchange = e => { $("#f_preview").disabled = e.target.checked; };
-  $("#save").onclick = () => saveDetails(folder).catch(fail("Couldn't save song.json"));
-  $("#saveBuild").onclick = () => saveDetails(folder).then(() => runBuild(folder, "audio")).catch(fail("Couldn't save song.json"));
-  $("#calib").onclick = () => calibrate(folder);
-  guardForm($("#tab"), "the song details", () => saveDetails(folder).then(() => true));
-  try {
-    const c = await api("GET", `/api/checks/${folder}`);
-    if ($("#checks")) { $("#checks").innerHTML = checksHtml(c); $("#checks").querySelectorAll("[data-at]").forEach(a => a.onclick = e => { e.preventDefault(); sessionStorage.seekTo = a.dataset.at; location.hash = `#/song/${folder}/editor`; }); }
-  } catch (e) { if ($("#checks")) $("#checks").textContent = "Couldn't run the chart checks: " + e.message; }
+  const chart = s.chartSource === "edited" ? `<p>You edited the notes on the Chart tab.</p><p class="small warnline">An edited chart keeps its timing: changing the lead-in, the count-in or the tracks moves the audio but not the notes.</p>
+      <div class="actions"><button class="danger" onclick="revertChart('${folder}')">Back to the automatic chart</button></div>`
+    : S.midi ? `<p>The notes come from your MIDI file: <span class="mono">${esc(fileName(S.midi))}</span>.</p><div class="actions"><button onclick="pickInto('#f_midi','${folder}')">Replace the MIDI…</button><button id="f_nomidi">Make the notes from the audio instead</button></div>`
+    : `<p>The notes are made from the audio tracks (no MIDI).</p><div class="actions"><button onclick="pickInto('#f_midi','${folder}')">Use a MIDI for the chart…</button></div>`;
+  $("#tab").innerHTML = `
+    <div class="pane" data-pane="details" ${pane === "details" ? "" : "hidden"}>
+      <div class="grid2">${aboutForm(S)}</div>
+      <details class="panel" ${adv ? "open" : ""}><summary><b>Advanced settings</b> ${adv ? "" : `<span class="small dim">· 🔒 read-only in Easy Edit Mode</span>`}</summary>
+        ${adv ? "" : `<p class="small dim">These change how the song sounds and scores; most songs never need them. Turn on Advanced Edit Mode (top right, or Settings) to change them.</p>`}
+        <div class="form">
+          <label for="f_leadIn">Lead-in (s)</label><span class="inline"><input type="number" step="0.1" id="f_leadIn" value="${esc(S.leadIn ?? "")}" placeholder="auto" ${lock}><span class="small dim">silence before the music; empty = auto (music starts after 3 s, 4.5 s with a count-in)</span></span>
+          <label for="f_starsScale">Stars scale</label><span class="inline"><input type="number" step="0.01" id="f_starsScale" value="${esc(S.starsScale ?? "")}" placeholder="1" ${lock}><span class="small dim">above 1 = harder stars, below 1 = easier</span> <button class="small" id="calib" ${lock}>Calibrate from a play…</button></span>
+          <label for="f_preview">Preview start (s)</label><span class="inline"><input type="number" step="0.1" id="f_preview" value="${esc(S.preview && S.preview.start != null ? S.preview.start : "")}" placeholder="loudest 30 s" ${S.preview === false || !adv ? "disabled" : ""}>
+            <label class="small"><input type="checkbox" id="f_nopreview" ${S.preview === false ? "checked" : ""} ${lock}> no preview</label><span class="small dim">the clip played in the song list</span></span>
+          <label for="f_chords">Guitar chords (%)</label><span class="inline"><input type="number" step="1" min="0" max="60" id="f_chords" value="${S.autochart && S.autochart.chords != null ? Math.round(S.autochart.chords * 100) : ""}" placeholder="auto" ${S.chart || !adv ? "disabled" : ""}><span class="small dim">${S.chart ? "not used: the notes were edited by hand" : "share of guitar notes that are chords; empty = from the music"}</span></span>
+          <label for="f_loudness">Loudness (LUFS)</label><span class="inline"><input type="number" step="0.5" id="f_loudness" value="${esc(S.loudness ?? "")}" placeholder="-14" ${lock}><span class="small dim">-14 matches the official songs</span></span>
+        </div></details>
+      <details class="panel"><summary><b>Scores and notes</b> <span class="small dim">· from the last build</span></summary>${starsTable}</details>
+    </div>
+    <div class="pane" data-pane="audio" ${pane === "audio" ? "" : "hidden"}>
+      <section class="panel"><h2>Audio tracks</h2><p class="small dim">Changing a track rebuilds the whole song, which can take a few minutes.${au ? ` Length ${fmtTime(au.audioSeconds)}, the music starts at ${au.musicStart ?? "–"} s.` : ""}</p>
+        <div class="slots">${stems}</div>${bleed}</section>
+      <section class="panel"><h2>Notes chart</h2>${chart}<input type="hidden" id="f_midi" value="${esc(S.midi || "")}"></section>
+      <section class="panel"><h2>Count-in</h2><label class="inline"><input type="checkbox" id="f_countIn" ${S.countIn ? "checked" : ""}> Automatically add a 4 drumstick count-in before the music starts in game</label></section>
+      <section class="panel"><h2>Where the tracks came from</h2><div class="form">
+        <label for="f_srcType">Tracks came from</label><select id="f_srcType">${opt([["unknown", "I don't know"], ["ai", "An AI splitter"], ["official", "The official multitracks"], ["multitrack", "Other multitracks"]], src.type || "unknown")}</select>
+        <label for="f_srcTool">Splitter used</label><input type="text" id="f_srcTool" value="${esc(src.tool || "")}" placeholder="${esc(PH.tool)}">
+        <label for="f_srcQuality">How good they sound</label><select id="f_srcQuality">${opt([["", "(not rated)"], ["low", "Low"], ["medium", "Medium"], ["high", "High"]], src.quality || "")}</select>
+        <label for="f_srcNotes">Notes</label><input type="text" id="f_srcNotes" value="${esc(src.notes || "")}" placeholder="bleed, missing parts…"></div></section>
+    </div>`;
+  $("#f_nopreview").onchange = e => { $("#f_preview").disabled = e.target.checked || window.editMode() !== "advanced"; };
+  if ($("#calib")) $("#calib").onclick = () => calibrate(folder);
+  const save = () => saveDetails(folder).then(() => true);
+  guardForm($("#tab"), "the song", save);
+  const check = unsavedBar(save);
+  bindTierDots(check);
+  // a picked or removed file shows its name straight away
+  document.querySelectorAll("[data-stem]").forEach(inp => inp.addEventListener("change", () => { const n = document.querySelector(`[data-fname="${inp.dataset.stem}"]`); if (n) n.textContent = fileName(inp.value) || "not added"; check(); }));
+  document.querySelectorAll("[data-stemrm]").forEach(b => b.onclick = () => { const inp = document.querySelector(`[data-stem="${b.dataset.stemrm}"]`); inp.value = ""; inp.dispatchEvent(new Event("change", { bubbles: true })); b.remove(); });
+  $("#f_midi").addEventListener("change", check);
+  if ($("#f_nomidi")) $("#f_nomidi").onclick = () => { $("#f_midi").value = ""; $("#f_midi").dispatchEvent(new Event("change", { bubbles: true })); toast("The notes will be made from the audio: save, then rebuild the song"); };
 }
+// the song page follows the edit mode (the json tab and the advanced settings), unless that would lose unsaved changes
+window.addEventListener("editmodechange", () => {
+  const m = /^#\/song\/([^/]+)\/?(\w*)/.exec(location.hash);
+  if (!m || m[2] === "editor" || m[2] === "anims") return;
+  if (pageGuard()) { toast("Save or discard your changes to see the unlocked settings.", true); const b = $("#sgMode"); if (b) b.innerHTML = window.editModeButton(); return; }
+  route();
+});
+function opt(list, cur) { return list.map(([v, n]) => `<option value="${esc(v)}" ${String(v) === String(cur ?? "") ? "selected" : ""}>${esc(n)}</option>`).join(""); }
 // Stars calibration: the game shows gold about 5 phrases before the end of a well-played song. If gold came with
 // `left` of `total` phrases to go, the thresholds should move by (wanted fraction done) / (actual fraction done).
 function calibrate(folder) {
@@ -1056,7 +1118,7 @@ function calibrate(folder) {
     } else if (total > 0 && left >= total) why = "Gold at the very start? Check the numbers.";
     $("#c_out").innerHTML = why;
     $("#c_apply").disabled = !r;
-    $("#c_apply").onclick = () => { $("#f_starsScale").value = r.toFixed(2); $("#modal").classList.add("hidden"); toast("Scale set; save and rebuild the chart to apply"); };
+    $("#c_apply").onclick = () => { $("#f_starsScale").value = r.toFixed(2); $("#f_starsScale").dispatchEvent(new Event("change", { bubbles: true })); $("#modal").classList.add("hidden"); toast("Scale set: save, then rebuild the song"); };
   };
   ["#c_total", "#c_left", "#c_want", "#c_score"].forEach(id => $(id).oninput = upd);
   $("#c_cancel").onclick = () => $("#modal").classList.add("hidden");
@@ -1093,8 +1155,7 @@ async function saveDetails(folder) {
   if (!S.title || !S.artist) throw userError("Add a title and an artist to save the song.");
   CUR = await api("PUT", `/api/song/${folder}`, S);
   markSaved();
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / ${esc(S.title)} <span class="dim">(${esc(folder)})</span> ${statusBadge(CUR)}`;
-  toast("song.json saved");
+  toast("Saved");
 }
 async function revertChart(folder) {
   // the page reloads afterwards, so unsaved Details changes would go: offer to save them first
@@ -1398,7 +1459,7 @@ async function pickInto(selector, folder, dirs) {
       if (dirs) return;
       let p = d.dataset.p;
       if (folder) p = (await api("GET", `/api/relpath/${folder}?p=${encodeURIComponent(p)}`)).rel;
-      target.value = p; $("#modal").classList.add("hidden");
+      target.value = p; target.dispatchEvent(new Event("change", { bubbles: true })); $("#modal").classList.add("hidden");
     });
     $("#pickGo").onclick = () => open($("#pickPath").value.trim());
     if (dirs) $("#pickThis").onclick = () => { target.value = r.dir; $("#modal").classList.add("hidden"); };

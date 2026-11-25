@@ -366,3 +366,50 @@ a.btn.primary { background: var(--primary); border-color: var(--accent); }
 input.invalid, select.invalid { border-color: var(--bad); outline: 1px solid var(--bad); }
 @media (max-width: 720px) { .wizard .form { grid-template-columns: 1fr; } .slot { grid-template-columns: 22px minmax(0, 1fr) auto; } .slot .f { grid-column: 2 / 4; } .nextgrid { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .meter i { transition: none; } }
+
+/* ---------- UI revamp: song page ---------- */
+:root { --rock: #e0262c; }
+.songpage { display: grid; gap: 12px; }
+.songpage .shtop { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.songpage .shname { font-size: 15px; }
+.songpage .status { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--ok-line); background: var(--panel); }
+.songpage .status:has(.sdot.todo), .songpage .status:has(.sdot.run) { border-color: var(--warn-line); }
+.sdot.run { background: var(--accent); }
+.songpage .shtitle h1 { margin: 0; font-size: 24px; }
+.songpage .shtitle p { margin: 2px 0 0; }
+.songpage.compact .status { padding: 6px 12px; }
+.facts { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.facts li { display: grid; gap: 2px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0; }
+.songtabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line); }
+.songtabs a { padding: 8px 12px; color: var(--dim); border-bottom: 3px solid transparent; text-decoration: none !important; }
+.songtabs a:hover { color: var(--text); }
+.songtabs a.on { color: var(--text); font-weight: 600; border-bottom-color: var(--accent); }
+.songpage #tab { display: grid; gap: 12px; }
+.pane { display: grid; gap: 12px; }
+.pane[hidden] { display: none; }
+.pane .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.pane .panel { margin: 0; display: grid; gap: 8px; }
+.pane h2 { margin: 0; font-size: 16px; }
+.pane p { margin: 0; }
+.pane .form { grid-template-columns: 170px minmax(0, 1fr); }
+.pane details.panel summary { cursor: pointer; }
+.pane .slot .f { line-height: 1.5; }
+.tiers { display: grid; gap: 10px; }
+.tier { display: grid; grid-template-columns: 70px auto minmax(0, 1fr); gap: 10px; align-items: center; }
+.dots { display: flex; gap: 5px; align-items: center; }
+.dots button { width: 18px; height: 18px; border-radius: 50%; padding: 0; border: 2px solid var(--control-line); background: transparent; }
+.dots button.fill { background: var(--text); border-color: var(--text); }
+.dots button.rock { width: 20px; height: 20px; border: 0; border-radius: 4px; background: none; display: grid; place-items: center; color: var(--rock); }
+.dots button svg { fill: currentColor; display: block; }
+.dots .impos { width: auto; height: auto; border-radius: 6px; border: 1px dashed var(--control-line); background: none; padding: 1px 3px; margin-left: 8px; color: var(--dim); display: grid; place-items: center; }
+.dots .impos.on { border-style: solid; border-color: var(--rock); color: var(--rock); }
+.dots button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+details.menu { position: relative; }
+details.menu summary { list-style: none; cursor: pointer; padding: 4px 10px; border: 1px solid var(--control-line); border-radius: 4px; }
+details.menu summary::-webkit-details-marker { display: none; }
+details.menu .menubox { position: absolute; right: 0; top: calc(100% + 4px); display: grid; gap: 4px; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; z-index: 6; min-width: 230px; }
+details.menu .menubox button { text-align: left; }
+.unsaved { position: sticky; bottom: 0; display: flex; gap: 10px; align-items: center; padding: 10px 14px; background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 -4px 14px rgba(0,0,0,.25); z-index: 4; }
+.unsaved.hidden { display: none; }
+@media (max-width: 860px) { .pane .grid2 { grid-template-columns: 1fr; } .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pane .form { grid-template-columns: 1fr; } }
+.pane .tiers { grid-template-columns: 1fr; }
