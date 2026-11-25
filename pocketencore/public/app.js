@@ -1158,45 +1158,12 @@ function badFiles(files) {
   const ok = [...META.audioExt, ...META.midiExt];
   return files.filter(f => !ok.includes("." + f.name.split(".").pop().toLowerCase()));
 }
-async function uploadTo(input, file, batch) {
-  input.value = ""; input.placeholder = `uploading ${file.name}…`;
+async function uploadFile(file, batch) {
   const r = await fetch(`/api/upload?name=${encodeURIComponent(file.name)}&batch=${batch}`, { method: "POST", body: file });
   const v = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(v.error || r.statusText);
-  input.value = v.path; input.scrollLeft = input.scrollWidth; input.title = `${file.name} (${(file.size / 1048576).toFixed(1)} MB), copied into the song's stems folder when the song is created`;
+  return v.path;
 }
-function setupDrop() {
-  const panel = $("#dropPanel"), zone = $("#dropzone");
-  const batch = Date.now().toString(36);
-  let depth = 0;
-  panel.addEventListener("dragenter", e => { e.preventDefault(); depth++; panel.classList.add("dragging"); });
-  panel.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; panel.classList.remove("dragging"); } });
-  panel.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
-  panel.addEventListener("drop", async e => {
-    e.preventDefault(); depth = 0; panel.classList.remove("dragging");
-    const files = [...e.dataTransfer.files];
-    if (!files.length) return;
-    if (files.length > MAX_DROP) return toast(`You dropped ${files.length} files. Drop up to ${MAX_DROP} at a time.`, true);
-    const bad = badFiles(files);
-    if (bad.length) return toast(`Can't use ${bad.map(f => f.name).join(", ")}: not a supported file type. Audio: ${META.audioExt.join(" ")}; MIDI: ${META.midiExt.join(" ")}`, true);
-    // dropped on one instrument's row with a single file: that slot, whatever the name says
-    const row = e.target.closest && e.target.closest("[data-slot]");
-    let plan;
-    if (row && files.length === 1 && !META.midiExt.includes("." + files[0].name.split(".").pop().toLowerCase())) plan = { out: { [row.dataset.slot]: files[0] }, midi: null, unplaced: [] };
-    else plan = assignFiles(files, STEM_SLOTS.filter(s => $("#n_stem_" + s).value.trim()));
-    if (plan.midi && files.filter(f => META.midiExt.includes("." + f.name.split(".").pop().toLowerCase())).length > 1) toast("More than one MIDI dropped; using " + plan.midi.name, true);
-    try {
-      zone.textContent = "Copying the files…";
-      for (const [slot, f] of Object.entries(plan.out)) await uploadTo($("#n_stem_" + slot), f, batch);
-      if (plan.midi) await uploadTo($("#n_midi"), plan.midi, batch);
-      const placed = Object.entries(plan.out).map(([s, f]) => `${f.name} → ${s}`).concat(plan.midi ? [`${plan.midi.name} → MIDI`] : []);
-      toast(placed.join(" · ") + (plan.unplaced.length ? ` · no free slot for ${plan.unplaced.map(f => f.name).join(", ")}` : ""), !!plan.unplaced.length);
-    } catch (err) { fail("Couldn't add the files")(err); }
-    zone.innerHTML = zone.dataset.html;
-  });
-  zone.dataset.html = zone.innerHTML;
-}
-
 // Placeholders shared by the New song form and the Details tab (they say what each field is for).
 const PH = {
   folder: "ZMYSONG",
@@ -1209,73 +1176,209 @@ const PH = {
   stem: k => k === "fill" ? "Backing: everything else in the song (optional)" : `${k[0].toUpperCase() + k.slice(1)} stem (required): drop a file or Browse…`,
 };
 const REQUIRED_STEMS = ["drums", "bass", "guitar", "vocals"];
-function showNew() {
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / New song`;
-  const thisYear = new Date().getFullYear();
-  const req = ' <span class="req">*</span>';
-  const stemRow = k => `<div class="stemrow" data-slot="${k}"><label>${k}${REQUIRED_STEMS.includes(k) ? req : ""} ${tip(k)}</label>`
-    + `<input type="text" id="n_stem_${k}" placeholder="${esc(PH.stem(k))}"${REQUIRED_STEMS.includes(k) ? ` data-req="${k} stem"` : ""}>`
-    + `<button onclick="pickInto('#n_stem_${k}')">Browse…</button></div>`;
-  $("#main").innerHTML = `<div class="grid2"><div class="panel"><h4>New song</h4><div class="form">
-      <label>Folder${req}</label><input type="text" id="n_folder" placeholder="${esc(PH.folder)}" style="text-transform:uppercase" data-req="Folder">
-      <label></label><span class="small dim fieldhelp">Z plus capital letters or digits. This is the song's folder name on the memory stick.</span>
-      <label>Title${req}</label><input type="text" id="n_title" placeholder="${esc(PH.title)}" data-req="Title">
-      <label></label><span class="small dim fieldhelp">As shown in the game's song list.</span>
-      <label>Artist${req}</label><input type="text" id="n_artist" placeholder="${esc(PH.artist)}" data-req="Artist">
-      <label>Album${req}</label><input type="text" id="n_album" placeholder="${esc(PH.album)}" data-req="Album">
-      <label>Year${req}</label><input type="number" id="n_year" min="1900" max="${thisYear}" placeholder="${esc(PH.year)}" data-req="Year" style="width:100%">
-      <label></label><span class="small dim fieldhelp">Release year, 1900–${thisYear}. Sets the song's era in the game.</span>
-      <label>Genre${req}</label><select id="n_genre" data-req="Genre"><option value="">Choose the song list genre…</option>${opt(META.genres.map(g => [g, g]), "")}</select>
-      <label>Lead vocals${req}</label><select id="n_vocals" data-req="Lead vocals"><option value="">Choose the singer shown in game…</option>${opt([[1, "male"], [2, "female"]], "")}</select>
-    </div><p class="small dim"><span class="req">*</span> required</p></div>
-    <div class="panel" id="dropPanel"><h4>Audio and chart</h4>
-      <div class="dropzone" id="dropzone">Drop up to ${MAX_DROP} files here (stems and/or a MIDI). Each goes to the instrument its name mentions
-        (drums, bass, guitar, vocals, backing…); the rest fill the empty slots in the order given.<br>
-        <span class="small dim">Audio: ${META.audioExt.map(e => e.slice(1).toUpperCase()).join(", ")} (WAV: 16/24/32-bit or float, any rate, mono or stereo) · MIDI: ${META.midiExt.join(" ")}</span></div>
-      ${STEM_SLOTS.map(stemRow).join("")}
-      <div class="form" style="margin-top:10px">
-        <label>MIDI</label><span class="inline"><input type="text" id="n_midi" placeholder="${esc(PH.midi)}" style="flex:1"><button onclick="pickInto('#n_midi')">Browse…</button></span>
-        <label>Stems origin</label><select id="n_srcType">${opt([["ai", "AI separation"], ["official", "official multitracks"], ["multitrack", "other multitracks"], ["unknown", "unknown"]], "ai")}</select>
-        <label>Stem tool</label><input type="text" id="n_srcTool" placeholder="${esc(PH.tool)}">
-        <label>Quality</label><select id="n_srcQuality">${opt([["", "(not rated)"], ["low", "low"], ["medium", "medium"], ["high", "high"]], "")}</select>
-        <label>Count-in</label><label class="inline"><input type="checkbox" id="n_countIn"> 4 stick clicks before the music</label>
+// ---------- make a new song: Audio → About the song → Review song details → (making) → Play it ----------
+const SLOT_NAME = { drums: "Drums", bass: "Bass", guitar: "Guitar", vocals: "Vocals", fill: "Backing track" };
+const WSTEPS = [["audio", "Audio"], ["info", "About the song"], ["review", "Review song details"], ["done", "Play it"]];
+const MAKE_STAGES = [["[audio]", "Preparing the audio"], ["[preview]", "Making the preview clip for the song list"], ["[chart]", "Making the notes for drums, bass, guitar and vocals"],
+  ["Hard/Medium/Easy from Expert", "Making Hard, Medium and Easy from Expert"], ["band animations:", "Adding the band's animations"], ["[song database]", "Adding it to your song list"]];
+let NW = null;
+function newWizard() {
+  return { step: "audio", stems: {}, names: {}, midi: "", midiName: "", title: "", artist: "", album: "", year: "", genre: "", vocals: "",
+    folder: "", folderTouched: false, countIn: false, srcType: "ai", srcTool: "", batch: Date.now().toString(36), taken: [], stage: -1, started: 0, failed: false };
+}
+async function showNew() {
+  NW = newWizard();
+  try { NW.taken = (await api("GET", "/api/songs")).map(s => s.folder); } catch { }
+  renderNew();
+}
+const fileName = p => String(p || "").split(/[\\/]/).pop();
+// "Seven Nation Army - Drums.mp3" -> "Seven Nation Army"
+function titleFromFiles() {
+  const f = NW.names.drums || NW.names.bass || NW.names.guitar || NW.names.vocals || NW.names.fill || "";
+  const base = f.replace(/\.[^.]+$/, "").replace(/[-_ ]*\b(drums?|bass|guitar|gtr|vocals?|vox|voice|other|backing|instrumental|accomp|stems?|mono|stereo|no[ _]?vocals?)\b[-_ ]*/gi, " ");
+  return base.replace(/[_]+/g, " ").replace(/\s{2,}/g, " ").replace(/^[\s\-–]+|[\s\-–]+$/g, "").trim();
+}
+function folderFromTitle(t) {
+  let f = "Z" + String(t).normalize("NFKD").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 28);
+  if (f === "Z") f = "ZMYSONG";
+  let k = 2, g = f; while (NW.taken.includes(g)) g = f.slice(0, 28) + k++;
+  return g;
+}
+const wReady = () => REQUIRED_STEMS.every(k => NW.stems[k]);
+function wStepper(cur) {
+  const i = WSTEPS.findIndex(s => s[0] === cur);
+  return `<ol class="stepper" aria-label="Steps">${WSTEPS.map(([k, n], j) => `<li class="${j === i ? "on" : j < i ? "done" : ""}"${j === i ? ' aria-current="step"' : ""}>${n}</li>`).join("")}</ol>`;
+}
+function renderNew() {
+  const v = { audio: wAudio, info: wInfo, review: wReview, making: wMaking, done: wDone }[NW.step]();
+  $("#main").innerHTML = `<div class="wizard">${v}</div>`;
+  bindNew();
+  const h = $("#main h2"); if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
+  // leaving before the song is made asks first (nothing is created until Make the song)
+  GUARD = ["audio", "info", "review"].includes(NW.step) ? { what: "the new song", save: null, dirty: () => !!(Object.keys(NW.stems).length || NW.midi || NW.title) } : null;
+}
+function wAudio() {
+  const missing = REQUIRED_STEMS.filter(k => !NW.stems[k]).map(k => SLOT_NAME[k]);
+  return `${wStepper("audio")}
+    <section class="panel" id="dropPanel"><h2>Add the song's audio</h2>
+      <p class="dim">You need the song split into separate tracks (stems): drums, bass, guitar and vocals. AI splitters such as Fadr or Moises.ai make them from a normal song file.</p>
+      <div class="dropzone" id="dropzone"><b>Drop the track files here</b> <span class="small dim">(up to ${MAX_DROP} at once, a MIDI too)</span><br>
+        <span class="small dim">${META.audioExt.map(e => e.slice(1).toUpperCase()).join(", ")} · each file goes to the part its name mentions</span>
+        <div class="actions" style="justify-content:center;margin-top:8px"><button id="w_pickAll">Choose files…</button></div></div>
+      <div class="slots">${STEM_SLOTS.map(k => { const has = !!NW.stems[k];
+        return `<div class="slot" data-slot="${k}"><span class="mark ${has ? "ok" : ""}" aria-hidden="true">${has ? "✓" : ""}</span><b>${SLOT_NAME[k]}${k === "fill" ? ' <span class="small dim">(optional)</span>' : ""}</b>
+          <span class="f ${has ? "" : "dim"}">${has ? esc(NW.names[k] || fileName(NW.stems[k])) : k === "fill" ? "not added" : "missing"}</span>
+          <span class="actions">${has ? `<button class="small" data-wrm="${k}" aria-label="Remove the ${SLOT_NAME[k].toLowerCase()} file">Remove</button>` : `<button class="small" data-wpick="${k}" aria-label="Choose a ${SLOT_NAME[k].toLowerCase()} file">Choose…</button>`}</span>
+          <input type="hidden" id="w_stem_${k}"></div>`; }).join("")}</div>
+      ${Object.keys(NW.stems).length ? `<div class="actions"><button class="linkbtn small" id="w_rmall">Remove all tracks</button></div>` : ""}
+    </section>
+    <section class="panel"><h2>Notes chart (MIDI) <span class="small dim">· optional</span></h2>
+      <p class="small dim">Have a Rock Band MIDI or any MIDI of the song? Add it and Pocket Encore uses it for the notes. Without one, it makes the notes from the audio tracks.</p>
+      <div class="actions">${NW.midi ? `<span>✓ ${esc(NW.midiName || fileName(NW.midi))}</span><button class="small" id="w_midirm">Remove</button>` : `<button id="w_midi">Add a MIDI…</button>`}<input type="hidden" id="w_midiPath"></div></section>
+    <div class="wnav"><a class="btn" href="#/">Cancel</a><span class="grow"></span>${missing.length ? `<span class="small dim">Still needed: ${missing.join(", ")}</span>` : ""}
+      <button class="primary" id="w_next" ${missing.length ? "disabled" : ""}>Continue</button></div>`;
+}
+function wInfo() {
+  const year = new Date().getFullYear();
+  if (!NW.title) NW.title = titleFromFiles();
+  if (!NW.folderTouched) NW.folder = folderFromTitle(NW.title);
+  const f = (id, label, val, extra = "") => `<label for="w_${id}">${label}</label><input type="text" id="w_${id}" data-w="${id}" value="${esc(val)}" ${extra}>`;
+  return `${wStepper("info")}
+    <section class="panel"><h2>About the song</h2><p class="small dim">How it shows in the game's song list. All six are needed.</p>
+      <div class="form">
+        ${f("title", "Title", NW.title)}${NW.title && NW.title === titleFromFiles() ? `<span></span><span class="small dim fieldhelp">Filled in from the file names: check it.</span>` : ""}
+        ${f("artist", "Artist", NW.artist)}${f("album", "Album", NW.album)}
+        <label for="w_year">Year</label><input type="number" id="w_year" data-w="year" min="1900" max="${year}" value="${esc(NW.year)}" style="width:100%">
+        <span></span><span class="small dim fieldhelp">Release year, 1900–${year}. Sets the song's era in the game.</span>
+        <label for="w_genre">Genre</label><select id="w_genre" data-w="genre"><option value="">Choose the song list genre…</option>${opt(META.genres.map(g => [g, g]), NW.genre)}</select>
+        <label for="w_vocals">Singer</label><select id="w_vocals" data-w="vocals"><option value="">Choose the singer shown in game…</option>${opt([[1, "Male singer"], [2, "Female singer"]], NW.vocals)}</select>
       </div>
-      <p class="small dim">Without a MIDI the chart is made from the stems. Tiers start at 2; set them on the Details tab.</p>
-      <div class="actions"><button class="primary" id="n_create">Create</button><label class="small"><input type="checkbox" id="n_build" checked> and build now</label><span id="n_missing" class="small warnline"></span></div>
-    </div></div>`;
-  setupDrop();
-  // a field marked missing is cleared as soon as it gets a value (typed, picked, dropped)
-  document.querySelectorAll("[data-req]").forEach(el => ["input", "change"].forEach(t => el.addEventListener(t, () => { if (el.value.trim()) el.classList.remove("invalid"); if (!document.querySelector(".invalid")) $("#n_missing").textContent = ""; })));
-  $("#n_create").onclick = async () => {
-    const v = id => $(id).value.trim();
-    const folder = v("#n_folder").toUpperCase();
-    const bad = [];
-    document.querySelectorAll("[data-req]").forEach(el => { const ok = !!el.value.trim(); el.classList.toggle("invalid", !ok); if (!ok) bad.push(el.dataset.req); });
-    if (folder && !/^Z[A-Z0-9_]{1,30}$/.test(folder)) { $("#n_folder").classList.add("invalid"); bad.push("Folder (Z + capital letters/digits, e.g. ZMYSONG)"); }
-    const year = Number(v("#n_year"));
-    if (v("#n_year") && !(Number.isInteger(year) && year >= 1900 && year <= thisYear)) { $("#n_year").classList.add("invalid"); bad.push(`Year (1900–${thisYear})`); }
-    if (bad.length) {
-      $("#n_missing").textContent = "Missing or invalid: " + bad.join(", ");
-      document.querySelector(".invalid")?.focus();
-      return toast("Fill in the required fields first: " + bad.join(", "), true);
+      <details class="more"><summary>More options (optional)</summary><div class="form">
+        <label for="w_folder">Folder name</label><input type="text" id="w_folder" data-w="folder" value="${esc(NW.folder)}" style="text-transform:uppercase">
+        <span></span><span class="small dim fieldhelp">The song's folder on the memory stick. Made from the title; change it only if you need to.</span>
+        <label for="w_countIn">Count-in</label><label class="inline" style="color:var(--text)"><input type="checkbox" id="w_countIn" ${NW.countIn ? "checked" : ""}> Automatically add a 4 drumstick count-in before the music starts in game</label>
+        <label for="w_srcType">Tracks came from</label><select id="w_srcType" data-w="srcType">${opt([["ai", "An AI splitter"], ["official", "The official multitracks"], ["multitrack", "Other multitracks"], ["unknown", "I don't know"]], NW.srcType)}</select>
+        <label for="w_srcTool">Splitter used</label><input type="text" id="w_srcTool" data-w="srcTool" value="${esc(NW.srcTool)}" placeholder="${esc(PH.tool)}">
+      </div></details>
+      <p id="w_missing" class="small warnline"></p>
+    </section>
+    <div class="wnav"><button id="w_back">Back</button><span class="grow"></span><button class="primary" id="w_next">Continue</button></div>`;
+}
+function wReview() {
+  const li = t => `<li><span class="mark ok" aria-hidden="true">✓</span><span>${t}</span></li>`;
+  return `${wStepper("review")}
+    <section class="panel"><h2>Review song details</h2>
+      <ul class="what">${li(`<b>${esc(NW.title)}</b> by ${esc(NW.artist)} · ${esc(NW.year)} · ${esc(NW.genre)}`)}${li(`Album ${esc(NW.album)} · ${NW.vocals == 2 ? "female" : "male"} singer`)}
+        ${li(`${NW.stems.fill ? "4 parts + backing track" : "4 parts, no backing track"} · notes ${NW.midi ? "from your MIDI" : "made from the audio"}`)}${li(NW.countIn ? "With a 4 drumstick count-in" : "No count-in")}
+        ${li(`Folder on the memory stick: <span class="mono">${esc(NW.folder)}</span>`)}</ul>
+      <div class="actions"><button class="linkbtn small" data-wgo="audio">Change the audio</button><button class="linkbtn small" data-wgo="info">Change the details</button></div>
+      <p class="small dim">Making the song can take a few minutes. You can keep using Pocket Encore meanwhile.</p></section>
+    <div class="wnav"><button id="w_back">Back</button><span class="grow"></span><button class="primary big" id="w_make">Make the song</button></div>`;
+}
+function wMaking() {
+  const pct = Math.round(Math.max(0, NW.stage) / MAKE_STAGES.length * 100);
+  return `${wStepper("review")}
+    <section class="panel"><h2>${NW.failed ? `Making ${esc(NW.title)} stopped` : `Making ${esc(NW.title)}…`}</h2>
+      ${NW.failed ? `<p class="warnline">Something went wrong. The build log says what; the song is saved, so you can fix it and rebuild it from its page.</p>`
+        : `<div class="meter" aria-hidden="true"><i style="width:${pct}%"></i></div>`}
+      <div class="progress" role="status" aria-live="polite">${MAKE_STAGES.map(([, t], i) => { const s = i < NW.stage ? "done" : i === NW.stage ? (NW.failed ? "fail" : "run") : "";
+        return `<div class="pstep ${s}"><span class="mark ${s === "done" ? "ok" : ""}" aria-hidden="true">${s === "done" ? "✓" : s === "run" ? "…" : s === "fail" ? "!" : ""}</span><span>${t}</span></div>`; }).join("")}</div>
+      <div class="actions"><button id="w_log">Show the build log</button>${NW.failed ? `<a class="btn" href="#/song/${esc(NW.folder)}">Open the song</a>` : `<span class="small dim">You can keep using Pocket Encore meanwhile.</span>`}</div></section>`;
+}
+function wDone() {
+  const secs = NW.started ? Math.round((Date.now() - NW.started) / 1000) : 0, F = esc(NW.folder);
+  return `${wStepper("done")}
+    <section class="panel donebox"><h2>${esc(NW.title)} is ready</h2>${secs ? `<p class="small dim">Made in ${Math.floor(secs / 60)} min ${secs % 60} s.</p>` : ""}
+      <p>You are almost there: install the song to play it. You can always come back to edit the chart if it doesn't feel right to play, or generate the chart from a MIDI file.</p>
+      <div class="actions"><a class="btn primary big" href="#/stick">Install on memory stick</a></div></section>
+    <section class="panel"><h2>Or, first</h2>
+      <div class="nextgrid">
+        <a class="btn next" href="#/song/${F}/editor"><b>Listen and fix notes</b><span>Play the song with its notes and change any that feel wrong.</span></a>
+        <a class="btn next" href="#/song/${F}"><b>Make the chart from a MIDI</b><span>Add a MIDI file and the notes are made from it instead.</span></a>
+        <a class="btn next" href="#/song/${F}/anims"><b>Add screen effects</b><span>Black and white, old film, kaleidoscope… at chosen times.</span></a>
+        <button class="next" id="w_another"><b>Make another song</b><span>Start again with new audio.</span></button>
+      </div>
+      <div class="actions"><a href="#/">Back to my songs</a></div></section>`;
+}
+async function wAddFiles(files, slot) {
+  if (!files.length) return;
+  if (files.length > MAX_DROP) return toast(`You added ${files.length} files. Add up to ${MAX_DROP} at a time.`, true);
+  const bad = badFiles(files);
+  if (bad.length) return toast(`Can't use ${bad.map(f => f.name).join(", ")}: not a supported file type. Audio: ${META.audioExt.join(" ")}; MIDI: ${META.midiExt.join(" ")}`, true);
+  const isMidi = f => META.midiExt.includes("." + f.name.split(".").pop().toLowerCase());
+  const plan = slot && files.length === 1 && !isMidi(files[0]) ? { out: { [slot]: files[0] }, midi: null, unplaced: [] } : assignFiles(files, STEM_SLOTS.filter(s => NW.stems[s]));
+  const zone = $("#dropzone"); if (zone) zone.innerHTML = "<b>Copying the files…</b>";
+  try {
+    for (const [s, f] of Object.entries(plan.out)) { NW.stems[s] = await uploadFile(f, NW.batch); NW.names[s] = f.name; }
+    if (plan.midi) { NW.midi = await uploadFile(plan.midi, NW.batch); NW.midiName = plan.midi.name; }
+    if (plan.unplaced.length) toast(`No free slot for ${plan.unplaced.map(f => f.name).join(", ")}: remove a track first.`, true);
+  } catch (e) { fail("Couldn't add the files")(e); }
+  renderNew();
+}
+function bindNew() {
+  const on = (id, f) => { const e = $("#" + id); if (e) e.onclick = f; };
+  // audio
+  const panel = $("#dropPanel");
+  if (panel) {
+    let depth = 0;
+    panel.addEventListener("dragenter", e => { e.preventDefault(); depth++; panel.classList.add("dragging"); });
+    panel.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; panel.classList.remove("dragging"); } });
+    panel.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
+    panel.addEventListener("drop", e => { e.preventDefault(); depth = 0; panel.classList.remove("dragging"); const row = e.target.closest && e.target.closest("[data-slot]"); wAddFiles([...e.dataTransfer.files], row && row.dataset.slot); });
+  }
+  const pickFiles = slot => { const inp = document.createElement("input"); inp.type = "file"; inp.multiple = !slot; inp.accept = [...META.audioExt, ...(slot ? [] : META.midiExt)].join(","); inp.onchange = () => wAddFiles([...inp.files], slot); inp.click(); };
+  on("w_pickAll", () => pickFiles(null));
+  document.querySelectorAll("[data-wpick]").forEach(b => b.onclick = () => pickFiles(b.dataset.wpick));
+  document.querySelectorAll("[data-wrm]").forEach(b => b.onclick = () => { delete NW.stems[b.dataset.wrm]; delete NW.names[b.dataset.wrm]; renderNew(); });
+  on("w_rmall", () => { NW.stems = {}; NW.names = {}; renderNew(); });
+  on("w_midi", () => { const inp = document.createElement("input"); inp.type = "file"; inp.accept = META.midiExt.join(","); inp.onchange = () => wAddFiles([...inp.files]); inp.click(); });
+  on("w_midirm", () => { NW.midi = ""; NW.midiName = ""; renderNew(); });
+  // info
+  document.querySelectorAll("[data-w]").forEach(el => el.oninput = el.onchange = () => {
+    const k = el.dataset.w; NW[k] = el.value;
+    if (k === "folder") NW.folderTouched = true;
+    if (k === "title" && !NW.folderTouched) { NW.folder = folderFromTitle(NW.title); const fo = $("#w_folder"); if (fo) fo.value = NW.folder; }
+    el.classList.remove("invalid");
+  });
+  const ci = $("#w_countIn"); if (ci) ci.onchange = () => { NW.countIn = ci.checked; };
+  document.querySelectorAll("[data-wgo]").forEach(b => b.onclick = () => { NW.step = b.dataset.wgo; renderNew(); });
+  on("w_back", () => { NW.step = NW.step === "review" ? "info" : "audio"; renderNew(); });
+  on("w_next", () => {
+    if (NW.step === "audio") { if (!wReady()) return; NW.step = "info"; return renderNew(); }
+    if (NW.step === "info") {
+      const year = new Date().getFullYear(), bad = [];
+      for (const [k, n] of [["title", "Title"], ["artist", "Artist"], ["album", "Album"], ["genre", "Genre"], ["vocals", "Singer"]]) if (!String(NW[k]).trim()) { bad.push(n); $("#w_" + k).classList.add("invalid"); }
+      const y = Number(NW.year); if (!(Number.isInteger(y) && y >= 1900 && y <= year)) { bad.push(`Year (1900–${year})`); $("#w_year").classList.add("invalid"); }
+      NW.folder = String(NW.folder).toUpperCase();
+      if (!/^Z[A-Z0-9_]{1,30}$/.test(NW.folder)) { bad.push("Folder name (Z + capital letters or digits)"); $("#w_folder").classList.add("invalid"); $(".wizard details").open = true; }
+      else if (NW.taken.includes(NW.folder)) { bad.push("Folder name (another song already uses it)"); $("#w_folder").classList.add("invalid"); $(".wizard details").open = true; }
+      if (bad.length) { $("#w_missing").textContent = "Still needed: " + bad.join(", "); document.querySelector(".wizard .invalid")?.focus(); return; }
+      NW.step = "review"; return renderNew();
     }
-    $("#n_missing").textContent = "";
-    const S = { folder, title: v("#n_title"), artist: v("#n_artist"), album: v("#n_album"), year,
-      genre: v("#n_genre"), tiers: { drums: 2, guitar: 2, bass: 2, vocals: 2, band: 2 }, vocals: Number(v("#n_vocals")), stems: {} };
-    for (const k of STEM_SLOTS) if (v("#n_stem_" + k)) S.stems[k] = v("#n_stem_" + k);
-    if (v("#n_midi")) S.midi = v("#n_midi");
-    S.stemSource = { type: v("#n_srcType") };
-    if (v("#n_srcTool")) S.stemSource.tool = v("#n_srcTool");
-    if (v("#n_srcQuality")) S.stemSource.quality = v("#n_srcQuality");
-    if ($("#n_countIn").checked) S.countIn = true;
-    try {
-      await api("POST", "/api/new", S);
-      GUARD = null;  // created: nothing to lose any more
-      location.hash = `#/song/${folder}`;
-      if ($("#n_build").checked) runBuild(folder, "audio");
-    } catch (e) { fail("Couldn't create the song")(e); }
+  });
+  on("w_make", wMake);
+  on("w_log", () => { showBuildPanel(true); });
+  on("w_another", () => { NW = null; showNew(); });
+}
+async function wMake() {
+  const S = { folder: NW.folder, title: NW.title.trim(), artist: NW.artist.trim(), album: NW.album.trim(), year: Number(NW.year), genre: NW.genre,
+    tiers: { drums: 2, guitar: 2, bass: 2, vocals: 2, band: 2 }, vocals: Number(NW.vocals), stems: { ...NW.stems }, stemSource: { type: NW.srcType } };
+  if (NW.srcTool.trim()) S.stemSource.tool = NW.srcTool.trim();
+  if (NW.midi) S.midi = NW.midi;
+  if (NW.countIn) S.countIn = true;
+  try { await api("POST", "/api/new", S); } catch (e) { return fail("Couldn't create the song")(e); }
+  GUARD = null; NW.step = "making"; NW.stage = 0; NW.started = Date.now(); NW.failed = false;
+  const mine = NW;
+  window.onBuildLine = l => { if (NW !== mine) return; const i = MAKE_STAGES.findIndex(([m]) => l.includes(m)); if (i > NW.stage) { NW.stage = i; if (/^#\/new/.test(location.hash)) renderNew(); } };
+  window.onBuildEnd = code => {
+    window.onBuildLine = window.onBuildEnd = null;
+    if (NW !== mine) return false;
+    if (code === "0") { NW.step = "done"; NW.stage = MAKE_STAGES.length; } else NW.failed = true;
+    if (/^#\/new/.test(location.hash)) { renderNew(); return true; }  // handled: stay on the result
+    return false;
   };
-  guardForm($("#main"), "the new song", null);  // no save: leaving can only discard it
+  renderNew();
+  runBuild(S.folder, "audio", { quiet: true });
 }
 
 // ---------- file picker ----------
@@ -1433,7 +1536,7 @@ let es = null;
 function showBuildPanel(show = true) { $("#buildPanel").classList.toggle("hidden", !show); if (show) $("#buildToggle").classList.remove("hidden"); }
 $("#buildToggle").onclick = () => { showBuildPanel($("#buildPanel").classList.contains("hidden")); followBuild(); };
 $("#buildClose").onclick = () => showBuildPanel(false);
-async function runBuild(folder, from) {
+async function runBuild(folder, from, opts = {}) {
   const g = pageGuard();
   if (g && g.save) {
     const a = await ask("Build without your unsaved changes?", `Your unsaved changes to ${g.what} won't be in this build.`, [
@@ -1442,8 +1545,8 @@ async function runBuild(folder, from) {
       { label: "Cancel", value: null }]);
     if (!a || (a === "save" && !(await saveGuard(g)))) return;
   }
-  try { await api("POST", `/api/build/${folder}?from=${from}`); } catch (e) { fail("Build couldn't start")(e); return; }
-  showBuildPanel(true);
+  try { await api("POST", `/api/build/${folder}?from=${from}`); } catch (e) { fail("Build couldn't start")(e); if (window.onBuildEnd) window.onBuildEnd("start"); return; }
+  if (opts.quiet) $("#buildToggle").classList.remove("hidden"); else showBuildPanel(true);
   followBuild();
 }
 function logLine(log, l) {
@@ -1469,7 +1572,7 @@ function followBuild() {
   es = new EventSource("/api/build");
   let kind = "";
   es.addEventListener("start", e => { const d = JSON.parse(e.data); kind = d.from; $("#buildTitle").textContent = d.from === "install" ? `Install to the ${d.folder}` : d.from === "pack" ? `Build ${d.folder}` : d.from === "many" ? `Build ${d.folder}` : `Build ${d.folder} (from ${d.from})`; $("#buildState").innerHTML = '<span class="badge warn">running…</span>'; });
-  es.addEventListener("line", e => logLine(log, JSON.parse(e.data)));
+  es.addEventListener("line", e => { const l = JSON.parse(e.data); logLine(log, l); if (window.onBuildLine) window.onBuildLine(l); });
   es.addEventListener("end", e => {
     const code = JSON.parse(e.data);
     es.close(); es = null;
@@ -1480,6 +1583,7 @@ function followBuild() {
       ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: Install… on the Packs page copies it to the memory stick</span>'
       : '<span class="badge ok">done</span> <span class="small dim">Memory stick (on the song list) shows what to copy, or copies it for you</span>') : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
     log.scrollTop = log.scrollHeight;
+    if (window.onBuildEnd && window.onBuildEnd(code, kind)) return;  // a page that follows the build (Make a new song) shows the result itself
     if (code === "0" && !pageGuard()) route();  // refresh the page, unless that would lose unsaved changes
   });
 }
