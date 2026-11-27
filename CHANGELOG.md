@@ -2,6 +2,59 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## 0.6.1 Beta (2026-11-27)
+
+A new look: Pocket Encore is reorganised around what you do (make a song, put songs in your game, share them), with
+plain words and one clear next step on every page.
+
+### Pages
+- The top bar has **Songs**, **Memory stick**, **Share & Packs**, **Settings** and **Help**. **Settings** replaces Setup:
+  your game, the look (System Default, Light or Dark), Advanced Edit Mode and the tools.
+- **Songs**: start a new song, see your memory stick at a glance, or go to Share & Packs; your songs below, with search
+  and sorting.
+- **Make a new song** is now step by step: drop the audio tracks (and a MIDI if you have one), fill in the song's
+  details, review, then **Make the song**, with progress shown until it's ready.
+- **Song page**: a status line says where the song stands ("Not made yet", "Your changes are saved but not in the game
+  yet", "In the game · up to date"…) with the one button for the next step: **Make the song**, **Rebuild song** (it
+  redoes only what changed) or **Install on memory stick**. Tabs: **Song info**, **Audio**, **Chart** and **Effects &
+  Band Anims**. The difficulty is set with the same marks the game shows, from Warmup to Impossible.
+
+### Memory stick
+- Every song has an **Add in game** switch: the list shows what the memory stick will have. **Review and apply** lists
+  every change by name before anything happens, then copies new and updated songs, writes a song list with exactly the
+  songs switched on, and removes the ones switched off. Switched-off songs stay in your songs, and stay off until you
+  switch them on again.
+- Filters (Installed, Update ready, Not installed) and search, with add or remove buttons for the songs shown.
+- **Archive** puts a song away (out of your songs and the game, kept on your computer); **Restore** brings it back.
+- Song folders on the memory stick that aren't in your songs are listed separately: add them to your songs or remove them.
+
+### Share & Packs
+- **Make a pack**: pick songs (the search also finds genres), and optionally **save it as one .zip file, ready to send**.
+  A pack says when one of its songs changed (**Update pack**).
+- **Install on my memory stick**: one pack is installed at a time. Installing another uninstalls the first (its songs stay
+  in your songs); **Uninstall** takes it off. It goes through the Memory stick page, so you see every change first.
+- **Share it** shows what to send and what your friend does, with or without Pocket Encore.
+- **Merge Songs** replaces Import songs: drop a pack's .zip, or choose a .zip or a folder. It shows which songs are new and
+  which you already have, then adds the new ones and makes them ready for the game. `pack.txt` in a pack now points
+  Pocket Encore users there.
+
+### Chart editor
+- The rule warnings are a button in the toolstrip (**⚠ 3 rules** / **✓ Rules OK**) that opens the list over the chart,
+  so they no longer push the chart down. It flashes when an edit breaks a rule.
+- **Loop** (K) now starts at the playhead's bar, as long as the last loop, so you don't have to drag the old loop across
+  the song. With the playhead inside the old loop, you get that loop back.
+- With several gems selected, a click on an empty spot unselects them (the next click adds a gem). Dragging selected gems
+  still moves them all.
+
+### Accessibility
+- Dialogs are announced as dialogs, keep the keyboard inside, close with Esc and return focus to where you were.
+  Delete and Discard dialogs start on the safe button, so Enter can't delete by accident.
+- Buttons repeated on every row name their song or pack for screen readers ("Install on my memory stick: Metal night").
+- Arrow keys move through the difficulty marks and the theme choices.
+
+### Help
+- Help is rewritten for the new pages (Getting started, Memory stick, Making a song, Share & Packs, Troubleshooting).
+
 ## 0.5.1 Beta (2026-11-24)
 
 ### Effects & Band Anims tab
