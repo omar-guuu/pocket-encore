@@ -47,6 +47,7 @@ new MutationObserver(ms => {
 linkLabels(document.body);
 // a confirmation in the app's own modal, with buttons named after their action (not OK/Cancel).
 // buttons: [{ label, value, kind: "primary" | "danger" }]; resolves to the clicked value, or null on Escape/backdrop.
+let modalReturn = null;  // where focus was before a dialog moved it inside itself (set by ask, used when it closes)
 let askPending = null;  // the open ask()'s close function: a new ask (e.g. the Back button pressed meanwhile) closes it as "no"
 // ---------- Easy / Advanced Edit Mode ----------
 // Controls that make a song easy to get wrong are read-only (greyed, 🔒) in Easy Edit Mode, the default. Advanced Edit
@@ -81,10 +82,54 @@ function ask(title, body, buttons) {
     $("#modalBox").querySelectorAll("button[data-i]").forEach(b => b.onclick = () => done(buttons[b.dataset.i].value));
     modal.onclick = e => { if (e.target === modal) done(null); };
     window.addEventListener("keydown", onKey, true);
+    if (!$("#modalBox").contains(document.activeElement)) modalReturn = document.activeElement;
     modal.classList.remove("hidden");
-    ($("#modalBox .primary") || $("#modalBox button")).focus();
+    // focus the main choice; in a dialog whose main choice is dangerous (Delete…), the safe one, so Enter can't delete
+    const safe = buttons.findIndex(b => b.value == null);
+    ($("#modalBox .primary") || (buttons.some(b => b.kind === "danger") && safe >= 0 ? $(`#modalBox button[data-i="${safe}"]`) : null) || $("#modalBox button")).focus();
   });
 }
+
+// Every dialog shares #modal. While one is open: it is announced as a dialog named by its title, Tab stays inside it, Esc
+// closes it (ask() handles its own Esc; the others through their Cancel / Close / Remind me later button), and focus goes
+// back to where it was when it closes.
+(() => {
+  const modal = document.getElementById("modal"), box = document.getElementById("modalBox");
+  let opener = null, lastOutside = null;
+  document.addEventListener("focusin", e => { if (!box.contains(e.target)) lastOutside = e.target; }, true);
+  const focusables = () => [...box.querySelectorAll('button, [href], input, select, textarea, summary, [tabindex]:not([tabindex="-1"])')].filter(e => !e.disabled && e.offsetParent);
+  new MutationObserver(() => {
+    const open = !modal.classList.contains("hidden");
+    if (open && !opener) {
+      const a = document.activeElement;
+      opener = a && a !== document.body && !box.contains(a) ? a : [modalReturn, lastOutside].find(x => x && x !== document.body && x.isConnected) || document.body;
+      modalReturn = null;
+      const t = box.querySelector("b"); if (t) t.id = "modalTitle";
+      box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-labelledby", "modalTitle");
+      setTimeout(focusIn, 0);
+    } else if (!open && opener) {
+      // back where it was; a button inside a closed menu (More → Delete pack) gives the menu's summary instead
+      const o = opener; opener = null;
+      const back = o.isConnected && o.offsetParent ? o : o.isConnected && o.closest("details") ? o.closest("details").querySelector("summary") : null;
+      if (back && (box.contains(document.activeElement) || document.activeElement === document.body)) back.focus();  // unless the dialog moved focus on purpose
+    }
+  }).observe(modal, { attributes: true, attributeFilter: ["class"] });
+  // dialogs that fill in after opening (the file picker) or redraw (a folder opened in it): focus moves in again
+  function focusIn() { if (!modal.classList.contains("hidden") && !box.contains(document.activeElement)) { const f = box.querySelector(".primary:not(:disabled)") || focusables()[0]; if (f) f.focus(); } }
+  new MutationObserver(() => { const t = box.querySelector("b"); if (t && !t.id) t.id = "modalTitle"; setTimeout(focusIn, 0); }).observe(box, { childList: true });
+  window.addEventListener("keydown", e => {
+    if (modal.classList.contains("hidden")) return;
+    if (e.key === "Tab") {
+      const f = focusables(); if (!f.length) return;
+      const i = f.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+    } else if (e.key === "Escape" && !askPending) {
+      const c = box.querySelector('[id$="Cancel"], [id$="_cancel"], [id$="Close"], #updLater');
+      if (c) { e.preventDefault(); e.stopPropagation(); c.click(); }
+    }
+  }, true);
+})();
 
 // ---------- unsaved changes ----------
 // The page on screen registers what leaving it would lose: GUARD = { what, dirty(), save() }. save() resolves to true
@@ -495,10 +540,10 @@ async function showPacks() {
         return `<div class="srow" data-id="${esc(p.id)}"><div class="rt"><b>${esc(p.display)}</b><span class="small dim">${p.songs.length} song${p.songs.length === 1 ? "" : "s"} · ${p.mb} MB${p.built ? ` · made ${esc(fmtDate(p.built.at))}` : ""}${p.missing.length ? ` · ${p.missing.length} no longer in your songs` : ""}</span></div>
           <div class="rs">${on ? `<span class="state"><span class="sdot ok" aria-hidden="true"></span>Installed on your memory stick</span>` : ""}
             ${k === "ok" ? (on ? "" : `<span class="state"><span class="sdot ok" aria-hidden="true"></span>Up to date</span>`) : `<span class="state"><span class="sdot ${k}" aria-hidden="true"></span>${t}</span><span class="small dim">${esc(d)}</span>`}</div>
-          <div class="ctl">${k !== "ok" ? `<button class="small" data-a="build">${p.built ? "Update pack" : "Make the pack"}</button>` : ""}
-            ${on ? `<a class="btn small" href="#/stick/pack/${esc(p.id)}/off">Uninstall</a>` : `<button class="small" data-a="install">${active ? "Install instead" : "Install on my memory stick"}</button>`}
-            <a class="btn small" href="#/pack/${esc(p.id)}/share">Share it</a>
-            <details class="menu"><summary class="small">More</summary><div class="menubox"><a class="btn small" href="#/pack/${esc(p.id)}">Change its songs</a><button class="small danger" data-a="del">Delete pack</button></div></details></div></div>`; }).join("")}</div>`
+          <div class="ctl">${k !== "ok" ? `<button class="small" data-a="build" aria-label="${p.built ? "Update pack" : "Make the pack"}: ${esc(p.display)}">${p.built ? "Update pack" : "Make the pack"}</button>` : ""}
+            ${on ? `<a class="btn small" href="#/stick/pack/${esc(p.id)}/off" aria-label="Uninstall: ${esc(p.display)}">Uninstall</a>` : `<button class="small" data-a="install" aria-label="${active ? "Install instead" : "Install on my memory stick"}: ${esc(p.display)}">${active ? "Install instead" : "Install on my memory stick"}</button>`}
+            <a class="btn small" href="#/pack/${esc(p.id)}/share" aria-label="Share it: ${esc(p.display)}">Share it</a>
+            <details class="menu"><summary class="small" aria-label="More: ${esc(p.display)}">More</summary><div class="menubox"><a class="btn small" href="#/pack/${esc(p.id)}">Change its songs</a><button class="small danger" data-a="del">Delete pack</button></div></details></div></div>`; }).join("")}</div>`
       : `<p class="dim">No packs yet. Make one to put a set of songs in your game, or to share songs with a friend.</p>`}
       ${PK.packs.length > 1 ? `<p class="small dim">One pack is installed at a time: installing a pack uninstalls the other one (its songs leave the game, nothing is deleted).</p>` : ""}
     </section></div>`;
@@ -837,8 +882,8 @@ function stickListHtml(s) {
       <div class="rt"><a href="#/song/${esc(r.folder)}" class="sname">${esc(songName(r))}</a><span class="small dim">${esc(r.artist || "")}${r.mb ? ` · ${r.mb} MB` : ""}</span></div>
       <div class="rs"><span class="state"><span class="sdot ${k}" aria-hidden="true"></span>${label}</span><span class="small dim">${sub}</span>${e ? `<span class="small effect">${e}</span>` : ""}</div>
       <div class="ctl">${r.st === "notmade" ? `<a class="btn small" href="#/song/${esc(r.folder)}">Make the song</a>`
-        : `<label class="sw"><input type="checkbox" data-want="${esc(r.folder)}" aria-label="Add ${esc(songName(r))} in game" ${r.want ? "checked" : ""}><span aria-hidden="true">Add in game</span></label>`}
-        <button class="small" data-archive="${esc(r.folder)}" aria-label="Archive ${esc(songName(r))}">Archive</button></div></div>`; };
+        : `<label class="sw"><input type="checkbox" data-want="${esc(r.folder)}" aria-label="Add in game: ${esc(songName(r))}" ${r.want ? "checked" : ""}><span aria-hidden="true">Add in game</span></label>`}
+        <button class="small" data-archive="${esc(r.folder)}" aria-label="Archive: ${esc(songName(r))}">Archive</button></div></div>`; };
   const archived = SP.v.archived || [], onStick = f => s.songs.find(x => x.folder === f && x.state !== "missing");
   const archOn = archived.filter(a => onStick(a.folder));
   return `${stickPackBanner()}${other ? `<div class="notice warn"><b>${stickSummaryLine(s, rows)}</b></div>` : ""}
@@ -859,14 +904,14 @@ function stickListHtml(s) {
         : "Song folders that aren't in your library (a friend's pack, or songs from an older library). The game doesn't list them; they only take up space."}</p>
       <div class="srows">${others.map(x => `<div class="srow"><div class="rt"><b>${esc(songName(x))}</b><span class="small dim">${esc(x.artist || "")}${x.artist ? " · " : ""}<span class="mono">${esc(x.folder)}</span> · ${x.stickMb} MB</span></div>
         <div class="rs"><span class="state"><span class="sdot" aria-hidden="true"></span>Not in your library</span>${x.listed ? `<span class="small dim">The game lists it now</span>` : ""}</div>
-        <div class="ctl"><button class="small" data-import="${esc(s.music + "\\" + x.folder)}" aria-label="Add ${esc(songName(x))} to my library">Add to my library</button>
-          <button class="small" data-rmone="${esc(x.folder)}" aria-label="Remove ${esc(songName(x))} from the memory stick">Remove from memory stick</button></div></div>`).join("")}</div>
+        <div class="ctl"><button class="small" data-import="${esc(s.music + "\\" + x.folder)}" aria-label="Add to my library: ${esc(songName(x))}">Add to my library</button>
+          <button class="small" data-rmone="${esc(x.folder)}" aria-label="Remove from memory stick: ${esc(songName(x))}">Remove from memory stick</button></div></div>`).join("")}</div>
       ${others.length > 1 ? `<div class="actions"><button data-rmone="**">Remove all ${others.length} from the memory stick</button></div>` : ""}</details>` : ""}
     ${archived.length ? `<details class="panel"><summary><b>Archived songs</b> <span class="small dim">· ${archived.length} · kept on your computer, not in your song list${archOn.length ? ` · ${archOn.length} still on the memory stick` : ""}</span></summary>
       <p class="small">Archived songs aren't in the game's song list. ${archOn.length ? "Some still have their folder on the memory stick: they only take up space. " : ""}Restore one to bring it back to your custom songs.</p>
       <div class="srows">${archived.map(a => { const x = onStick(a.folder); return `<div class="srow"><div class="rt"><b>${esc(songName(a))}</b><span class="small dim">${esc(a.artist || "")}</span></div>
         <div class="rs"><span class="state"><span class="sdot" aria-hidden="true"></span>Archived</span><span class="small dim">${x ? `Its folder is still on the memory stick${x.listed ? " (the game lists it until you apply your next changes)" : " (the game doesn't list it)"}` : "Not on the memory stick"}</span></div>
-        <div class="ctl"><button class="small" data-restore="${esc(a.folder)}" aria-label="Restore ${esc(songName(a))}">Restore</button>${x ? `<button class="small" data-rmone="${esc(a.folder)}" aria-label="Remove ${esc(songName(a))} from the memory stick">Remove from memory stick</button>` : ""}</div></div>`; }).join("")}</div>
+        <div class="ctl"><button class="small" data-restore="${esc(a.folder)}" aria-label="Restore: ${esc(songName(a))}">Restore</button>${x ? `<button class="small" data-rmone="${esc(a.folder)}" aria-label="Remove from memory stick: ${esc(songName(a))}">Remove from memory stick</button>` : ""}</div></div>`; }).join("")}</div>
       ${archOn.length > 1 ? `<div class="actions"><button data-rmone="*">Remove all ${archOn.length} from the memory stick</button></div>` : ""}</details>` : ""}
     <p class="small dim">Got songs from someone? Add them on the <a href="#/packs">Share &amp; Packs</a> page.</p>
     <details class="panel"><summary>Details for experts</summary><p class="small dim"><span class="mono">${esc(s.music)}</span>${s.freeMb != null ? ` · ${sizeTxt(s.freeMb)} free` : ""}
@@ -1324,10 +1369,22 @@ function bindTierDots(onChange) {
   document.querySelectorAll("[data-tierdot]").forEach(b => b.onclick = () => {
     const k = b.dataset.tierdot, inp = document.querySelector(`[data-tier="${k}"]`), cur = Number(inp.value), v = Number(b.dataset.v);
     inp.value = cur === v ? v - 1 : v;
+    const had = document.activeElement === b;
     b.closest(".tier").outerHTML = tierDots(k, Number(inp.value));
     bindTierDots(onChange); onChange();
+    if (had) { const f = document.querySelector(`[data-tierdot="${k}"][data-v="${v}"]`); if (f) f.focus(); }  // keep the keyboard's place
   });
 }
+// radio groups made of buttons (difficulty dots, theme): the arrow keys move to the next or previous choice and pick it
+document.addEventListener("keydown", e => {
+  const r = e.target.closest && e.target.closest('[role="radio"]'), g = r && r.closest('[role="radiogroup"]');
+  if (!g || !/^Arrow(Left|Right|Up|Down)$/.test(e.key) || e.ctrlKey || e.altKey || e.metaKey) return;
+  const all = [...g.querySelectorAll('[role="radio"]')].filter(x => !x.disabled), i = all.indexOf(r);
+  const next = all[(i + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : all.length - 1)) % all.length];
+  e.preventDefault();
+  next.focus();
+  if (next.getAttribute("aria-checked") !== "true") next.click();  // (a difficulty dot clicked again would go one lower)
+});
 // one Unsaved changes bar for the form on screen (Song info + Audio)
 function unsavedBar(save) {
   const bar = document.createElement("div");
