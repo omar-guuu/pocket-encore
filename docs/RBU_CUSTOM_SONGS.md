@@ -210,14 +210,14 @@ stand in plain words, with one button for the next step. Nothing on the memory s
   (title, last built, folder name).
 - **Make a new song**, step by step: 1. drop the audio tracks (or **Choose…**; up to 5 files at once, each goes to the
   instrument its name mentions) and an optional MIDI; 2. about the song (title, artist, album, year, genre, singer,
-  folder name, count-in), checked before going on; 3. review; 4. **Make the song**: creates `songs\<FOLDER>\song.json`
+  folder name (Advanced Edit Mode only; else made from the title), count-in), checked before going on; 3. review; 4. **Make the song**: creates `songs\<FOLDER>\song.json`
   and builds it, with progress, then offers **Install on memory stick**, **Listen and fix notes** (the Chart tab) or
   **Make the chart from a MIDI**.
 - **Song page** (click a song): a status line above the title says where the song stands, with the next step:
   **Make the song** (not built), **Rebuild song** (changes not in the game yet: `mksong` from the first stage that
   changed, so a chart or star change reuses the audio), **Install on memory stick** / **Update on memory stick**
   (opens the Memory stick page). A facts strip shows the tracks, where the chart comes from, the effects and when it
-  was built. **More**: open the song's game files (`out\MUSIC\<FOLDER>`), open the song's folder, show the last build
+  was built. **More**: open the song's game files (`out\MUSIC\<FOLDER>`; Advanced Edit Mode only), open the song's folder, show the last build
   log (`songs\<FOLDER>\build\build.log`). The build log of the current session is the **Build log** button at the top.
   Tabs:
   - **Song info**: about the song (title, artist, album, year, genre, singer); **Difficulty in the song list**: per part
@@ -259,12 +259,13 @@ stand in plain words, with one button for the next step. Nothing on the memory s
     density above the official 90th percentile, overdrive phrases too close, solos too short, too many or overlapping
     another part's. **go** jumps to the spot; × dismisses one warning for this song (**Dismiss all** / **Show
     dismissed**). Nothing is ever blocked.
-  - **Tempo…**: set a constant BPM from a first beat (for songs with a steady beat whose grid is off) or shift every gem
+  - **Tempo…** (Advanced Edit Mode only; 🔒 in Easy): set a constant BPM from a first beat (for songs with a steady beat whose grid is off) or shift every gem
     by some ms against the audio. Both keep every gem, phrase and solo at its time in seconds; only the grid moves.
   - The editor starts from the last build's chart (`reaper\<FOLDER>\<FOLDER>_auto.mid`). Saving writes
     `songs\<FOLDER>\chart.mid` (the old one becomes `chart.mid.bak`) and sets `"chart": "chart.mid"`, so the
     automatic chart is no longer made; **Save + rebuild** also rebuilds the chart. "Easy, Medium and Hard are made from
-    Expert" (on by default) sets `"reduce": true`. **Back to the automatic chart** on the Audio tab removes `"chart"`
+    Expert" (on by default) sets `"reduce": true`. In Easy Edit Mode the checkbox is locked and Hard, Medium and Easy
+    are view-only (edits there are refused with a message); Advanced Edit Mode lets you turn it off and edit them by hand. **Back to the automatic chart** on the Audio tab removes `"chart"`
     again. The footer compares the edited chart with the automatic one (gems added/removed per part; removed ones can
     be shown as outlines).
   - **🎮 Controller**: Xbox and PlayStation controllers with the game's layout; every button can be changed, and
@@ -732,11 +733,12 @@ when every track has passed its end (the lanes hide).
 
 ## 9. Open questions / next steps
 
-- TODO (2026-11-24, user): decide, control by control, what is **Easy Edit** and what is **Advanced Edit** in Pocket
-  Encore. So far: Effects & Band Anims tab - Easy: screen effects, singer props; Advanced: singer mic changes and
-  guitarist/bassist clips. Since 0.6.1 also Advanced: Song info → Advanced settings (lead-in, stars scale, preview,
-  guitar chords, loudness), the tool paths in Settings, and the song.json tab. Still to sort: the Chart tab (e.g.
-  Tempo…, editing Hard/Medium/Easy by hand, held drum gems), build options.
+- Done (decided 2026-11-27): the Easy Edit / Advanced Edit split. Advanced only: Effects & Band Anims singer mic
+  changes and guitarist/bassist clips; Song info → Advanced settings (lead-in, stars scale, preview, guitar chords,
+  loudness); the song.json tab; the tool paths in Settings; on the Chart tab, editing Hard/Medium/Easy by hand (the
+  "made from Expert" checkbox; in Easy they are view-only) and Tempo…; the folder name in Make a new song; More → Open
+  the song's game files. Everything else is Easy, held drum gems included (the rules button warns). The full table is
+  on the Help page (Easy and Advanced Edit Mode).
 - TODO: in-game screenshots of each screen effect for the Effects & Band Anims preview box (user is taking them;
   they go in `pocketencore\public\fx\<effect>.png` and in the public repo - user's decision 2026-11-24; list in
   `pocketencore\public\fx\README.md`).

@@ -1143,7 +1143,9 @@ const HELP = [
   ["editor", "Chart editor", `
     <p>The <b>Chart</b> tab shows the four parts' gems over each track's waveform, with the song playing. Saving
     turns the automatic chart into your own (<span class="mono">chart.mid</span>); <b>Back to the automatic chart</b> on the
-    Audio tab undoes that. <b>Save + rebuild</b> also puts your changes in the game files.</p>
+    Audio tab undoes that. <b>Save + rebuild</b> also puts your changes in the game files. In Easy Edit Mode you edit
+    Expert, and Hard, Medium and Easy are view-only: the build makes them from Expert. <a href="#/help/editmodes">Advanced Edit Mode</a>
+    lets you edit them by hand.</p>
     <table class="t"><tr><th>Key / action</th><th>Does</th></tr>
       <tr><td><kbd>Space</kbd></td><td>play / pause (click the ruler to jump)</td></tr>
       <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>add a gem in that lane of the selected part at the playhead, also while playing; hold while playing = held note, together = chord</td></tr>
@@ -1173,7 +1175,7 @@ const HELP = [
     The other actions (play, record, loop, undo…) and the sticks are listed in the editor's <b>🎮 Controller</b> dialog, where
     any button can be changed. If your presses land early or late, use its <b>Calibrate…</b>.</p>
     <h3>Tempo</h3>
-    <p><b>Tempo…</b> sets a steady BPM from the first beat, or shifts every gem against the audio. Screen effects are on the
+    <p><b>Tempo…</b> (Advanced Edit Mode) sets a steady BPM from the first beat, or shifts every gem against the audio. Screen effects are on the
     <b>Effects &amp; Band Anims</b> tab.</p>`],
   ["anims", "Effects & Band Anims", `
     <p>The <b>Effects &amp; Band Anims</b> tab shows, on the song's time line with playback, the screen effects and what the band
@@ -1200,10 +1202,19 @@ const HELP = [
     <p><b>Advanced Edit Mode</b> unlocks them. Turn it on with <b>Enable Advanced Edit Mode</b> (it asks first) and off with the
     same button. It is one setting for the whole app on this computer.</p>
     <table class="t"><tr><th>Where</th><th>Easy Edit Mode</th><th>Advanced Edit Mode adds</th></tr>
+      <tr><td>Song info</td><td>title, artist, album, year, genre, singer; scores and notes</td>
+        <td><b>Advanced settings</b>: lead-in, stars scale, preview, guitar chords, loudness</td></tr>
+      <tr><td>Audio</td><td>the tracks, the MIDI or notes from the audio, the count-in, where the tracks came from</td><td>(nothing more)</td></tr>
+      <tr><td>Chart</td><td>everything on <b>Expert</b>: gems, shapes, held notes (drums too: the rules button warns),
+        overdrive, solos, recording, the controller. Hard, Medium and Easy are view-only: the build makes them from Expert</td>
+        <td>editing Hard, Medium and Easy by hand (turn off "made from Expert"); <b>Tempo…</b> (constant tempo, shift every gem)</td></tr>
       <tr><td>Effects &amp; Band Anims</td><td>screen effects; singer props (automatic or your own sections)</td>
         <td>singer mic changes (move, add, delete); one guitarist or bassist clip per note</td></tr>
-    </table>
-    <p class="small dim">More controls will follow this split as they are added.</p>`],
+      <tr><td>song.json</td><td>(hidden)</td><td>the song.json tab: every setting as text</td></tr>
+      <tr><td>Make a new song</td><td>the folder name is made from the title</td><td>choose the folder name (More options)</td></tr>
+      <tr><td>Song page → More</td><td>open the song's folder, the last build log</td><td>open the song's game files</td></tr>
+      <tr><td>Settings</td><td>your game, the look</td><td>change the tool paths</td></tr>
+    </table>`],
   ["packs", "Share & Packs", `
     <p>The game lists at most 300 songs, official ones included (188 custom songs with all the DLC, 245 with the base game
     only). A <b>pack</b> is a set of your songs with its own song database: make one for metal and another for classic rock,
@@ -1251,7 +1262,7 @@ const HELP = [
       <li><b>Only someone else's song shows, under one of your songs' names</b>: their pack's <span class="mono">ZZCUSTOMDB</span>
         was copied onto yours. On the Memory stick page, <b>Add to my library</b> on their song's row (under other songs on the
         memory stick), then <b>Review and apply</b>.</li>
-      <li><b>Notes feel early or late</b>: on the Chart tab, <b>Tempo…</b> → shift all gems by a few ms.</li>
+      <li><b>Notes feel early or late</b>: on the Chart tab, <b>Tempo…</b> → shift all gems by a few ms (Advanced Edit Mode).</li>
       <li><b>Stars too easy or hard</b>: Song info → Advanced settings → Stars scale → <b>Calibrate from a play…</b>, then
         Rebuild song.</li>
       <li><b>Pocket Encore won't start</b>: the console window says why; if it's already running, starting it again just opens
@@ -1294,7 +1305,7 @@ async function showSong(folder, tab) {
     <div class="shtop"><a href="#/">← Your songs</a>${compact ? `<b class="shname">${esc(S.title)}</b>` : ""}<span class="grow"></span>
       ${compact ? "" : `<span id="sgMode">${window.editModeButton()}</span>`}
       <details class="menu"><summary>More</summary><div class="menubox">
-        <button onclick="openFolder('${folder}','outsong')">Open the song's game files</button><button onclick="openFolder('${folder}','song')">Open the song's folder</button>
+        ${window.editMode() === "advanced" ? `<button onclick="openFolder('${folder}','outsong')">Open the song's game files</button>` : ""}<button onclick="openFolder('${folder}','song')">Open the song's folder</button>
         ${CUR.buildLog ? `<button onclick="showStoredLog('${folder}')">Show the last build log</button>` : ""}</div></details></div>
     <div class="status" id="sgStatus" role="status">${songStatusHtml(songStatus(CUR, null))}</div>
     ${compact ? "" : `<div class="shtitle"><h1>${esc(S.title)}</h1><p class="dim">${esc(S.artist)}${S.year ? " · " + esc(S.year) : ""}${S.genre ? " · " + esc(S.genre) : ""}${S.imported ? " · shared with you" : ""}</p></div>
@@ -1713,8 +1724,8 @@ function wInfo() {
         <label for="w_vocals">Singer</label><select id="w_vocals" data-w="vocals"><option value="">Choose the singer shown in game…</option>${opt([[1, "Male singer"], [2, "Female singer"]], NW.vocals)}</select>
       </div>
       <details class="more"><summary>More options (optional)</summary><div class="form">
-        <label for="w_folder">Folder name</label><input type="text" id="w_folder" data-w="folder" value="${esc(NW.folder)}" style="text-transform:uppercase">
-        <span></span><span class="small dim fieldhelp">The song's folder on the memory stick. Made from the title; change it only if you need to.</span>
+        ${window.editMode() === "advanced" ? `<label for="w_folder">Folder name</label><input type="text" id="w_folder" data-w="folder" value="${esc(NW.folder)}" style="text-transform:uppercase">
+        <span></span><span class="small dim fieldhelp">The song's folder on the memory stick. Made from the title; change it only if you need to.</span>` : ""}
         <label for="w_countIn">Count-in</label><label class="inline" style="color:var(--text)"><input type="checkbox" id="w_countIn" ${NW.countIn ? "checked" : ""}> Automatically add a 4 drumstick count-in before the music starts in game</label>
         <label for="w_srcType">Tracks came from</label><select id="w_srcType" data-w="srcType">${opt([["ai", "An AI splitter"], ["official", "The official multitracks"], ["multitrack", "Other multitracks"], ["unknown", "I don't know"]], NW.srcType)}</select>
         <label for="w_srcTool">Splitter used</label><input type="text" id="w_srcTool" data-w="srcTool" value="${esc(NW.srcTool)}" placeholder="${esc(PH.tool)}">
@@ -1809,6 +1820,8 @@ function bindNew() {
       for (const [k, n] of [["title", "Title"], ["artist", "Artist"], ["album", "Album"], ["genre", "Genre"], ["vocals", "Singer"]]) if (!String(NW[k]).trim()) { bad.push(n); $("#w_" + k).classList.add("invalid"); }
       const y = Number(NW.year); if (!(Number.isInteger(y) && y >= 1900 && y <= year)) { bad.push(`Year (1900–${year})`); $("#w_year").classList.add("invalid"); }
       NW.folder = String(NW.folder).toUpperCase();
+      // Easy Edit Mode hides the folder name: an unusable one goes back to the one made from the title
+      if (!$("#w_folder") && (!/^Z[A-Z0-9_]{1,30}$/.test(NW.folder) || NW.taken.includes(NW.folder))) { NW.folderTouched = false; NW.folder = folderFromTitle(NW.title); }
       if (!/^Z[A-Z0-9_]{1,30}$/.test(NW.folder)) { bad.push("Folder name (Z + capital letters or digits)"); $("#w_folder").classList.add("invalid"); $(".wizard details").open = true; }
       else if (NW.taken.includes(NW.folder)) { bad.push("Folder name (another song already uses it)"); $("#w_folder").classList.add("invalid"); $(".wizard details").open = true; }
       if (bad.length) { $("#w_missing").textContent = "Still needed: " + bad.join(", "); document.querySelector(".wizard .invalid")?.focus(); return; }

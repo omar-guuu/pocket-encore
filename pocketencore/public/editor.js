@@ -54,7 +54,7 @@ window.openEditor = async (root, folder, details) => {
     diff: 3, snap: 4, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, saved: false,
     reduce: S.chart ? !!S.reduce : true,
     ctx: null, bufs: {}, peaks: {}, gains: {}, vol: {}, mute: {}, solo: {}, srcs: [], playing: false, t0: 0, off: 0, rate: 1,
-    focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, view: (() => { try { return VIEWS.some(v => v[0] === localStorage["pe.edView"]) ? localStorage["pe.edView"] : "all"; } catch { return "all"; } })(), padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
+    focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, view: "all",  // always opens with every part shown; Focus / Only last until the editor closes padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
   };
   E.hooks = { draw: () => draw(), started: () => { E.clickNext = E.off; $("#play").textContent = "❚❚ Pause"; loop(); }, stopped: () => { $("#play").textContent = "▶ Play"; draw(); } };
   E.parts = PART_TRACKS.map(([key, names]) => {
@@ -142,6 +142,25 @@ const PAL = {
 };
 const pal = () => PAL[document.documentElement.dataset.theme === "light" ? "light" : "dark"];
 window.addEventListener("themechange", () => { if (E) draw(); });
+window.addEventListener("editmodechange", () => { if (E) renderEditMode(); });
+
+// ---------- Easy / Advanced Edit Mode ----------
+// Easy: Hard, Medium and Easy are view-only (the build makes them from Expert) and Tempo… is locked.
+const advanced = () => window.editMode() === "advanced";
+function viewOnly() { return !advanced() && E.diff !== 3; }
+function lockedDiff() {
+  if (!viewOnly()) return false;
+  toast("Hard, Medium and Easy are made from Expert: edit Expert. To edit this difficulty by hand, turn on Advanced Edit Mode.", true);
+  return true;
+}
+function renderEditMode(first) {
+  const adv = advanced(), m = $("#edMode"), r = $("#reduce"), t = $("#tempoBtn");
+  if (m) m.innerHTML = window.editModeButton();
+  if (r) { r.disabled = !adv; $("#reduceLock").textContent = adv ? "" : " · 🔒 Advanced Edit Mode"; }
+  if (t) { t.textContent = adv ? "Tempo…" : "🔒 Tempo…"; t.setAttribute("aria-disabled", String(!adv));
+    t.title = adv ? "Set a constant tempo or shift every gem" : "Locked in Easy Edit Mode: it moves the grid or every gem. Turn on Advanced Edit Mode to use it."; }
+  if (!first) { updateButtons(); draw(); }
+}
 const partOf = n => E.parts.find(p => p.tr.notes.includes(n));
 const focusPart = () => E.parts.find(p => p.key === E.focus);
 function snapshot() { return { notes: E.parts.map(p => p.tr.notes.map(n => ({ ...n }))), tempo: null }; }
@@ -229,7 +248,7 @@ function renderRules() {
     const row = a.closest(".rrow"), item = E.checks.find(i => ruleKey(i) === row.dataset.key);
     if (item && item.diff) { E.diff = DIFFS.indexOf(item.diff); $("#diff").value = E.diff; }
     if (item && item.part) { E.focus = item.part; $("#focus").value = E.focus; }
-    seek(Number(a.dataset.at)); E.x0 = Math.max(0, Number(a.dataset.at) - 2); renderDiff(); renderRules(); draw();
+    seek(Number(a.dataset.at)); E.x0 = Math.max(0, Number(a.dataset.at) - 2); renderDiff(); renderRules(); updateButtons(); draw();
   });
   el.querySelectorAll(".rx").forEach(b => b.onclick = () => { const d = dismissed(); d.add(b.closest(".rrow").dataset.key); saveDismissed(d); renderRules(); });
   const all = el.querySelector("#rulesAll"); if (all) all.onclick = () => { const d = dismissed(); E.checks.forEach(i => d.add(ruleKey(i))); saveDismissed(d); renderRules(); };
@@ -362,6 +381,7 @@ const shapeStep = () => E.snap ? step() : E.tpb / 4;
 // put a shape's gems at tick t in part p; they replace what that part had at the same times (a gem becomes a chord)
 function placeShape(p, sh, t) {
   if (t < 0 || !sh) return false;
+  if (lockedDiff()) return false;
   if (sh.gems.length > 2 && E.diff !== 3) { toast("3-gem chords are Expert only, like in the official charts.", true); return false; }
   const st = shapeStep(), base = BASE[E.diff] + p.off, times = new Set(sh.gems.map(([, k]) => t + k * st));
   pushUndo();
@@ -647,7 +667,7 @@ function renderShell(root, details) {
       <label class="small dim" for="snap">snap</label><select id="snap">${opts([[1, "1 beat"], [2, "1/2"], [3, "1/3"], [4, "1/4"], [6, "1/6"], [8, "1/8"], [0, "off"]], 4)}</select>
       <button id="odBtn" title="Overdrive phrase on/off over the selected gems; while recording, press to start a phrase at the playhead and again to end it (O). Drag a phrase's bar to move it, or its ends to resize it.">Overdrive</button><button id="soloBtn" title="Solo on/off over the selected gems; one part at a time, at most 4 per part (L). Drag a solo's bar to move it, or its ends to resize it.">Solo</button>
       <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button><button id="redo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
-      <button id="tempoBtn" title="Set a constant tempo or shift every gem">Tempo…</button>
+      <button id="tempoBtn">Tempo…</button>
     </div>
     <span class="grow"></span>
     <div class="grp" role="group" aria-label="Controller and save">
@@ -663,7 +683,8 @@ function renderShell(root, details) {
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
   <div class="edfoot">
     <div class="panel" style="flex:1"><div id="status"></div><div id="reduceLine" class="warnline"></div>
-      <label class="small"><input type="checkbox" id="reduce" ${E.reduce ? "checked" : ""}> Easy, Medium and Hard are made from Expert at build time (only Expert edits count)</label>
+      <label class="small"><input type="checkbox" id="reduce" ${E.reduce ? "checked" : ""}> Easy, Medium and Hard are made from Expert at build time (only Expert edits count)<span id="reduceLock" class="dim"></span></label>
+      <span id="edMode" style="margin-left:8px"></span>
       <div id="diffBox" class="diffbox" style="margin-top:6px"></div></div>
     <div class="panel keys" style="width:390px">
       <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off (at the playhead's bar) · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
@@ -707,9 +728,10 @@ function renderShell(root, details) {
   $("#soloBtn").onclick = soloPress;
   $("#clickVol").oninput = e => { if (E.clickGain) E.clickGain.gain.value = Number(e.target.value); };
   $("#undo").onclick = undo; $("#redo").onclick = redo;
-  $("#tempoBtn").onclick = tempoDialog;
+  $("#tempoBtn").onclick = () => advanced() ? tempoDialog() : toast("Tempo… moves the grid or every gem, so it is locked in Easy Edit Mode. Turn on Advanced Edit Mode to use it.", true);
   $("#reduce").onchange = e => { E.reduce = e.target.checked; E.dirty = true; updateButtons(); draw(); scheduleChecks(); };
   $("#saveEd").onclick = () => save(false);
+  renderEditMode(true);
   $("#saveBuildEd").onclick = () => save(true);
   TL.bindMixer(E);
   E.cv.addEventListener("mousedown", onDown);
@@ -737,6 +759,7 @@ function renderShell(root, details) {
 }
 function toggleRec() { E.recording = !E.recording; if (!E.recording) E.odStart = null; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
 function recordGem(lane) {
+  if (lockedDiff()) return;
   const p = focusPart(), t = snapT(s2t(pos()));
   if (t < 0) return;
   pushUndo();
@@ -752,7 +775,9 @@ function updateButtons() {
   // one badge, so the toolbar stays on one line: "rebuild needed" stands for a saved edited chart not built yet
   $("#srcBadge").innerHTML = E.saved && !dirty ? `<span class="badge warn" title="Edited chart saved (songs/${E.folder}/${esc(E.S.chart || "chart.mid")}), but the game files are from the last build">rebuild needed</span>`
     : E.source === "edited" ? `<span class="badge ok" title="songs/${E.folder}/${esc(E.S.chart || "chart.mid")}">edited chart</span>` : `<span class="badge" title="the chart of the last build; saving makes it songs/${E.folder}/chart.mid">automatic chart</span>`;
-  $("#reduceLine").textContent = E.reduce && E.diff !== 3 ? "This difficulty is remade from Expert at build time; edits here are not used." : "";
+  $("#reduceLine").textContent = viewOnly() ? (E.reduce ? "View only: Hard, Medium and Easy are made from Expert at build time. Edit Expert, or turn on Advanced Edit Mode to edit this difficulty by hand."
+      : "View only in Easy Edit Mode: this difficulty was edited by hand, and those edits are kept and used. Turn on Advanced Edit Mode to change them.")
+    : E.reduce && E.diff !== 3 ? "This difficulty is remade from Expert at build time; edits here are not used." : "";
 }
 function updateStatus() {
   const p = pos(), st = $("#status");
@@ -812,6 +837,7 @@ function onDown(e) {
     return;
   }
   const sp = h.zone === "head" && spanAt(x, y);
+  if (sp && lockedDiff()) return;
   if (sp) { E.drag = { mode: "span", n: sp.n, p: sp.p, edge: sp.edge, x, orig: { t: sp.n.t, l: sp.n.l }, undo: snapshot(), changed: false, ...spanRoom(sp.n, sp.p) }; draw(); return; }
   if (h.zone === "head") { E.drag = { mode: "band", x, y, cx: x, cy: y, add: true, part: h.part, lane: 0, base: e.shiftKey || e.ctrlKey ? new Set(E.sel) : new Set(), noAdd: true }; return; }
   if (h.zone !== "lane") return;
@@ -848,6 +874,7 @@ function onMove(e) {
     else { const dt = snapT(o.t + s2t(sOf(x)) - s2t(sOf(d.x))) - o.t; n.t = Math.max(d.lo, Math.min(d.hi - o.l, o.t + dt)); n.l = o.l; }
     d.changed = n.t !== o.t || n.l !== o.l; draw(); return;
   }
+  if ((d.mode === "move" || d.mode === "resize") && viewOnly()) { if (!d.warned && Math.hypot(x - d.x, y - d.y) > 4) { d.warned = true; lockedDiff(); } return; }
   if (d.mode === "move") {
     const dt = snapT(s2t(sOf(x)) - s2t(sOf(d.x)) + (d.orig.get(d.gem).t)) - d.orig.get(d.gem).t;
     const h = hit(x, y), g = geoOf(d.part), dl = h.zone === "lane" && h.part === d.part ? h.lane - Math.min(3, Math.floor((d.y - g.y - HEAD) / g.lane)) : 0;
@@ -885,7 +912,7 @@ function onUp() {
     if (!d.add && E.sel.size > 1) { E.sel.clear(); draw(); return; }
     // a click on an empty lane: new gem
     const t = snapT(s2t(sOf(d.x))), p = d.part;
-    if (t < 0) return draw();
+    if (t < 0 || lockedDiff()) return draw();
     pushUndo();
     const g = addGem(p, d.lane, t);
     if (g) { E.sel.clear(); E.sel.add(g); }
@@ -924,7 +951,7 @@ function spanRoom(span, part) {
 }
 // parts shown: All parts / Focus / Only (F cycles)
 function setView(v) {
-  E.view = v; try { localStorage["pe.edView"] = v; } catch { }
+  E.view = v;
   document.querySelectorAll("#viewSeg [data-view]").forEach(b => { b.classList.toggle("on", b.dataset.view === v); b.setAttribute("aria-pressed", String(b.dataset.view === v)); });
   draw();
 }
@@ -950,6 +977,7 @@ function songTimeAt(ms) {
 }
 function laneDown(lane, ms) {
   if (E.calib) return calibPress(ms);
+  if (lockedDiff()) return;
   const p = focusPart(), s = songTimeAt(ms), now = performance.now(), lp = E.lastPress;
   const chord = lp && lp.part === p && now - lp.ms < CHORD_MS;
   const t = chord ? lp.t : snapT(s2t(s));
@@ -980,6 +1008,7 @@ function laneUp(lane, ms) {
 // overdrive: while recording, the first press starts a phrase at the playhead and the second ends it; otherwise it
 // toggles a phrase over the selected gems (like O)
 function overdrivePress(ms) {
+  if (lockedDiff()) return;
   if (E.recording && E.playing) {
     const t = snapT(s2t(songTimeAt(ms)));
     if (E.odStart == null) { E.odStart = t; E.odPart = focusPart(); toast("Overdrive phrase started: press again to end it"); draw(); return; }
@@ -994,11 +1023,12 @@ function overdrivePress(ms) {
 }
 // solo: on/off over the selected gems (like L)
 function soloPress() {
+  if (lockedDiff()) return;
   if (!E.sel.size) { toast("Select the gems of the solo first.", true); return; }
   toggleSpan(SOLO);
 }
 function setFocus(key) { E.focus = key; $("#focus").value = key; E.clickNext = rawPos(); E.odStart = null; renderShapes(); draw(); }
-function setDiff(d) { E.diff = d; $("#diff").value = d; E.sel.clear(); renderDiff(); renderRules(); renderShapes(); draw(); }
+function setDiff(d) { E.diff = d; $("#diff").value = d; E.sel.clear(); renderDiff(); renderRules(); renderShapes(); updateButtons(); draw(); }
 
 // ---------- controller: Xbox and PlayStation (the browser's "standard" button layout is the same for both) ----------
 const PAD_ACTIONS = [  // key, what it does, default button (standard index); gems: D-pad ← red, ↑ yellow, Y/△ blue, B/○ green
@@ -1083,7 +1113,7 @@ function padAction(k, ts) {
   else if (k === "undo") undo();
   else if (k === "redo") redo();
   else if (k === "home") { seek(0); E.x0 = 0; draw(); }
-  else if (k === "del" && E.sel.size) { pushUndo(); for (const p of E.parts) p.tr.notes = p.tr.notes.filter(n => !E.sel.has(n)); E.sel.clear(); markDirty(); }
+  else if (k === "del" && E.sel.size && !lockedDiff()) { pushUndo(); for (const p of E.parts) p.tr.notes = p.tr.notes.filter(n => !E.sel.has(n)); E.sel.clear(); markDirty(); }
 }
 function learnPad(i) {
   const m = padMap(), k = E.padLearn, other = Object.keys(m).find(x => x !== k && m[x] === i);
@@ -1173,7 +1203,7 @@ function onKey(e) {
   if (k === "Escape") { if (E.recording) toggleRec(); E.odStart = null; if (E.stamp) { E.stamp = null; renderShapes(); } E.sel.clear(); draw(); return; }
   if (k === "Delete" || k === "Backspace") {
     e.preventDefault();
-    if (!E.sel.size) return;
+    if (!E.sel.size || lockedDiff()) return;
     pushUndo();
     for (const p of E.parts) p.tr.notes = p.tr.notes.filter(n => !E.sel.has(n));
     E.sel.clear(); markDirty(); return;
@@ -1182,6 +1212,7 @@ function onKey(e) {
   if ((k === "o" || k === "O") && !ctrl) { if (!e.repeat) overdrivePress(e.timeStamp); return; }
   if ((k === "l" || k === "L") && !ctrl) { if (!e.repeat) soloPress(); return; }
   if (!E.sel.size) return;
+  if (/^Arrow(Left|Right|Up|Down)$/.test(k) || k === "t" || k === "T") { if (lockedDiff()) { e.preventDefault(); return; } }
   if (k === "ArrowLeft" || k === "ArrowRight") {
     e.preventDefault();
     const dt = (k === "ArrowLeft" ? -1 : 1) * (E.snap ? step() : E.tpb / 16);
@@ -1231,7 +1262,7 @@ function copy() {
   clip = sel.map(n => { const p = partOf(n); return { part: p.key, t: n.t - t0, l: n.l, lane: n.n - BASE[E.diff] - p.off }; });
 }
 function paste() {
-  if (!clip) return;
+  if (!clip || lockedDiff()) return;
   const at = snapT(s2t(pos()));
   pushUndo(); E.sel.clear();
   for (const c of clip) {
