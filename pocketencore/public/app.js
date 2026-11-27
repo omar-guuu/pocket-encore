@@ -1030,60 +1030,75 @@ function bindSticks(s) {
 const HELP = [
   ["start", "Getting started", `
     <p>Pocket Encore makes custom songs for <b>Rock Band Unplugged</b> (PSP, US version ULUS10418) that the game loads by
-    itself on PPSSPP: no plugin, no cheats. You need your own copy of the game (its disc image) or the game plus its DLC.</p>
+    itself on PPSSPP or a PSP: no plugin, no cheats. You need your own copy of the game (its disc image), with or without its DLC.</p>
     <ol>
-      <li><b>Setup</b> (top right) shows what was found: your game, Python and its packages, mid2rbu and at3tool. Everything
-        must be found before songs can be built. The first start walks you through it.</li>
-      <li><b>+ New song</b>: fill in the details and drop the stems (or Browse). A MIDI is optional; without one the chart is
-        made from the stems.</li>
-      <li><b>Build</b>: makes the audio, the chart and the song database.</li>
-      <li><b>Memory stick</b> (top right) shows what is on PPSSPP's memory stick and on a PSP connected by USB, and
-        <b>Install…</b> copies the changed songs and the song database there after showing you what it will do. Copying
-        by hand works too: the song folders and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span>
-        (<b>Open output folder</b>) into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span>, replacing the old
-        <span class="mono">ZZCUSTOMDB</span>.</li>
-    </ol>`],
-  ["stick", "Memory stick and sharing", `
+      <li><b>Settings</b> shows your game and the tools Pocket Encore uses. The first start walks you through them; everything
+        must be found before songs can be made.</li>
+      <li><b>Make a new song</b> (on the Songs page): drop the song's audio tracks, and a MIDI if you have one (without one the
+        chart is made from the audio). Fill in the details, then <b>Make the song</b>.</li>
+      <li><b>Memory stick</b>: every song has an <b>Add in game</b> switch. <b>Review and apply</b> shows what will change, then
+        copies the songs and your song list to PPSSPP's memory stick or to a PSP connected by USB.</li>
+      <li><b>Share &amp; Packs</b>: put a set of your songs in a pack for your own game or a friend's, and add songs someone
+        shared with you (<b>Merge Songs</b>).</li>
+    </ol>
+    <p>Each song's page says where the song stands ("Not made yet", "Your changes are saved but not in the game yet", "In the
+    game · up to date"…) with a button for the next step.</p>`],
+  ["stick", "Memory stick", `
     <p>The game lists the songs of <b>one</b> song database: the <span class="mono">JB</span> file with the highest number in
     any folder of <span class="mono">MUSIC</span>, with the names from the <span class="mono">TEXT</span> folder next to it. Song
-    folders it doesn't list are hidden, even though they are on the memory stick.</p>
-    <h3>What is installed</h3>
-    <p>Every build puts a small <span class="mono">PESONG.JSON</span> in each song folder (details and a build code) and a
-    <span class="mono">PEDB.JSON</span> in <span class="mono">ZZCUSTOMDB</span>; the game ignores them. The <b>Memory stick</b>
-    page reads PPSSPP's memory stick (the MUSIC folder on Setup) and a PSP connected by USB (on the PSP: Settings → USB
-    Connection), and shows each song as installed, older build, not copied, or hidden. An unplugged PSP shows its last check.
-    The song list shows the same as a badge on each song.</p>
-    <h3>Install</h3>
-    <p><b>Install…</b> copies the ticked songs (each folder replaced as a whole) and, if ticked, replaces
-    <span class="mono">ZZCUSTOMDB</span> with your newest song database. It shows what will change first and touches nothing
-    else. Packs have their own <b>Install…</b> button.</p>
-    <h3>Songs from other people</h3>
-    <p>Never copy someone else's <span class="mono">ZZCUSTOMDB</span> onto your memory stick: theirs only lists their songs,
-    so yours disappear, and if it lands next to your <span class="mono">TEXT</span> its songs get your songs' names. Use
-    <b>Import songs</b> on the Memory stick page instead (unzip the pack first): their songs join your library with their chart
-    and audio as shipped, and your next build lists them with yours. A song someone else's database put on your memory stick
-    can be imported straight from there (<b>Import…</b> on its row). Your song database number is always raised above any other
-    build's database Pocket Encore has seen on your memory sticks, so yours is the one the game uses.</p>`],
+    folders it doesn't list are hidden, even though they are on the memory stick. Pocket Encore's song database is the
+    <span class="mono">ZZCUSTOMDB</span> folder.</p>
+    <h3>Add in game</h3>
+    <p>The <b>Memory stick</b> page has a tab for PPSSPP's memory stick (the MUSIC folder in Settings) and one for a PSP
+    connected by USB (on the PSP: Settings → USB Connection). Each of your songs has an <b>Add in game</b> switch: the list
+    shows what the memory stick will have. Nothing changes until you press <b>Review and apply</b>, which lists every change by
+    name. <b>Apply changes</b> then copies new and updated songs, writes a song database that lists exactly the songs switched
+    on, and removes the songs switched off.</p>
+    <p>Switching a song off only takes it off the memory stick: it stays in your songs, and stays off until you switch it on
+    again. The filters (Installed, Update ready, Not installed…) and the search narrow the list, and the add and remove buttons
+    next to them work on the songs shown.</p>
+    <h3>Archive</h3>
+    <p><b>Archive</b> on a song's row puts the song away: it leaves your songs and the game's list (and the memory stick, if
+    ticked), but Pocket Encore keeps it on your computer. <b>Archived songs</b> lists them; <b>Restore</b> brings one back.</p>
+    <h3>Other song folders</h3>
+    <p><b>Other songs on the memory stick</b> are song folders that aren't in your songs: a friend's pack, or songs from an
+    older library. <b>Add to my library</b> adds one to your songs (see Merge Songs); <b>Remove from memory stick</b> deletes
+    its folder there.</p>
+    <h3>By hand</h3>
+    <p>Copying by hand works too: the song folders and <span class="mono">ZZCUSTOMDB</span> from <span class="mono">out\\MUSIC</span>
+    (a song's <b>More</b> → <b>Open the song's game files</b>) into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span>,
+    replacing the old <span class="mono">ZZCUSTOMDB</span>. Never copy someone else's <span class="mono">ZZCUSTOMDB</span>:
+    theirs only lists their songs, so yours disappear, and if it lands next to your <span class="mono">TEXT</span> its songs get
+    your songs' names. Add their songs with <b>Merge Songs</b> instead.</p>
+    <p class="small dim">Every song folder Pocket Encore makes has a small <span class="mono">PESONG.JSON</span>, and
+    <span class="mono">ZZCUSTOMDB</span> a <span class="mono">PEDB.JSON</span>: the game ignores them; Pocket Encore reads them to
+    tell what is installed. Your song database number is always raised above any other database Pocket Encore has seen on your
+    memory sticks, so yours is the one the game uses.</p>`],
   ["song", "Making a song", `
-    <h3>Stems</h3>
-    <p>One file per instrument: drums, bass, guitar, vocals (required) and backing (optional: everything else). WAV, MP3, FLAC
-    or OGG. Drop up to 5 files at once: each goes to the instrument its name mentions; the rest fill the empty slots in order.
-    Stems from AI separation (Fadr, Moises.ai, Lalal.ai…) work; the Details tab shows level, clipping and possible bleed.</p>
-    <h3>Details</h3>
+    <h3>Audio tracks</h3>
+    <p>One file per instrument: drums, bass, guitar, vocals (required) and a backing track (optional: everything else). WAV,
+    MP3, FLAC or OGG. Drop up to 5 files at once: each goes to the instrument its name mentions; the rest fill the empty slots in
+    order. Tracks from AI splitters (Fadr, Moises.ai, Lalal.ai…) work. The song's <b>Audio</b> tab shows how much of the song
+    each track plays in, and warns about tracks that are almost silent, too loud, off-centre, low-quality MP3s, or that leak
+    into each other.</p>
+    <h3>Song info</h3>
     <ul>
-      <li><b>Tiers</b> (0–6): the difficulty dots in the song list.</li>
-      <li><b>Count-in</b>: 4 stick clicks before the music. <b>Lead-in</b>: silence before the music (automatic).</li>
-      <li><b>Stars scale</b>: above 1 = harder stars, below 1 = easier. <b>Calibrate from a play…</b> works it out from when gold
-        appeared.</li>
-      <li><b>Guitar chords (%)</b>: how many guitar gems are chords; empty = from the music.</li>
+      <li><b>Difficulty in the song list</b>: the marks the game shows next to the song, from Warmup (empty circles) through one
+        to five dots to Impossible (five red rock hands). Click a dot to set it; click it again to go one lower.</li>
+      <li><b>Count-in</b> (Audio tab): 4 drumstick clicks before the music starts.</li>
+      <li><b>Advanced settings</b> 🔒 (Advanced Edit Mode): <b>Lead-in</b> (silence before the music; automatic),
+        <b>Stars scale</b> (above 1 = harder stars, below 1 = easier; <b>Calibrate from a play…</b> works it out from when gold
+        appeared), <b>Preview start</b>, <b>Guitar chords (%)</b> and <b>Loudness</b>.</li>
     </ul>
-    <h3>Builds</h3>
-    <p><b>Build</b> does everything; <b>Rebuild chart</b> reuses the audio (faster) after chart or star changes. The build log
-    (bottom) shows each step; <b>Last log</b> shows the previous one.</p>`],
+    <h3>Getting it in the game</h3>
+    <p><b>Make the song</b> makes the audio, the chart and the song database. After you change something, the song page says
+    "Your changes are saved but not in the game yet": <b>Rebuild song</b> redoes only what changed (the chart alone is much
+    faster than the audio). Then update it on the Memory stick page. The <b>Build log</b> (top right) shows each step; a song's
+    <b>More</b> → <b>Show the last build log</b> shows its previous one.</p>`],
   ["editor", "Chart editor", `
-    <p>The <b>Chart</b> tab shows the four parts' gems over each stem's waveform, with the song playing. Saving
-    turns the automatic chart into your own (<span class="mono">chart.mid</span>); <b>Back to automatic chart</b> on Details
-    undoes that.</p>
+    <p>The <b>Chart</b> tab shows the four parts' gems over each track's waveform, with the song playing. Saving
+    turns the automatic chart into your own (<span class="mono">chart.mid</span>); <b>Back to the automatic chart</b> on the
+    Audio tab undoes that. <b>Save + rebuild</b> also puts your changes in the game files.</p>
     <table class="t"><tr><th>Key / action</th><th>Does</th></tr>
       <tr><td><kbd>Space</kbd></td><td>play / pause (click the ruler to jump)</td></tr>
       <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>add a gem in that lane of the selected part at the playhead, also while playing; hold while playing = held note, together = chord</td></tr>
@@ -1116,7 +1131,7 @@ const HELP = [
     <b>Effects &amp; Band Anims</b> tab.</p>`],
   ["anims", "Effects & Band Anims", `
     <p>The <b>Effects &amp; Band Anims</b> tab shows, on the song's time line with playback, the screen effects and what the band
-    does in game. Changes go into <span class="mono">song.json</span>; <b>Save + rebuild</b> (or Rebuild chart) puts them in the game files.</p>
+    does in game. Changes go into <span class="mono">song.json</span>; <b>Save + rebuild</b> (or <b>Rebuild song</b> on the song page) puts them in the game files.</p>
     <h3>Screen effects</h3>
     <p>One track for the whole song: an effect covers the whole screen, and only one runs at a time, so effects can't overlap.
     Double-click the track to add one, drag it to move it, drag an end to make it longer or shorter, <kbd>Del</kbd> deletes it.
@@ -1143,39 +1158,56 @@ const HELP = [
         <td>singer mic changes (move, add, delete); one guitarist or bassist clip per note</td></tr>
     </table>
     <p class="small dim">More controls will follow this split as they are added.</p>`],
-  ["packs", "Song packs", `
+  ["packs", "Share & Packs", `
     <p>The game lists at most 300 songs, official ones included (188 custom songs with all the DLC, 245 with the base game
-    only). A <b>pack</b> is a set of your songs with its own song database, so you can switch what the game lists.</p>
+    only). A <b>pack</b> is a set of your songs with its own song database: make one for metal and another for classic rock,
+    and install whichever you want to play. A pack is also the easy way to give songs to a friend.</p>
+    <h3>Make a pack</h3>
     <ol>
-      <li><b>Packs</b> → <b>+ New pack</b>: name it (empty = "Pocket Encore" + its database code) and tick songs, or add all
-        songs of a genre.</li>
-      <li><b>Build pack</b>: builds the pack's new or changed songs and writes <span class="mono">out\\PACKS\\&lt;name&gt;</span>.</li>
-      <li><b>Install…</b> copies the pack's songs and song database to PPSSPP's memory stick or a connected PSP. By hand: delete
-        the previous pack's song folders and <span class="mono">ZZCUSTOMDB</span> (its <span class="mono">pack.txt</span> lists
-        them), then copy the new pack's <span class="mono">MUSIC</span> contents.</li>
+      <li><b>Share &amp; Packs</b> → <b>Make a pack</b>: name it (empty = "Pocket Encore" + a code) and pick its songs. The
+        search also finds genres: type "metal", then <b>Pick these N</b>.</li>
+      <li><b>Also save it as one .zip file, ready to send</b> (on by default) writes <span class="mono">out\\PACKS\\&lt;name&gt;.zip</span>
+        next to the pack's folder <span class="mono">out\\PACKS\\&lt;name&gt;</span>.</li>
+      <li><b>Make the pack</b> makes any of its songs that aren't made yet, then writes the pack. When one of its songs changes
+        later, the pack says <b>Update ready</b>: press <b>Update pack</b>.</li>
     </ol>
-    <p>Giving a pack to someone who also uses Pocket Encore: they should <b>Import</b> it (Memory stick page) rather than copy its
-    <span class="mono">ZZCUSTOMDB</span>, or their own songs would be hidden. <span class="mono">pack.txt</span> says so too.</p>
-    <p>Scores are kept per song, so they come back with the song.</p>`],
+    <h3>Install a pack</h3>
+    <p>One pack is installed at a time. <b>Install on my memory stick</b> opens the Memory stick page with the pack's songs
+    switched on and the others off; review and apply as usual. Installing another pack (<b>Install instead</b>) uninstalls the
+    one installed: its songs leave the memory stick but stay in your songs. <b>Uninstall</b> does the same without installing
+    another. Scores are kept per song, so they come back with the song.</p>
+    <h3>Share a pack</h3>
+    <p><b>Share it</b> shows what to send: the .zip file (or the pack's folder). A friend with Pocket Encore uses
+    <b>Merge Songs</b>; without it, they copy the pack's <span class="mono">MUSIC</span> contents into
+    <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> (its <span class="mono">pack.txt</span> explains how). A pack has the
+    songs' audio in it: only share songs whose audio you're allowed to share.</p>
+    <h3>Merge Songs</h3>
+    <p>Got a pack or a song folder from someone? <b>Merge Songs</b>: drop the .zip file, or <b>Choose…</b> the zip or the
+    folder. It lists what it found as <b>New</b> or <b>Already in your songs</b> before adding anything. <b>Add to my songs</b>
+    adds the new ones with their chart and audio as shipped and makes them ready for the game; then add them in game on the
+    Memory stick page. Never copy someone else's <span class="mono">ZZCUSTOMDB</span> onto your memory stick: your own songs
+    would disappear from the game.</p>`],
   ["modes", "Game modes", `
-    <p>Checked every time Pocket Encore starts (badge at the top right):</p>
+    <p>Checked every time Pocket Encore starts (<b>Settings</b> → <b>Your game</b> shows which):</p>
     <ul>
       <li><b>Base Game + Complete DLC</b>: all the DLC is installed; songs are built on it and every song stays listed.</li>
       <li><b>Base Game + Incomplete DLC</b>: some DLC; songs are built on it and your DLC songs stay listed.</li>
       <li><b>Base Game only</b>: no DLC; songs are built from the game's disc image.</li>
     </ul>
-    <p>When the mode changes (DLC added or removed), build any song and copy <span class="mono">ZZCUSTOMDB</span> again.</p>`],
+    <p>When the mode changes (DLC added or removed), the Songs page says so: rebuild any song, then apply on the Memory stick
+    page so the new song database goes there.</p>`],
   ["trouble", "Troubleshooting", `
     <ul>
-      <li><b>A build fails</b>: the build log says which step. Setup must show everything found.</li>
-      <li><b>The song isn't in the game's list</b>: the Memory stick page says whether it is copied and whether the song
-        database the game uses lists it (install again after every build). Only one song database counts: if the page says the
-        game uses another build's, install yours.</li>
+      <li><b>Making a song fails</b>: the Build log (top right) says which step. Settings must show everything found.</li>
+      <li><b>The song isn't in the game's list</b>: on the Memory stick page, check its <b>Add in game</b> switch and its state
+        (Installed, Update ready, Not installed), then <b>Review and apply</b>. Only one song list counts: if the page says
+        the song list on the memory stick comes from someone else's pack, applying puts yours back.</li>
       <li><b>Only someone else's song shows, under one of your songs' names</b>: their pack's <span class="mono">ZZCUSTOMDB</span>
-        was copied onto yours. Import their song (Memory stick page, <b>Import…</b> on its row), build, then install your song
-        database.</li>
-      <li><b>Notes feel early or late</b>: in the editor, <b>Tempo…</b> → shift all gems by a few ms.</li>
-      <li><b>Stars too easy or hard</b>: Details → Stars scale → <b>Calibrate from a play…</b>, then Rebuild chart.</li>
+        was copied onto yours. On the Memory stick page, <b>Add to my library</b> on their song's row (under other songs on the
+        memory stick), then <b>Review and apply</b>.</li>
+      <li><b>Notes feel early or late</b>: on the Chart tab, <b>Tempo…</b> → shift all gems by a few ms.</li>
+      <li><b>Stars too easy or hard</b>: Song info → Advanced settings → Stars scale → <b>Calibrate from a play…</b>, then
+        Rebuild song.</li>
       <li><b>Pocket Encore won't start</b>: the console window says why; if it's already running, starting it again just opens
         its window.</li>
       <li><b>Uninstalling</b>: Windows Settings → Apps → Installed apps → Pocket Encore → Uninstall. It closes Pocket Encore
@@ -1949,7 +1981,7 @@ function followBuild() {
     $("#buildState").innerHTML = code === "0" ? (kind === "install" || kind === "stick"
       ? '<span class="badge ok">installed</span> <span class="small dim">restart the game to see the changes (on a PSP, end the USB connection first)</span>'
       : kind === "pack"
-      ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: Install… on the Packs page copies it to the memory stick</span>'
+      ? '<span class="badge ok">done</span> <span class="small dim">pack ready in out\\PACKS: Install on my memory stick, on the Share &amp; Packs page, puts it in the game</span>'
       : '<span class="badge ok">done</span> <span class="small dim">Memory stick (on the song list) shows what to copy, or copies it for you</span>') : `<span class="badge bad">failed (exit ${esc(code)})</span>`;
     log.scrollTop = log.scrollHeight;
     if (window.onBuildEnd && window.onBuildEnd(code, kind)) return;  // a page that follows the build (Make a new song) shows the result itself
