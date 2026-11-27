@@ -36,7 +36,7 @@ let E = null;  // editor state
 window.editorDirty = () => !!(E && E.dirty);
 window.editorState = () => E;  // for tests and the console
 window.editorFns = () => ({ partGeo, xOf, t2s, s2t, draw, undo });  // the same, for layout and timing
-window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); clearInterval(E.padTimer); window.removeEventListener("keyup", E.onKeyUp); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); if (E.ctx && E.ctx.state !== "closed") E.ctx.close().catch(() => { }); E = null; };
+window.editorClose = () => { if (!E) return; stop(); clearInterval(E.timer); clearInterval(E.padTimer); window.removeEventListener("keyup", E.onKeyUp); cancelAnimationFrame(E.raf); window.removeEventListener("keydown", E.onKey); window.removeEventListener("resize", E.onResize); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); window.removeEventListener("mousedown", rulesOutside, true); if (E.ctx && E.ctx.state !== "closed") E.ctx.close().catch(() => { }); E = null; };
 
 let opening = null;  // only the latest openEditor call builds the editor (two quick route changes would make two)
 window.openEditor = async (root, folder, details) => {
@@ -176,33 +176,49 @@ async function runChecks() {
     // warnings this edit introduced (not on the first check) flash once
     E.fresh = before ? new Set(E.checks.map(ruleKey).filter(k => !before.has(k))) : new Set();
     renderRules();
-  } catch (e) { const el = $("#rules"); if (el) el.innerHTML = `<span class="dim small">couldn't run the chart checks: ${esc(e.message)}</span>`; }
+  } catch (e) {
+    const el = $("#rules"), btn = $("#rulesBtn");
+    if (btn) { btn.className = "rulesbtn"; btn.textContent = "Rules: not checked"; }
+    if (el) el.innerHTML = `<p class="small dim">Couldn't run the chart checks: ${esc(e.message)}</p>`;
+  }
+}
+// the rules popover closes on a click outside it (and on Esc, in onKey)
+function rulesOutside(e) { if (E && E.rulesOpen && !e.target.closest(".rulewrap")) setRulesOpen(false); }
+function setRulesOpen(on) {
+  E.rulesOpen = on;
+  const el = $("#rules"), btn = $("#rulesBtn");
+  if (el) el.hidden = !on;
+  if (btn) btn.setAttribute("aria-expanded", on);
+  // open toward the side with room (the toolstrip wraps on narrower windows, which can put the button at the left)
+  if (on && el && btn) el.classList.toggle("alignleft", btn.getBoundingClientRect().right < el.offsetWidth + 8);
 }
 const warnIcon = bad => `<svg class="warnico${bad ? " bad" : ""}" viewBox="0 0 16 16" role="img" aria-label="${bad ? "Problem" : "Warning"}"><path d="M8 1.2c.4 0 .8.2 1 .6l6.6 11.6c.4.7-.1 1.6-1 1.6H1.4c-.9 0-1.4-.9-1-1.6L7 1.8c.2-.4.6-.6 1-.6z" fill="currentColor"/><rect x="7.1" y="5" width="1.8" height="5.2" rx=".9" fill="var(--bg)"/><circle cx="8" cy="12.4" r="1" fill="var(--bg)"/></svg>`;
+// The rules live in a toolstrip button ("⚠ 5 rules", "✓ Rules OK", "3 dismissed") that opens the list over the chart,
+// so they never take room above the chart. A warning an edit just introduced makes the button flash.
 function renderRules() {
-  const el = $("#rules");
-  if (!el || !E.checks) return;
+  const el = $("#rules"), btn = $("#rulesBtn");
+  if (!el || !btn || !E.checks) return;
   const dis = dismissed(), cur = DIFFS[E.diff];
   const active = E.checks.filter(i => !dis.has(ruleKey(i)))
     .sort((a, b) => (a.level === "error" ? 0 : 1) - (b.level === "error" ? 0 : 1) || (a.diff === cur ? 0 : 1) - (b.diff === cur ? 0 : 1));
-  const hidden = E.checks.length - active.length;
-  // the banner keeps one height (header + two rows), so the chart below never moves; "Show all" opens over the chart
+  const hidden = E.checks.length - active.length, bad = active.some(i => i.level === "error");
+  const s = n => n > 1 ? "s" : "";
+  btn.className = "rulesbtn " + (active.length ? (bad ? "bad" : "warn") : hidden ? "dis" : "ok");
+  btn.innerHTML = active.length ? `${warnIcon(bad)}<span>${active.length} rule${s(active.length)}</span>` : hidden ? `<span>${hidden} dismissed</span>` : `<span>✓ Rules OK</span>`;
+  btn.title = active.length ? `${active.length} rule${s(active.length)} outside the official charts' style: click to see ${active.length > 1 ? "them" : "it"}`
+    : hidden ? "All rule warnings are dismissed for this song: click to see them" : "Within the official charts' ranges";
+  if (active.some(i => E.fresh && E.fresh.has(ruleKey(i)))) { btn.classList.remove("flash"); void btn.offsetWidth; btn.classList.add("flash"); }
+  setRulesOpen(!!E.rulesOpen);
   if (!active.length && !hidden) {
-    el.className = "rules ok";
-    el.innerHTML = `<span>✓ Within the official charts' ranges.</span>`;
+    el.innerHTML = `<p class="rok">✓ Within the official charts' ranges.</p>`;
   } else if (!active.length) {
-    el.className = "rules dis";
-    el.innerHTML = `<div class="rhead">${warnIcon(false)}<b>${hidden} dismissed rule${hidden > 1 ? "s" : ""} outside the official charts' style</b>
-      <span class="small dim">hidden for this song: the chart still saves and builds</span><span class="grow"></span><button class="small" id="rulesShow">Show dismissed</button></div>`;
+    el.innerHTML = `<div class="rhead">${warnIcon(false)}<b>${hidden} dismissed rule${s(hidden)} outside the official charts' style</b></div>
+      <p class="small dim">Hidden for this song: the chart still saves and builds.</p><div class="actions"><button class="small" id="rulesShow">Show dismissed</button></div>`;
   } else {
-    const shown = E.rulesOpen ? active : active.slice(0, 2);
-    el.className = "rules" + (E.rulesOpen ? " open" : "");
-    const bad = active.some(i => i.level === "error");
-    el.innerHTML = `<div class="rhead">${warnIcon(bad)}<b>${active.length} rule${active.length > 1 ? "s" : ""} outside the official charts' style</b>
-      <span class="small dim">just a heads-up: the chart still saves and builds</span><span class="grow"></span>
-      ${active.length > 2 ? `<button class="small" id="rulesMore">${E.rulesOpen ? "Show fewer" : `Show all ${active.length}`}</button>` : ""}
-      <button class="small" id="rulesAll">Dismiss all</button>${hidden ? ` <button class="small" id="rulesShow">Show dismissed (${hidden})</button>` : ""}</div>
-      <div class="rlist">${shown.map(i => `<div class="rrow ${E.fresh && E.fresh.has(ruleKey(i)) ? "fresh" : ""}" data-key="${esc(ruleKey(i))}">
+    el.innerHTML = `<div class="rhead">${warnIcon(bad)}<b>${active.length} rule${s(active.length)} outside the official charts' style</b></div>
+      <p class="small dim">Just a heads-up: the chart still saves and builds.</p>
+      <div class="actions"><button class="small" id="rulesAll">Dismiss all</button>${hidden ? `<button class="small" id="rulesShow">Show dismissed (${hidden})</button>` : ""}</div>
+      <div class="rlist">${active.map(i => `<div class="rrow ${E.fresh && E.fresh.has(ruleKey(i)) ? "fresh" : ""}" data-key="${esc(ruleKey(i))}">
         <span class="badge ${i.level === "error" ? "bad" : "warn"}">${i.level === "error" ? "problem" : "rule"}</span>
         ${i.part ? `<b>${esc(i.part)}</b>` : ""} <span>${esc(i.msg)}</span>
         ${i.at != null ? `<a href="#" data-at="${i.at}" class="small">go</a>` : ""}<span class="grow"></span>
@@ -217,7 +233,6 @@ function renderRules() {
   });
   el.querySelectorAll(".rx").forEach(b => b.onclick = () => { const d = dismissed(); d.add(b.closest(".rrow").dataset.key); saveDismissed(d); renderRules(); });
   const all = el.querySelector("#rulesAll"); if (all) all.onclick = () => { const d = dismissed(); E.checks.forEach(i => d.add(ruleKey(i))); saveDismissed(d); renderRules(); };
-  const more = el.querySelector("#rulesMore"); if (more) more.onclick = () => { E.rulesOpen = !E.rulesOpen; renderRules(); };
   const show = el.querySelector("#rulesShow"); if (show) show.onclick = () => { saveDismissed(new Set()); renderRules(); };
   E.fresh = new Set();
 }
@@ -320,8 +335,14 @@ function toggleLoop() {
   else if (E.sel.size) {
     const sel = [...E.sel], a = barStart(Math.min(...sel.map(n => n.t))), b = barAfter(Math.max(...sel.map(n => n.t + (n.l > TAP_MAX ? n.l : 0))));
     E.loop = { a: t2s(a), b: t2s(b), on: true };
-  } else if (E.loop) E.loop.on = true;
-  else { const a = barStart(s2t(pos())); E.loop = { a: t2s(a), b: t2s(barAfter(a, 2)), on: true }; }
+  } else if (E.loop && pos() >= E.loop.a && pos() < E.loop.b) E.loop.on = true;  // the playhead is in the old loop: that loop again
+  else {
+    // else the loop starts at the playhead's bar, as long as the last one (2 bars the first time)
+    let bars = 2;
+    if (E.loop) { const ta = s2t(E.loop.a), tb = s2t(E.loop.b); bars = 1; while (bars < 64 && barAfter(ta, bars) < tb - E.tpb / 4) bars++; }
+    const a = barStart(s2t(pos()));
+    E.loop = { a: t2s(a), b: t2s(barAfter(a, bars)), on: true };
+  }
   applyLoop();
 }
 // the audio sources hold the loop: restart them when it changes
@@ -334,7 +355,7 @@ function loopEdgeAt(x, y) {
   if (!E.loop || y >= RULER || x < GUT) return null;
   return Math.abs(xOf(E.loop.a) - x) <= 5 ? "a" : Math.abs(xOf(E.loop.b) - x) <= 5 ? "b" : null;
 }
-const LOOP_TIP = "Loop a section (K): drag along the time ruler to mark it, or select gems first. Drag its edges on the ruler to change it.";
+const LOOP_TIP = "Loop a section (K): starts at the playhead's bar, or loops the selected gems. Or drag along the time ruler to mark it; drag its edges to change it.";
 
 // ---------- gem shapes ----------
 const shapeStep = () => E.snap ? step() : E.tpb / 4;
@@ -630,6 +651,8 @@ function renderShell(root, details) {
     </div>
     <span class="grow"></span>
     <div class="grp" role="group" aria-label="Controller and save">
+      <span class="rulewrap"><button id="rulesBtn" class="rulesbtn" aria-haspopup="dialog" aria-expanded="false" aria-controls="rules">Checking rules…</button>
+        <div id="rules" class="rulespop" role="dialog" aria-label="Chart rules" hidden><p class="small dim">Checking the chart against the official charts' rules…</p></div></span>
       <button id="padBtn">🎮</button>
       <span id="srcBadge"></span>
       <button id="saveEd" class="primary">Save</button><button id="saveBuildEd" title="Save, then rebuild the song's chart">Save + rebuild</button>
@@ -637,17 +660,16 @@ function renderShell(root, details) {
   </div>
   ${TL.mixerHtml(`<span class="ch"><label title="Play a click on the selected part's gems, to check the sync"><input type="checkbox" id="ticks"> <b>Ticks</b></label><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span>`)}
   <div id="shapes" class="shapes"></div>
-  <div id="rules" class="rules ok"><span class="dim small">checking the chart against the official charts' rules…</span></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
   <div class="edfoot">
     <div class="panel" style="flex:1"><div id="status"></div><div id="reduceLine" class="warnline"></div>
       <label class="small"><input type="checkbox" id="reduce" ${E.reduce ? "checked" : ""}> Easy, Medium and Hard are made from Expert at build time (only Expert edits count)</label>
       <div id="diffBox" class="diffbox" style="margin-top:6px"></div></div>
     <div class="panel keys" style="width:390px">
-      <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
+      <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off (at the playhead's bar) · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
       <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane at the playhead (hold while playing = held note; together = chord) · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd> add that shape<br>
       shapes: drag one onto its part, or click it then click the part; <kbd>Esc</kbd> stops placing<br>
-      click a lane = add gem · drag = move · drag the right end = hold length<br>
+      click a lane = add gem (with several gems selected, it unselects them first) · drag = move · drag the right end = hold length<br>
       drag on empty space or a part's title = select area · <kbd>Shift</kbd>/<kbd>Ctrl</kbd>+click = add to selection<br>
       <kbd>Del</kbd> delete · <kbd>←</kbd><kbd>→</kbd> move by snap · <kbd>↑</kbd><kbd>↓</kbd> lane · <kbd>T</kbd> tap/hold<br>
       <kbd>O</kbd> / Overdrive phrase · <kbd>L</kbd> / Solo, on/off for the selection (recording: <kbd>O</kbd> starts and ends a phrase)<br>
@@ -708,6 +730,8 @@ function renderShell(root, details) {
   E.onKey = onKey; E.onKeyUp = onKeyUp;
   window.addEventListener("keydown", E.onKey);
   window.addEventListener("keyup", E.onKeyUp);
+  $("#rulesBtn").onclick = () => setRulesOpen(!E.rulesOpen);
+  window.addEventListener("mousedown", rulesOutside, true);
   renderPadBadge();
   setView(E.view); updateButtons(); renderDiff(); renderShapes(); runChecks();
 }
@@ -857,6 +881,8 @@ function onUp() {
   if (d.mode === "ruler" || d.mode === "loopEdge") { if (d.made) applyLoop(); return; }
   if (d.mode === "band" && d.noAdd && Math.abs(d.cx - d.x) < 4 && Math.abs(d.cy - d.y) < 4) { E.sel = d.base; draw(); return; }
   if (d.mode === "band" && Math.abs(d.cx - d.x) < 4 && Math.abs(d.cy - d.y) < 4) {
+    // a click on an empty lane with several gems selected: unselect them (the next click adds a gem)
+    if (!d.add && E.sel.size > 1) { E.sel.clear(); draw(); return; }
     // a click on an empty lane: new gem
     const t = snapT(s2t(sOf(d.x))), p = d.part;
     if (t < 0) return draw();
@@ -1126,6 +1152,7 @@ function onKey(e) {
   if (!E || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && e.key !== "Escape") return;
   if (E.calib && e.key >= "1" && e.key <= "4") { e.preventDefault(); if (!e.repeat) calibPress(e.timeStamp); return; }
   if (!$("#modal").classList.contains("hidden")) return;
+  if (e.key === "Escape" && E.rulesOpen) { setRulesOpen(false); $("#rulesBtn").focus(); return; }
   const k = e.key, ctrl = e.ctrlKey || e.metaKey;
   if (e.shiftKey && !ctrl && /^Digit[1-9]$/.test(e.code)) {  // Shift+n: shape n of the part, at the playhead
     const sh = (SHAPES[E.focus] || [])[Number(e.code.slice(5)) - 1];

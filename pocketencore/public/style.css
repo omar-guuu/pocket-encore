@@ -131,8 +131,8 @@ table.t th { color: var(--dim); font-weight: 600; }
 .seg button:last-child { border-radius: 0 4px 4px 0; }
 .seg button.on { background: var(--primary); border-color: var(--accent); position: relative; }
 #time { font-family: Consolas, monospace; min-width: 112px; font-size: 12px; }
-.rules .warnico { flex: none; width: 16px; height: 16px; color: var(--warn); }
-.rules .warnico.bad { color: var(--bad); }
+.rulesbtn .warnico, .rulespop .warnico { flex: none; width: 16px; height: 16px; color: var(--warn); }
+.rulesbtn .warnico.bad, .rulespop .warnico.bad { color: var(--bad); }
 .mixer { display: flex; gap: 14px; flex-wrap: wrap; align-items: center; margin-bottom: 6px; font-size: 12px; }
 .mixer .ch { display: flex; gap: 4px; align-items: center; }
 .mixer button { padding: 0 6px; font-size: 11px; }
@@ -186,19 +186,28 @@ button.small { padding: 1px 7px; font-size: 11px; }
 input.invalid, select.invalid { border-color: var(--bad); box-shadow: 0 0 0 1px var(--bad); }
 
 /* live chart rules */
-/* one height in every state (header + two rows), so the chart below never moves; "Show all" opens over the chart */
-.rules { position: relative; height: 86px; box-sizing: border-box; overflow: hidden; border: 1px solid var(--warn-line); background: rgba(232,184,74,.07); border-radius: 6px; padding: 6px 10px; margin-bottom: 6px; font-size: 12px; }
-.rules.ok { display: flex; align-items: center; border-color: var(--line); background: none; color: var(--ok); }
-.rules.dis { display: flex; align-items: center; color: var(--warn); }
-.rules.dis .rhead { flex: 1; margin-bottom: 0; }
-.rules.open { overflow: visible; z-index: 5; }
-.rules.open .rlist { position: absolute; left: -1px; right: -1px; top: 34px; max-height: 50vh; overflow: auto; padding: 0 10px 6px;
-  background: var(--panel); border: 1px solid var(--warn-line); border-top: 0; border-radius: 0 0 6px 6px; box-shadow: 0 8px 18px rgba(0,0,0,.25); }
-.rules .rhead { display: flex; gap: 10px; align-items: center; margin-bottom: 4px; }
-.rules .rrow { display: flex; gap: 6px; align-items: center; padding: 2px 0; border-top: 1px solid var(--soft-line); }
-.rules .rrow.fresh { animation: rulesflash 1.6s ease-out; }
+/* a toolstrip button ("⚠ 5 rules") that opens the list over the chart: the rules never take room above the chart */
+.rulewrap { position: relative; display: inline-flex; }
+.edbar .grp button.rulesbtn { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
+.rulesbtn.ok { color: var(--ok); }
+.rulesbtn.warn { color: var(--warn); border-color: var(--warn-line); }
+.rulesbtn.bad { color: var(--bad); border-color: var(--bad); }
+.rulesbtn.dis { color: var(--dim); }
+.rulesbtn.flash { animation: rulesflash 1.6s ease-out; }
+.rulesbtn .warnico { width: 14px; height: 14px; color: currentColor; }
+.rulespop { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; width: min(560px, 90vw); max-height: 60vh; overflow: auto; box-sizing: border-box;
+  padding: 10px 12px; background: var(--panel); border: 1px solid var(--warn-line); border-radius: 8px; box-shadow: 0 10px 24px rgba(0,0,0,.35); font-size: 12px; }
+.rulespop[hidden] { display: none; }
+.rulespop.alignleft { right: auto; left: 0; }
+.rulespop p { margin: 4px 0 8px; }
+.rulespop .rok { color: var(--ok); margin: 0; }
+.rulespop .actions { margin-bottom: 6px; }
+.rulespop .rhead { display: flex; gap: 8px; align-items: center; }
+.rulespop .rrow { display: flex; gap: 6px; align-items: center; padding: 3px 0; border-top: 1px solid var(--soft-line); }
+.rulespop .rrow.fresh { animation: rulesflash 1.6s ease-out; }
 @keyframes rulesflash { 0% { background: rgba(232,184,74,.45); } 100% { background: none; } }
-.rules .rx { padding: 0 7px; }
+.rulespop .rx { padding: 0 7px; }
+@media (prefers-reduced-motion: reduce) { .rulesbtn.flash, .rulespop .rrow.fresh { animation: none; } }
 
 /* onboarding */
 body.onboarding #buildToggle, body.onboarding #setupLink { display: none; }

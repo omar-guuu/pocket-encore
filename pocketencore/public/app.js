@@ -208,8 +208,8 @@ async function showLibrary() {
     <div class="tasks">
       <section class="task"><h2>Manage my custom songs</h2><p class="small dim" id="stickLine">Checking your memory stick…</p>
         <div class="actions" id="stickAct"><button onclick="location.hash='#/stick'">See memory stick</button></div></section>
-      <section class="task"><h2>Share or import songs</h2><p class="small dim">Make a pack for a friend, or add songs someone shared with you.</p>
-        <div class="actions"><button onclick="location.hash='#/packs'">Share or import</button></div></section>
+      <section class="task"><h2>Share &amp; Packs</h2><p class="small dim">Make a pack for your game or a friend's, or add songs someone shared with you.</p>
+        <div class="actions"><button onclick="location.hash='#/packs'">Go to Share &amp; Packs</button></div></section>
     </div>
     <div class="bar"><h2>Your songs <span class="small dim">· ${list.length}</span></h2>
       <div class="actions"><input id="filter" type="search" aria-label="Find a song" placeholder="Find a song…" value="${esc(localStorage.libFilter || "")}">
@@ -1103,22 +1103,23 @@ const HELP = [
       <tr><td><kbd>Space</kbd></td><td>play / pause (click the ruler to jump)</td></tr>
       <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>add a gem in that lane of the selected part at the playhead, also while playing; hold while playing = held note, together = chord</td></tr>
       <tr><td><kbd>R</kbd> / Record</td><td>play in record mode</td></tr>
-      <tr><td>click a lane · drag · drag the right end</td><td>add a gem · move · make it a hold</td></tr>
+      <tr><td>click a lane · drag · drag the right end</td><td>add a gem (with several gems selected, the click unselects them first) · move (all the selected gems) · make it a hold</td></tr>
       <tr><td><kbd>Del</kbd> · <kbd>←</kbd><kbd>→</kbd> · <kbd>↑</kbd><kbd>↓</kbd> · <kbd>T</kbd></td><td>delete · move by snap · change lane · tap/hold</td></tr>
       <tr><td>drag an overdrive or solo bar · drag its ends</td><td>move the phrase or solo · make it longer or shorter (snapped; it stops at the next phrase, and a solo at any part's next solo)</td></tr>
       <tr><td><kbd>F</kbd> · All parts / Focus / Only</td><td>show all four parts · enlarge the selected part, the others as thin strips (click one to switch) · only the selected part; double-click a part's name to enlarge it or go back</td></tr>
       <tr><td><kbd>O</kbd> / Overdrive · <kbd>L</kbd> / Solo</td><td>overdrive phrase · solo, on/off for the selected gems (one part has a solo at a time); while recording, <kbd>O</kbd> or Overdrive starts a phrase at the playhead and a second press ends it</td></tr>
-      <tr><td>drag on the ruler · <kbd>K</kbd> / ⟲ Loop</td><td>mark a section to repeat · loop on/off (with gems selected: loops their bars)</td></tr>
+      <tr><td>drag on the ruler · <kbd>K</kbd> / ⟲ Loop</td><td>mark a section to repeat · loop on/off: it starts at the playhead's bar, as long as the last loop (with gems selected: loops their bars)</td></tr>
       <tr><td>Shapes · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd></td><td>drag a shape onto its part, or click it then click the part · add shape n at the playhead</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> · <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>undo/redo · copy/paste at the playhead · save</td></tr>
       <tr><td>wheel · <kbd>Ctrl</kbd>+wheel</td><td>scroll · zoom</td></tr>
     </table>
     <h3>Chart rules</h3>
-    <p>The bar above the time line warns when the chart leaves what the official charts do (too fast, too many chords, one
-    thumb alternating, held drums…). It never blocks you: dismiss a warning with ×, or <b>go</b> to it.</p>
+    <p>The rules button in the toolstrip (<b>⚠ 3 rules</b>, or <b>✓ Rules OK</b>) warns when the chart leaves what the official
+    charts do (too fast, too many chords, one thumb alternating, held drums…); it flashes when an edit breaks a rule. Click it
+    to see the list over the chart: <b>go</b> to a warning, or dismiss it with ×. It never blocks you.</p>
     <h3>Loop and shapes</h3>
-    <p><b>Loop</b> repeats a section while you edit or record it: drag along the time ruler, or select gems and press
-    <kbd>K</kbd>. <b>Shapes</b> (above the chart) are the gem combinations the official charts use most: guitar and drums
+    <p><b>Loop</b> repeats a section while you edit or record it: press <kbd>K</kbd> (or ⟲ Loop) where the playhead is,
+    select gems and press <kbd>K</kbd>, or drag along the time ruler. <b>Shapes</b> (above the chart) are the gem combinations the official charts use most: guitar and drums
     chords (3-gem chords on Expert only), and for bass two gems in a row, since bass has no chords. Vocals have none.</p>
     <h3>Controller</h3>
     <p>Xbox and PlayStation controllers work in the editor with the game's layout: <b>D-pad ←</b> red, <b>D-pad ↑</b> yellow,
