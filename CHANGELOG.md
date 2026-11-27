@@ -2,6 +2,11 @@
 
 What changed in each version of Pocket Encore. The newest version is first.
 
+## 0.6.2 Beta (2026-11-27)
+
+- The full guide (`docs/RBU_CUSTOM_SONGS.md`) now describes the new pages: Settings, Songs, Make a new song, the song
+  page and its tabs, the chart editor, Memory stick, Share & Packs, Merge Songs, Help and accessibility.
+
 ## 0.6.1 Beta (2026-11-27)
 
 A new look: Pocket Encore is reorganised around what you do (make a song, put songs in your game, share them), with

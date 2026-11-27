@@ -166,23 +166,29 @@ Our scripts (`rbu-tools\scripts`), in pipeline order:
 | database | `mkjukebox.js` | official list + all customs → `ZZCUSTOMDB\JB<day>.STR.EDAT` + TEXT |
 | editing | `reaperpack.js` | chart + WAVs for REAPER (customs and official references) |
 | checks | `loudness.js`, `chartmap.js`, `stresspack.js` | loudness of decoded tracks, chart memory map, 300-song stress test |
-| config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, disc image, python, at3tool, mid2rbu) with detected defaults; `check()` = Setup and onboarding |
+| config | `settings.js` | reads `rbu-tools\settings.json` (MUSIC folder, disc image, python, at3tool, mid2rbu) with detected defaults; `check()` = Settings and onboarding |
 | packs | `mkpack.js` | built songs + a song database listing only them → `out\PACKS\<name>\MUSIC` + `pack.txt` |
+| packs | `zip.js` | a pack as one `.zip` file (stored, no extra software), and unzipping a received `.zip` for Merge Songs |
+| memory stick | `stickapply.js` | the Memory stick page's Apply: copies songs, writes the song database of the songs switched on, removes the ones switched off |
 | config | `game.js`, `iso.js` | finds the game (PPSSPP memory stick, disc image), picks the game mode (Base Game + Complete DLC / + Incomplete DLC / Base Game only), reads disc files from the ISO/CSO |
 
-### Pocket Encore: the all-in-one page (since 2026-11-11; named RBU Studio until 2026-11-12)
+### Pocket Encore: the all-in-one app (since 2026-11-11; named RBU Studio until 2026-11-12; new layout in 0.6.1)
 Double-click `rbu-tools\pocketencore.cmd` (or `node rbu-tools\pocketencore\server.js --open`), or install it with the installer
 (`installer\PocketEncore.iss`, built with Inno Setup; it installs only our files to `%LOCALAPPDATA%\PocketEncore` and makes
 shortcuts). It opens in its own window (Edge or Chrome in app mode; otherwise the default browser) at
 http://localhost:8642. The server only listens on this PC (127.0.0.1); close the console window or press Ctrl+C to stop it.
-`song.json` stays the single source of truth: the page reads and writes it and runs `mksong.js` for builds.
+`song.json` stays the single source of truth: the app reads and writes it and runs `mksong.js` for builds.
+
+The top bar has **Songs**, **Memory stick**, **Share & Packs**, **Settings** and **Help**. Every page says where things
+stand in plain words, with one button for the next step. Nothing on the memory stick changes without a review first.
+
 - **First start (onboarding)**: while `rbu-tools\settings.json` does not exist (first launch, or the file was deleted),
-  Pocket Encore opens a welcome and first-time setup instead of the library: 1. Welcome, with the requirement that you
+  Pocket Encore opens a welcome and first-time setup instead of the songs: 1. Welcome, with the requirement that you
   need Rock Band Unplugged (the game, or the game + its DLC); 2. Your game: the disc image (ISO/CSO) and the MUSIC
   folder, detected from PPSSPP (its recent games list and memory stick), with the game mode it implies; it can't go on
   without the game; 3. Tools (Node, Python + packages, mid2rbu, at3tool) with download links and **Check again**;
   4. Done, which writes `settings.json`. Nothing is saved before the last step.
-- **Game mode**, checked every time Pocket Encore starts and shown at the top right:
+- **Game mode**, checked every time Pocket Encore starts and shown in **Settings → Your game**:
   - **Base Game + Complete DLC** (every DLC song of the newest song list has its folder in MUSIC): built on SHESNOTTHERE's chart and
     YOURENOROCKNROLLFUN's song list; the game lists every disc and DLC song plus yours.
   - **Base Game + Incomplete DLC** (some DLC): with SHESNOTTHERE and YOURENOROCKNROLLFUN, built on them as above (songs you
@@ -191,67 +197,151 @@ http://localhost:8642. The server only listens on this PC (127.0.0.1); close the
   - **Base Game only** (no DLC): built on a disc chart (Mr. Brightside) and the disc's song list, read straight from the disc
     image (cached in `rbu-tools\cache`); the game lists the 55 disc songs plus yours. (FINDINGS §34; not yet
     tested in game.)
-  - When the mode changes (DLC added or removed), the badge and the library say the song database needs rebuilding:
-    build any song, then copy `ZZCUSTOMDB\` again.
-- **Setup** (top right): checks Node, Python and its packages, mid2rbu, at3tool and the game (disc image and DLC), with a
-  download link or command for each missing piece, and lets you set the paths (`rbu-tools\settings.json`). Builds are
-  refused until everything is found.
-- **Library**: every `songs\Z*\song.json`, with build state (built / changed since build / not built, from a hash of
-  the inputs stored in `build\inputs.json`), chart source (MIDI, stems or edited), stem source and quality, and Expert
-  gold. **Open output folder** opens `out\MUSIC` (you copy to the memory stick yourself).
-- **New song**: folder, details, stems and an optional MIDI, picked with a file browser. Creates `song.json` and builds it.
-- **Details**: title, artist, album, year, genre, lead vocals, tiers, stems (path, source format, level, peak, share of
-  the song with sound, clipping, DC offset, low MP3 bitrate; and possible bleed between stems, from how their levels
-  rise and fall together), stem source (type, tool, quality, notes), count-in, lead-in, stars scale with **Calibrate
-  from a play…** (enter how many phrases were left when gold appeared; it computes the new scale), preview, loudness.
-  **Chart checks** lists what differs from the official charts (first gem before 2.77 s, gems after the audio ends,
-  3-gem chords, held drum gems, too many chords or holds, density above the official 90th percentile, overdrive phrases
-  too close, solos too short, too many or overlapping another part's; "go" opens the editor at that time). Also gem counts and star scores per
-  difficulty from the last build. **song.json** tab = the raw file; unknown effect names are refused on save.
-  Every save keeps the old file as `song.json.bak`; saving without changes leaves the file (and build state) alone.
-- **Packs** (top right): sets of your songs, each with its own song database, to switch what the game lists without
-  rebuilding songs. The game holds 300 songs including the official ones (Base Game + Complete DLC: 112 official, so up
-  to 188 custom songs per pack; Base Game only: 55, so 245). Create a pack, name it (empty = "Pocket Encore <JB code>",
-  the 6 digits of its song database file), tick its songs or "Add all songs with genre…". **Build pack** builds the
-  pack's new or changed songs, then writes `out\PACKS\<pack name>\MUSIC\` (its song folders + its own
-  `ZZCUSTOMDB`) and a `pack.txt` listing them. To switch packs on the memory stick: delete the previous pack's song
-  folders and `ZZCUSTOMDB` from `PSP\GAME\ULUS10418\MUSIC` (its `pack.txt` lists them), then copy the new
-  pack's `MUSIC` contents there. Official DLC stays; scores are kept per song (same folder name = same song id). The
-  pack list is `songs\packs.json` (in the repo); what was built where is `songs\.db\packs-built.json` (per machine).
-- **Build** (whole song) and **Rebuild chart** (chart and database only, reusing the audio). The output streams into the
-  build log at the bottom and is written to `songs\<FOLDER>\build\build.log` (**Last log** shows it later).
+  - When the mode changes (DLC added or removed), the Songs page says the song database needs rebuilding: rebuild any
+    song, then apply on the Memory stick page so the new `ZZCUSTOMDB` goes there.
+- **Settings** (was Setup): **Your game** (the PPSSPP memory stick's MUSIC folder and the disc image, with **Choose…**;
+  a link to run the first-time setup again), **Look** (System Default, Light or Dark), **Editing** (the Advanced Edit
+  Mode switch) and **Tools** (Node, Python and its packages, mid2rbu, at3tool: found or not, with a download link or
+  command for each missing piece). Paths are saved in `rbu-tools\settings.json`. The tool paths are read-only (🔒) in
+  Easy Edit Mode unless one is missing. Builds are refused until everything is found.
+- **Songs** (the start page): **Make a new song**, a summary of your memory stick (**See memory stick**) and **Share &
+  Packs**, then your songs (`songs\Z*\song.json`) as cards with their state: not made yet, changes not in the game yet
+  (from a hash of the inputs stored in `build\inputs.json`), on the memory stick, or not added in game. Search and sort
+  (title, last built, folder name).
+- **Make a new song**, step by step: 1. drop the audio tracks (or **Choose…**; up to 5 files at once, each goes to the
+  instrument its name mentions) and an optional MIDI; 2. about the song (title, artist, album, year, genre, singer,
+  folder name, count-in), checked before going on; 3. review; 4. **Make the song**: creates `songs\<FOLDER>\song.json`
+  and builds it, with progress, then offers **Install on memory stick**, **Listen and fix notes** (the Chart tab) or
+  **Make the chart from a MIDI**.
+- **Song page** (click a song): a status line above the title says where the song stands, with the next step:
+  **Make the song** (not built), **Rebuild song** (changes not in the game yet: `mksong` from the first stage that
+  changed, so a chart or star change reuses the audio), **Install on memory stick** / **Update on memory stick**
+  (opens the Memory stick page). A facts strip shows the tracks, where the chart comes from, the effects and when it
+  was built. **More**: open the song's game files (`out\MUSIC\<FOLDER>`), open the song's folder, show the last build
+  log (`songs\<FOLDER>\build\build.log`). The build log of the current session is the **Build log** button at the top.
+  Tabs:
+  - **Song info**: about the song (title, artist, album, year, genre, singer); **Difficulty in the song list**: per part
+    and for the band, the marks the game's Choose Difficulty screen shows (tier 0 Warmup = empty circles, 1–5 dots,
+    6 Impossible = five red rock hands; clicking the selected mark goes one lower, arrow keys move through them);
+    **Advanced settings** 🔒 (read-only in Easy Edit Mode): lead-in, stars scale with **Calibrate from a play…** (enter
+    how many phrases were left when gold appeared; it computes the new scale), preview start (or no preview), guitar
+    chords (%), loudness; **Scores and notes**: gem counts and star scores per difficulty from the last build.
+  - **Audio**: the five tracks with **Replace…** / **Choose…** and, for each, how much of the song has sound, source
+    format and size, and warnings (almost silent, too loud / clipping, DC offset, low MP3 bitrate), plus possible bleed
+    between tracks (their levels rise and fall together). **Notes chart**: from your MIDI (**Replace the MIDI…**, **Make
+    the notes from the audio instead**), from the audio (**Use a MIDI for the chart…**), or edited by you (**Back to the
+    automatic chart**). **Count-in**. **Where the tracks came from** (type, splitter, quality, notes).
+  - **Chart** and **Effects & Band Anims**: the editors, below.
+  - **song.json** (Advanced Edit Mode only): the raw file; unknown effect names are refused on save.
+  - Song info and Audio are one form with one **Unsaved changes** bar (Save / Discard); leaving with unsaved changes asks
+    first. Every save keeps the old file as `song.json.bak`; saving without changes leaves the file (and build state) alone.
 - **Chart**: the four parts' gems on a time line, over each part's own stem waveform, with playback of the
   five tracks as the game plays them (mute, solo, volume, 50/75/100% speed). The **part** selector picks the focus part:
   the **highway** on the right shows it the way the game does (gems falling to the strike line, overdrive and solo
   spans), **ticks** play a click on its gems to check sync, and keys **1–4** add a gem in that lane at the playhead,
   also while playing (**Record** / R starts playback in record mode; clicking a highway lane does the same).
   The toolbar groups Playback (play, start, loop, record, time, speed), View (part, difficulty, **All / Focus /
-  Only**, zoom) and Edit (snap, Overdrive, Solo, undo/redo, Tempo…). **Focus** (F, or double-click a part's name)
-  enlarges the selected part and shrinks the others to thin strips (click one to switch); **Only** shows it alone.
+  Only**, zoom) and Edit (snap, Overdrive, Solo, undo/redo, Tempo…), then the rules button, the controller and Save.
+  **Focus** (F, or double-click a part's name) enlarges the selected part and shrinks the others to thin strips (click
+  one to switch); **Only** shows it alone.
   Edit gems: add, move, change length (hold), delete, copy/paste, overdrive phrase (**Overdrive** / O) and solo
   (**Solo** / L) on/off for the selection (while recording, O starts and ends a phrase at the playhead; a solo that
   would overlap another part's solo is not added); drag an overdrive or solo bar to move it, or its ends to resize
-  it (it stops at the next phrase, and a solo at any part's next solo), undo/redo (also for tempo changes); snap to the beat grid.
-- **Effects & Band Anims**: the same time line and playback (shared code: `pocketencorepublic	imeline.js`) with one
+  it (it stops at the next phrase, and a solo at any part's next solo), undo/redo (also for tempo changes); snap to the
+  beat grid. Dragging one of several selected gems moves them all; with several selected, a click on an empty spot
+  unselects them (the next click adds a gem).
+  - **Loop** (K or ⟲ Loop): starts at the playhead's bar, as long as the last loop (2 bars the first time); with the
+    playhead inside the old loop it turns that loop on again; with gems selected it loops their bars. Drag along the
+    time ruler to mark a loop, and drag its edges to change it.
+  - **Chart rules**: the rules button in the toolbar (**⚠ 3 rules**, **✓ Rules OK**, or **3 dismissed**) runs the chart
+    checks live (`checks.js` on the server) and flashes when an edit breaks a rule. Click it to see the list over the
+    chart: first gem before 2.77 s, gems after the audio ends, 3-gem chords, held drum gems, too many chords or holds,
+    density above the official 90th percentile, overdrive phrases too close, solos too short, too many or overlapping
+    another part's. **go** jumps to the spot; × dismisses one warning for this song (**Dismiss all** / **Show
+    dismissed**). Nothing is ever blocked.
+  - **Tempo…**: set a constant BPM from a first beat (for songs with a steady beat whose grid is off) or shift every gem
+    by some ms against the audio. Both keep every gem, phrase and solo at its time in seconds; only the grid moves.
+  - The editor starts from the last build's chart (`reaper\<FOLDER>\<FOLDER>_auto.mid`). Saving writes
+    `songs\<FOLDER>\chart.mid` (the old one becomes `chart.mid.bak`) and sets `"chart": "chart.mid"`, so the
+    automatic chart is no longer made; **Save + rebuild** also rebuilds the chart. "Easy, Medium and Hard are made from
+    Expert" (on by default) sets `"reduce": true`. **Back to the automatic chart** on the Audio tab removes `"chart"`
+    again. The footer compares the edited chart with the automatic one (gems added/removed per part; removed ones can
+    be shown as outlines).
+  - **🎮 Controller**: Xbox and PlayStation controllers with the game's layout; every button can be changed, and
+    **Calibrate…** measures the timing offset.
+  - An edited chart is in game time. Changing the lead-in, count-in or stems afterwards moves the audio, not the gems.
+  - Not editable yet: vocal pitch, cameras, time signatures other than 4/4 in the tempo tool.
+- **Effects & Band Anims**: the same time line and playback (shared code: `pocketencore\public\timeline.js`) with one
   track per thing the game shows besides the gems: **Screen effects** (one track for the whole song; an effect covers the
   whole screen and only one runs at a time, so blocks can't overlap; each starts and ends exactly at its time),
   **Singer props** (automatic: solos where nobody sings and 8+ bar instrumental parts with Tambourine / Cowbell / Hand
   clapping / None; or **My own sections**, song.json `singerSections`), **Singer mic**, **Guitarist** and **Bassist**
   fret/strum clips, and the four parts' Expert notes for orientation. A preview box shows the effect at the playhead
-  (an in-game screenshot from `pocketencorepublicx<effect>.png` when there is one, otherwise a placeholder).
+  (an in-game screenshot from `pocketencore\public\fx\<effect>.png` when there is one, otherwise a placeholder).
   The band rows show what `band.js` makes from the last built chart. **Easy / Advanced Edit Mode**: the mic and hand
   rows are read-only (🔒) in Easy Edit Mode (the default); Advanced Edit Mode (asks first) lets you move, add or delete
-  mic changes (`singerMic`) and set one guitarist/bassist clip per note (`bandClips`).
-  - **Tempo…**: set a constant BPM from a first beat (for songs with a steady beat whose grid is off) or shift every gem
-    by some ms against the audio. Both keep every gem, phrase and solo at its time in seconds; only the grid moves.
-  - The editor starts from the last build's chart (`reaper\<FOLDER>\<FOLDER>_auto.mid`). Saving writes
-    `songs\<FOLDER>\chart.mid` (the old one becomes `chart.mid.bak`) and sets `"chart": "chart.mid"`, so the
-    automatic chart is no longer made; the badge says **rebuild needed** until the next build. "Easy, Medium and Hard
-    are made from Expert" (on by default) sets `"reduce": true`. **Back to automatic chart** on the Details tab removes
-    `"chart"` again. After a save the checks run again, and the footer compares the edited chart with the automatic one
-    (gems added/removed per part; removed ones can be shown as outlines).
-  - An edited chart is in game time. Changing the lead-in, count-in or stems afterwards moves the audio, not the gems.
-  - Not editable yet: vocal pitch, cameras, time signatures other than 4/4 in the tempo tool.
+  mic changes (`singerMic`) and set one guitarist/bassist clip per note (`bandClips`). **Save + rebuild** puts the
+  changes in the game files.
+- **Memory stick**: a tab for PPSSPP's memory stick (the MUSIC folder in Settings) and one for a PSP connected by USB
+  (on the PSP: Settings → USB Connection; an unplugged PSP shows how to connect it). A summary line ("5 of 6 custom
+  songs are installed in PPSSPP – 1 needs an update"), then your songs, each with its state (Installed, Update ready,
+  Not installed, Not made yet) and an **Add in game** switch: the list shows what the memory stick will have.
+  - Filters (All, Installed, Update ready, Not installed…) and search narrow the list; **Add these N in game** / **Remove
+    these N from game** work on the songs shown; **Undo my changes**.
+  - **Review and apply** lists every change by name (installs, updates, removals, the song list, what is not touched),
+    then **Apply changes** runs `scripts\stickapply.js`: copies new and updated song folders (each replaced as a whole,
+    through a temporary folder), writes a song database that lists exactly the songs switched on (`mkjukebox` into
+    `songs\.db\stick\ZZCUSTOMDB`, then swapped in), and removes the songs switched off (only `Z` folders with a chart
+    file). Its log is `songs\.db\stick.log`. **Apply changes** is off when the memory stick doesn't have enough free space.
+  - A switched-off song stays in your songs and stays off on that memory stick until you switch it on again
+    (`songs\.db\stick-off.json`, per memory stick). The song page and the song cards say "Not added in game".
+  - **Archive** (on a song's row) moves the song to `songs\.archive\<FOLDER>`: out of your songs and the game's list, and
+    off the memory stick if ticked (the default). **Archived songs** lists them; **Restore** brings one back.
+  - **Other songs on the memory stick**: song folders that aren't in your songs (a friend's pack, an older library).
+    **Add to my library** adds one (Merge Songs, below); **Remove from memory stick** deletes its folder there
+    (**Remove all N**). A folder Pocket Encore has no copy of asks with a stronger warning.
+  - **Details for experts**: the MUSIC path and free space.
+  - Every build writes a small `PESONG.JSON` in each song folder (details and a build code) and a `PEDB.JSON` in
+    `ZZCUSTOMDB` (which songs it lists); the game ignores them. Songs built before 0.5 are recognised by their files'
+    sizes and dates. Your song database number is always raised above any other database seen on your memory sticks
+    (`songs\.db\db-history.json`), so the game uses yours; if the memory stick's song list comes from someone else's
+    pack, the page says so and applying puts yours back.
+- **Share & Packs**: two tasks, **Share your songs in a pack** and **Merge Songs**, then **Your packs**.
+  - A **pack** is a set of your songs with its own song database. The game holds 300 songs including the official ones
+    (Base Game + Complete DLC: 112 official, so up to 188 custom songs per pack; Base Game only: 55, so 245).
+  - **Make a pack**: name it (empty = "Pocket Encore <JB code>", the 6 digits of its song database file) and pick its
+    songs; the search also matches genre ("metal", then **Pick these N**), **Pick all** / **Pick none**. **Also save it
+    as one .zip file, ready to send** (on by default for a new pack). **Make the pack** builds the pack's new or changed
+    songs, then writes `out\PACKS\<pack name>\MUSIC\` (its song folders + its own `ZZCUSTOMDB`) and a `pack.txt`, and
+    with the option `out\PACKS\<pack name>.zip` (`scripts\zip.js`: files stored as they are, no extra software; Windows
+    opens it). **Change its songs** (More) edits the pack; **Delete pack** removes the pack, its folder and its .zip
+    (your songs are not touched).
+  - Each pack row says **Not made yet**, **Update ready** (one of its songs changed since it was made: **Update pack**),
+    **Up to date**, or **Installed on your memory stick**.
+  - **Install on my memory stick**: one pack is installed at a time. It opens the Memory stick page in pack mode, with
+    the pack's songs switched on and the others off, and a note saying what happens; review and apply as usual.
+    Installing another pack (**Install instead**) uninstalls the installed one: its songs leave the memory stick but stay
+    in your songs. **Uninstall** takes the pack off without installing another. If some of its songs changed since it
+    was made, it offers to update the pack first. Scores are kept per song (same folder name = same song id).
+  - **Share it**: what to send (the .zip file, or the pack's folder), **Show the zip file** in Explorer, and what your
+    friend does: with Pocket Encore, Share & Packs → Merge Songs; without it, copy what's inside the pack's `MUSIC`
+    folder into `PSP\GAME\ULUS10418\MUSIC` (this replaces their custom song list). Only share songs whose audio you're
+    allowed to share.
+  - By hand: to switch packs on the memory stick, delete the previous pack's song folders and `ZZCUSTOMDB` from
+    `PSP\GAME\ULUS10418\MUSIC` (its `pack.txt` lists them), then copy the new pack's `MUSIC` contents there.
+  - The pack list is `songs\packs.json` (in the repo); what was built where is `songs\.db\packs-built.json` (per machine).
+- **Merge Songs** (was Import songs): drop a .zip file, or **Choose…** a .zip, a pack's folder, its `MUSIC` folder or one
+  song's folder. A .zip is unpacked into `incoming\zip-<code>` first (stored and deflated zips; not ZIP64 or password
+  protected). It lists the songs found as **New** or **Already in your songs** before adding anything. **Add to my
+  songs** copies each new song's chart, audio and preview into `songs\<FOLDER>\import\`, with its details from its
+  `PESONG.JSON` (or from the pack's song database and its TEXT), then builds them so they are ready for the game; **Go
+  to Memory stick** to add them in game. Imported songs can be renamed and re-tiered; their gems and audio can't be
+  edited. Never copy someone else's `ZZCUSTOMDB` over yours: it only lists their songs, so yours disappear.
+- **Help**: Getting started, Memory stick, Making a song, Chart editor, Effects & Band Anims, Easy and Advanced Edit
+  Mode, Share & Packs, Game modes, Troubleshooting, **Open the full guide** (this file) and **Check for updates**.
+- **Accessibility**: every control works with the keyboard and shows where focus is; dialogs keep focus inside, close with
+  Esc and give it back; repeated buttons name their song or pack for screen readers. Checked with axe-core (WCAG 2.1
+  AA) in both themes.
 
 ### One command: `mksong.js` (since 2026-11-07)
 1. Make a folder `rea-work\rbu-tools\songs\Z<NAME>\` with a `song.json` (paths are relative to it):
@@ -334,7 +424,7 @@ What it does:
     octaves) become two-gem chords on beats, long notes and chord changes; the rest play the root. How many follows
     the music: 0.8 × the share of the source's onsets that are chords, between 25 and 45 % of the gems (official
     4–49 %, median 19 %). Stem transcriptions only hear clear power chords, so for them set the share by hand:
-    `"autochart": { "chords": 0.35 }` (Pocket Encore: Details → Guitar chords %); if too few chords were detected,
+    `"autochart": { "chords": 0.35 }` (Pocket Encore: Song info → Advanced settings → Guitar chords (%)); if too few chords were detected,
     the strongest single notes (downbeats, beat 3, held notes) become chords. Expert also gets about one 3-gem chord
     per 200 gems on the biggest accents (a downbeat chord that is held or comes after a pause): blue + green + one
     left lane, as in the official charts; Hard and lower turn them into 2-gem chords. Shapes: fifths skip a lane (1+3, 2+4), thirds/fourths are adjacent, octaves on the
@@ -644,11 +734,12 @@ when every track has passed its end (the lanes hide).
 
 - TODO (2026-11-24, user): decide, control by control, what is **Easy Edit** and what is **Advanced Edit** in Pocket
   Encore. So far: Effects & Band Anims tab - Easy: screen effects, singer props; Advanced: singer mic changes and
-  guitarist/bassist clips. Still to sort: the Chart tab (e.g. Tempo…, editing Hard/Medium/Easy by hand, held drum
-  gems), Details (loudness, lead-in, stars scale), the song.json tab (raw editing is likely Advanced), build options.
+  guitarist/bassist clips. Since 0.6.1 also Advanced: Song info → Advanced settings (lead-in, stars scale, preview,
+  guitar chords, loudness), the tool paths in Settings, and the song.json tab. Still to sort: the Chart tab (e.g.
+  Tempo…, editing Hard/Medium/Easy by hand, held drum gems), build options.
 - TODO: in-game screenshots of each screen effect for the Effects & Band Anims preview box (user is taking them;
-  they go in `pocketencorepublicx<effect>.png` and in the public repo - user's decision 2026-11-24; list in
-  `pocketencorepublicxREADME.md`).
+  they go in `pocketencore\public\fx\<effect>.png` and in the public repo - user's decision 2026-11-24; list in
+  `pocketencore\public\fx\README.md`).
 - Solos are supported (format matched on all official charts); first in-game test: Handlebars (guitar intro solo).
 - Vocals from a stem (vocalchart.js) are new; first test: Handlebars.
 - Vocals are charted from the synth line (no real vocal part in the source MIDI); kick notes are ignored.
@@ -783,6 +874,10 @@ Everything above was tested on PPSSPP. Open points for real hardware:
 | `rbu-tools\customs\<SONG>\` | your source files (stems, MIDI) per song |
 | `rbu-tools\songs\` | one folder per custom song (`song.json` + `build\`) |
 | `rbu-tools\out\MUSIC\` | finished folders to copy to the memory stick |
+| `rbu-tools\out\PACKS\` | packs: `<pack name>\MUSIC\` + `pack.txt`, and `<pack name>.zip` |
+| `rbu-tools\songs\.archive\` | archived songs (Memory stick page → Archive / Restore) |
+| `rbu-tools\songs\.db\` | per machine: memory sticks seen, song database history, switched-off songs, Apply's log, packs built |
+| `rbu-tools\incoming\` | received songs, and `.zip` files unzipped for Merge Songs |
 | `rbu-tools\reaper\` | REAPER folders: `<FOLDER>\` per custom (`_auto.mid` + WAVs), `official\<NAME>\` references |
 | `rbu-tools\work\pushit\` | Push It sources and builds (`ZPUSHIT\` = finished folder, `chart\` = MIDI/.rbu/backups v1–v5) |
 | `rbu-tools\stress\` | stress-test base song and output (§5) |
