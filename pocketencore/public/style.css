@@ -448,3 +448,26 @@ details.menu .menubox button { text-align: left; }
 .mark.rm { color: var(--bad); border-color: var(--bad-line); }
 button.danger.big { padding: 9px 18px; }
 @media (max-width: 860px) { .srow { grid-template-columns: minmax(0, 1fr); } .srow .ctl { justify-content: flex-start; } }
+
+/* ---------- UI revamp: Share page (packs, Merge Songs) ---------- */
+.sharepage { display: grid; gap: 14px; max-width: 1400px; }
+.sharepage h1 { margin: 0; font-size: 22px; }
+.sharepage h2 { margin: 0; font-size: 16px; }
+.sharepage p { margin: 0; }
+.sharepage .panel { margin: 0; display: grid; gap: 10px; }
+.sharepage .bar { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.sharepage input[type=search] { width: 260px; max-width: 100%; }
+.sharepage .form { grid-template-columns: 120px minmax(0, 1fr); align-items: start; }
+.sharepage .form input { width: 100%; max-width: 480px; }
+.sharepage ol.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.packedit, .packshare, .merge { max-width: 1000px; }
+label.srow.pick { grid-template-columns: auto minmax(0, 1fr) auto auto; cursor: pointer; }
+label.srow.pick:has(input:disabled) { cursor: default; opacity: .75; }
+label.srow.pick input { width: 18px; height: 18px; margin: 0; }
+.merge label.srow.pick { grid-template-columns: auto minmax(0, 1fr) auto minmax(0, .8fr); }
+.mgdrop { display: grid; justify-items: center; gap: 8px; padding: 28px 18px; border: 2px dashed var(--accent); border-radius: 10px; text-align: center; }
+.mgdrop.over { background: var(--panel2); }
+.sharepage details.menu .menubox { min-width: 180px; }
+@media (max-width: 860px) { label.srow.pick, .merge label.srow.pick { grid-template-columns: auto minmax(0, 1fr); } .sharepage .form { grid-template-columns: 1fr; } }
+.mgdrop { font-size: 14px; color: var(--text); margin: 0; }
+.srow .ctl button.small, .srow .ctl a.btn.small, .srow .ctl details.menu summary { padding: 3px 10px; font-size: 12px; }

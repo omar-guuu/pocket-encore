@@ -24,6 +24,7 @@ const { EFFECTS, effectName } = require(path.join(SCRIPTS, "fxchart.js"));
 const band = require(path.join(SCRIPTS, "band.js"));
 const settings = require(path.join(SCRIPTS, "settings.js"));
 const stick = require(path.join(SCRIPTS, "stick.js"));
+const zip = require(path.join(SCRIPTS, "zip.js"));
 const { createUpdater } = require("./update.js");
 const PORT = Number((process.argv.find((a, i) => process.argv[i - 1] === "--port")) || 8642);
 const TRACKS = ["drums", "bass_guitar", "lead_guitar", "vocals", "fill"];
@@ -373,7 +374,7 @@ const PACKS_FILE = path.join(SONGS, "packs.json"), PACKS_OUT = path.join(TOOLS, 
 // songs/.db/packs-built.json { <id>: mkpack's PACK info }
 const PACKS_BUILT = path.join(SONGS, ".db", "packs-built.json");
 function readPacks() { try { return JSON.parse(fs.readFileSync(PACKS_FILE, "utf8")).packs || []; } catch { return []; } }
-function writePacks(packs) { fs.writeFileSync(PACKS_FILE, pretty({ packs: packs.map(({ id, name, songs, created }) => ({ id, name, songs, created })) }) + "\n"); }
+function writePacks(packs) { fs.writeFileSync(PACKS_FILE, pretty({ packs: packs.map(({ id, name, songs, created, zip }) => ({ id, name, songs, created, ...(zip ? { zip: true } : {}) })) }) + "\n"); }
 function readBuilt() { try { return JSON.parse(fs.readFileSync(PACKS_BUILT, "utf8")); } catch { return {}; } }
 function writeBuilt(b) { fs.mkdirSync(path.dirname(PACKS_BUILT), { recursive: true }); fs.writeFileSync(PACKS_BUILT, JSON.stringify(b, null, 1)); }
 // JB number = days since 2008-03-07 (as mksong.js / mkpack.js)
@@ -391,7 +392,7 @@ function packsView() {
     mode, official, capacity: 300 - official,
     songs: list.map(d => { const s = status[d]; return s ? { folder: d, title: s.song.title, artist: s.song.artist, genre: s.song.genre || "", status: s.status, mb: +songFolderMb(d).toFixed(1) } : { folder: d, error: true }; }),
     packs: readPacks().map(p => {
-      const last = readBuilt()[p.id], built = last && last.dir && fs.existsSync(last.dir) ? last : null, name = (p.name || "").trim();
+      const last = readBuilt()[p.id], built = last && last.dir && fs.existsSync(last.dir) ? { ...last, zip: last.zip && fs.existsSync(last.zip) ? last.zip : null } : null, name = (p.name || "").trim();
       // renamed: built under another name (an unnamed pack keeps the "Pocket Encore <code>" it was built with)
       const renamed = !!built && (name ? built.name !== name : !/^Pocket Encore \d{6}$/.test(built.name || ""));
       return { ...p, display: !name && built && !renamed ? built.name : packName(p), renamed, missing: p.songs.filter(f => !status[f]), outdated: p.songs.filter(f => status[f] && status[f].status !== "built"),
@@ -418,9 +419,19 @@ function startPack(id) {
     const info = JSON.parse(line.slice(5)), built = readBuilt(), prev = built[id];
     // an earlier build of this pack under another folder name (unnamed packs carry the day's code) is replaced
     if (prev && prev.dir && path.resolve(prev.dir) !== path.resolve(dir) && path.resolve(prev.dir).startsWith(PACKS_OUT)) fs.rmSync(prev.dir, { recursive: true, force: true });
+    // a .zip of an earlier build is out of date now: it goes (the .zip step below makes a new one when the pack wants one)
+    if (prev && prev.zip && path.resolve(prev.zip).startsWith(PACKS_OUT)) fs.rmSync(prev.zip, { force: true });
     built[id] = info;
     writeBuilt(built);
   } });
+  // Also save it as one .zip file, ready to send: <pack folder>.zip next to the folder
+  if (p.zip) {
+    const zf = dir + ".zip";
+    steps.push({ args: [path.join(SCRIPTS, "zip.js"), dir, zf], label: `\n=== .zip file: ${path.basename(zf)} ===`, onDone: code => {
+      if (code !== 0) return;
+      const built = readBuilt(); if (built[id]) { built[id].zip = zf; writeBuilt(built); }
+    } });
+  }
   return runJob(`pack "${name}"`, "pack", steps, path.join(SONGS, ".db", `pack-${id}.log`));
 }
 
@@ -617,13 +628,29 @@ function startInstall(b) {
 }
 
 // ---------- import: songs from someone's pack (or a memory stick) into the library, chart and audio as shipped ----------
+// a .zip someone sent: unzipped once into incoming/zip-<code> (same file, same place), then read like a folder
+function unzipped(file) {
+  const st = fs.statSync(file), code = crypto.createHash("sha1").update(path.resolve(file).toLowerCase() + "|" + st.size + "|" + st.mtimeMs).digest("hex").slice(0, 12);
+  const dest = path.join(INCOMING, "zip-" + code);
+  if (!fs.existsSync(path.join(dest, ".done"))) {
+    fs.rmSync(dest, { recursive: true, force: true });
+    try { zip.unzip(file, dest); } catch (e) { fs.rmSync(dest, { recursive: true, force: true }); throw httpError(400, e.message); }
+    fs.writeFileSync(path.join(dest, ".done"), path.resolve(file));
+  }
+  return dest;
+}
 function importRoot(dir) {
   dir = path.resolve(String(dir || ""));
+  if (/\.zip$/i.test(dir) && fs.existsSync(dir) && fs.statSync(dir).isFile()) dir = unzipped(dir);
   if (!dir || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) throw httpError(404, "no such folder");
   // a song folder itself: its parent, that song only
   if (fs.readdirSync(dir).some(f => /^BEATMATCH\.STR/i.test(f))) return { root: path.dirname(dir), only: path.basename(dir).toUpperCase() };
   const has = r => fs.existsSync(r) && Object.keys(stick.scanMusic(r, { hashAll: false }).songs).length > 0;
-  for (const r of [dir, path.join(dir, "MUSIC"), path.join(dir, "PSP", "GAME", stick.GAME_ID, "MUSIC")]) if (has(r)) return { root: r };
+  const inside = d => [d, path.join(d, "MUSIC"), path.join(d, "PSP", "GAME", stick.GAME_ID, "MUSIC")];
+  for (const r of inside(dir)) if (has(r)) return { root: r };
+  // one folder in it (a zipped pack: <pack name>/MUSIC/...): look in there
+  const subs = fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isDirectory() && !e.name.startsWith("."));
+  if (subs.length === 1) for (const r of inside(path.join(dir, subs[0].name))) if (has(r)) return { root: r };
   throw httpError(404, "no song folders there (a song folder has a BEATMATCH.STR.EDAT): pick the pack's folder, its MUSIC folder or one song's folder");
 }
 function importCandidates(dir) {
@@ -646,7 +673,13 @@ function importCandidates(dir) {
     return { folder: f, ok: !problem, problem, inLibrary: lib.has(f), yours: !!(x.stamp && x.stamp.library === libId), from, details: det || {},
       needsDetails: !det || !det.title, mb: folderMb(x) };
   });
-  return { root, songs };
+  return { root, songs, pack: packNameAt(root) };
+}
+function packNameAt(root) {
+  const f = stick.findFile(path.join(root, stick.DB_FOLDER), stick.DBSTAMP);
+  try { const d = f && JSON.parse(fs.readFileSync(f, "utf8")); if (d && d.pack) return d.pack; } catch { }
+  try { const l = fs.readFileSync(path.join(path.dirname(root), "pack.txt"), "utf8").split(/\r?\n/)[0].trim(); if (l) return l.slice(0, 80); } catch { }
+  return null;
 }
 function importSongs(dir, folders) {
   const c = importCandidates(dir), done = [];
@@ -792,7 +825,7 @@ async function route(req, res) {
   if (what === "upload" && M === "POST") {  // a dropped file (the page can not see its path): saved to incoming/<batch>/
     const name = path.basename(String(u.searchParams.get("name") || "")).replace(/[<>:"|?*\x00-\x1f]/g, "_");
     const ext = path.extname(name).toLowerCase();
-    if (!AUDIO_EXT.includes(ext) && !MIDI_EXT.includes(ext)) throw httpError(400, `${name}: unsupported format (audio: ${AUDIO_EXT.join(" ")}; MIDI: ${MIDI_EXT.join(" ")})`);
+    if (!AUDIO_EXT.includes(ext) && !MIDI_EXT.includes(ext) && ext !== ".zip") throw httpError(400, `${name}: unsupported format (audio: ${AUDIO_EXT.join(" ")}; MIDI: ${MIDI_EXT.join(" ")})`);
     const batch = String(u.searchParams.get("batch") || "").replace(/[^a-z0-9]/gi, "").slice(0, 24) || Date.now().toString(36);
     const dest = path.join(INCOMING, batch, name);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -917,13 +950,14 @@ async function route(req, res) {
       const id = /^[a-z0-9]{4,20}$/.test(p.id || "") ? p.id : Math.random().toString(36).slice(2, 10);
       const prev = old.find(x => x.id === id);
       return { id, name: String(p.name || "").trim().slice(0, 60), songs: [...new Set((p.songs || []).filter(x => FOLDER_RE.test(x)))],
-        created: (prev && prev.created) || new Date().toISOString() };
+        created: (prev && prev.created) || new Date().toISOString(), zip: !!p.zip };
     });
     // a deleted pack's built folder goes too
     const built = readBuilt();
     for (const p of old) if (!clean.find(x => x.id === p.id)) {
       const b = built[p.id];
       if (b && b.dir && path.resolve(b.dir).startsWith(PACKS_OUT)) fs.rmSync(b.dir, { recursive: true, force: true });
+      if (b && b.zip && path.resolve(b.zip).startsWith(PACKS_OUT)) fs.rmSync(b.zip, { force: true });
       delete built[p.id];
     }
     writeBuilt(built);
@@ -934,6 +968,11 @@ async function route(req, res) {
   if (what === "packopen" && M === "POST") {
     const b = readBuilt()[folder];
     if (!b || !b.dir || !fs.existsSync(b.dir)) throw httpError(404, "this pack has not been built yet");
+    if (u.searchParams.get("what") === "zip") {
+      if (!b.zip || !fs.existsSync(b.zip)) throw httpError(404, "this pack has no .zip file yet: update the pack");
+      spawn("explorer.exe", ["/select,", b.zip], { detached: true, stdio: "ignore" }).unref();
+      return json(res, { zip: b.zip });
+    }
     spawn("explorer.exe", [b.dir], { detached: true, stdio: "ignore" }).unref();
     return json(res, { dir: b.dir });
   }

@@ -136,7 +136,7 @@ function setTheme(p) { try { localStorage.peTheme = p; } catch { } applyTheme();
 
 // the top bar: the section of the page on screen is highlighted
 function markNav(h) {
-  const sec = h === "stick" ? "stick" : h === "packs" || h === "pack" ? "share" : h === "setup" ? "setup" : h === "help" ? "help" : h === "welcome" ? "" : "songs";
+  const sec = h === "stick" ? "stick" : h === "packs" || h === "pack" || h === "merge" ? "share" : h === "setup" ? "setup" : h === "help" ? "help" : h === "welcome" ? "" : "songs";
   document.querySelectorAll("#top [data-nav]").forEach(a => { const on = a.dataset.nav === sec; a.classList.toggle("on", on); if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
 }
 
@@ -170,8 +170,10 @@ async function route(ev) {
     else if (h[0] === "new") showNew();
     else if (h[0] === "setup") await showSetup();
     else if (h[0] === "packs") await showPacks();
-    else if (h[0] === "stick") await showSticks();
+    else if (h[0] === "stick") await showSticks(h[1] === "pack" && h[2] ? { id: h[2], mode: h[3] === "off" ? "uninstall" : "install" } : null);
+    else if (h[0] === "merge") await showMerge();
     else if (h[0] === "help") showHelp(h[1]);
+    else if (h[0] === "pack" && h[1] && h[2] === "share") await showPackShare(h[1]);
     else if (h[0] === "pack" && h[1]) await showPackEdit(h[1]);
     else await showLibrary();
   } catch (e) { $("#main").innerHTML = `<div class="panel">Couldn't load this page: ${esc(e.message)}. Try again, or restart Pocket Encore if it keeps happening.</div>`; }
@@ -451,130 +453,265 @@ async function showSetup() {
 // Settings follows the edit mode switch (it is the one place for it)
 window.addEventListener("editmodechange", () => { if (/^#\/setup/.test(location.hash)) showSetup(); });
 
-// ---------- packs: sets of songs with their own song database, to switch on the memory stick ----------
+// ---------- Share: packs (sets of your songs, for your own game or a friend's) and Merge Songs ----------
+// A pack is installed on your memory stick through the Memory stick page (its songs switched on, every other song off:
+// one pack at a time); "Installed on your memory stick" = the song list there lists exactly the pack's songs.
 let PK = null;  // packs view from the server
-const fmtDate = s => s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "";
-async function savePacks(packs) { PK = await api("PUT", "/api/packs", { packs: packs.map(p => ({ id: p.id, name: p.name, songs: p.songs })) }); return PK; }
+const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+async function savePacks(packs) { PK = await api("PUT", "/api/packs", { packs: packs.map(p => ({ id: p.id, name: p.name, songs: p.songs, zip: !!p.zip })) }); return PK; }
+// [kind, text, detail]: Not made yet / Update ready / Up to date
 function packState(p) {
-  if (!p.built) return { cls: "bad", text: "not built" };
+  if (!p.built) return ["new", "Not made yet", "Make the pack to share it"];
   const same = p.built.folders && p.built.folders.length === p.songs.length && p.built.folders.every(x => p.songs.includes(x.folder));
-  if (!same || p.outdated.length) return { cls: "warn", text: "changed since build" };
-  if (p.renamed) return { cls: "warn", text: "renamed since build" };
-  return { cls: "ok", text: "built" };
+  if (!same) return ["todo", "Update ready", "Its songs changed since you made it"];
+  if (p.outdated.length) return ["todo", "Update ready", `${p.outdated.length} of its songs changed since you made it`];
+  if (p.renamed) return ["todo", "Update ready", "Renamed since you made it"];
+  if (p.zip && !p.built.zip) return ["todo", "Update ready", "Its .zip file isn't made yet"];
+  return ["ok", "Up to date", ""];
 }
+const packReady = p => packState(p)[0] === "ok";
+// the pack the memory stick has now (its song list lists exactly the pack's songs), or null
+function activePackOf(packs, s) {
+  if (!s || !ourStickDb(s)) return null;
+  const lib = new Set(s.songs.filter(x => x.inLibrary).map(x => x.folder));
+  return packs.find(p => { const songs = p.songs.filter(f => lib.has(f)); return songs.length && sameSet(songs, s.db.customs); }) || null;
+}
+const mainStick = v => v && (v.sticks.find(s => s.online && s.kind === "ppsspp") || v.sticks.find(s => s.online)) || null;
 async function showPacks() {
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / Packs`;
-  PK = await api("GET", "/api/packs");
-  const m = PK.mode;
-  $("#main").innerHTML = `<div class="libbar"><button class="primary" id="pk_new">+ New pack</button>
-      <span class="grow"></span><span class="dim small">Game: ${esc(m.label)} · up to <b>${PK.capacity}</b> custom songs per pack (the game holds 300 songs, ${PK.official} of them official)</span></div>
-    <div class="panel small"><b>How packs work.</b> A pack is a set of your songs with its own song database. Building a pack builds any of its
-      songs that are new or changed, then puts the songs and the database in <span class="mono">out\\PACKS\\&lt;pack name&gt;\\MUSIC</span>.
-      To switch packs on the memory stick: delete the previous pack's song folders and <span class="mono">ZZCUSTOMDB</span> from
-      <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> (its <span class="mono">pack.txt</span> lists them), then copy the new pack's
-      <span class="mono">MUSIC</span> contents there. Official DLC stays; scores are kept per song.</div>
-    ${PK.packs.length ? `<div class="cards">${PK.packs.map(p => { const st = packState(p); return `<div class="card pack" data-id="${esc(p.id)}">
-        <h3>${esc(p.display)}</h3><div class="sub">${p.name ? "" : '<span class="small dim">no name: named after its song database code</span>'}</div>
-        <div class="row"><span class="badge ${st.cls}">${st.text}</span><span class="badge">${p.songs.length} song${p.songs.length === 1 ? "" : "s"}</span><span class="badge">${p.mb} MB</span>
-          ${p.songs.length > PK.capacity ? `<span class="badge bad">over ${PK.capacity}</span>` : ""}${p.missing.length ? `<span class="badge bad">${p.missing.length} missing</span>` : ""}</div>
-        <div class="row small dim">${p.built ? `built ${esc(fmtDate(p.built.at))} · ${esc(p.built.jb)} · ${esc(p.built.mode)}` : "never built"}${p.outdated.length ? ` · ${p.outdated.length} song${p.outdated.length > 1 ? "s" : ""} to rebuild` : ""}</div>
-        ${p.renamed ? `<div class="row small warnline">Its folder in out\\PACKS is still named "${esc(p.built.name)}": build the pack again to rename it.</div>` : ""}
-        <div class="actions" style="margin-top:8px"><button data-a="edit">Edit</button><button class="primary" data-a="build" ${p.songs.length ? "" : "disabled"}>Build pack</button>
-          <button data-a="open" ${p.built ? "" : "disabled"}>Open folder</button><button data-a="install" ${p.built ? "" : "disabled"} title="Copy this pack to PPSSPP's memory stick or a connected PSP">Install…</button><span class="grow"></span><button class="danger" data-a="del">Delete</button></div></div>`; }).join("")}</div>`
-      : `<div class="panel dim">No packs yet. A pack groups songs (for example by genre) so you can switch what the game lists without rebuilding them.</div>`}`;
-  $("#pk_new").onclick = () => { location.hash = "#/pack/new"; };
-  document.querySelectorAll(".card.pack [data-a]").forEach(b => b.onclick = async e => {
-    e.stopPropagation();
-    const id = b.closest(".card").dataset.id, p = PK.packs.find(x => x.id === id), a = b.dataset.a;
-    try {
-      if (a === "edit") location.hash = `#/pack/${id}`;
-      else if (a === "build") await buildPack(id);
-      else if (a === "open") await api("POST", `/api/packopen/${id}`);
-      else if (a === "install") await installPack(p);
-      else if (a === "del") {
-        const keep = p.built ? "Its songs stay; only the pack and its built folder are deleted." : "Its songs stay; only the pack is deleted.";
-        if (await ask(`Delete the pack "${p.display}"?`, keep, [{ label: "Delete pack", value: true, kind: "danger" }, { label: "Keep pack", value: null }]) !== true) return;
-        await savePacks(PK.packs.filter(x => x.id !== id)); showPacks(); toast("Pack deleted");
-      }
-    } catch (err) { fail({ open: "Couldn't open the pack folder", del: "Couldn't delete the pack" }[a] || "Couldn't update the pack")(err); }
+  $("#main").innerHTML = `<div class="panel dim">Loading your packs…</div>`;
+  let v = null;
+  [PK, v] = await Promise.all([api("GET", "/api/packs"), loadSticks().catch(() => null)]);
+  const st = mainStick(v), active = activePackOf(PK.packs, st);
+  $("#main").innerHTML = `<div class="sharepage">
+    <h1>Share &amp; Packs</h1>
+    <div class="tasks">
+      <section class="task"><h2>Share your songs in a pack</h2><p class="small dim">Select your custom songs and Pocket Encore will pack them to be easily installed in your game or a friend's game. Want to make a pack for Metal Music and another for Classic Rock? Pocket Encore packs allow you to easily manage both.</p>
+        <div class="actions"><a class="btn primary" href="#/pack/new">Make a pack</a></div></section>
+      <section class="task"><h2>Merge Songs</h2><p class="small dim">Got a pack or a song folder from someone? Add these shared songs to your custom songs list, then install them to play them like your own.</p>
+        <div class="actions"><a class="btn primary" href="#/merge">Merge songs</a></div></section>
+    </div>
+    <section class="panel"><h2>Your packs</h2>
+      ${PK.packs.length ? `<div class="srows">${PK.packs.map(p => { const [k, t, d] = packState(p), on = active && active.id === p.id;
+        return `<div class="srow" data-id="${esc(p.id)}"><div class="rt"><b>${esc(p.display)}</b><span class="small dim">${p.songs.length} song${p.songs.length === 1 ? "" : "s"} · ${p.mb} MB${p.built ? ` · made ${esc(fmtDate(p.built.at))}` : ""}${p.missing.length ? ` · ${p.missing.length} no longer in your songs` : ""}</span></div>
+          <div class="rs">${on ? `<span class="state"><span class="sdot ok" aria-hidden="true"></span>Installed on your memory stick</span>` : ""}
+            ${k === "ok" ? (on ? "" : `<span class="state"><span class="sdot ok" aria-hidden="true"></span>Up to date</span>`) : `<span class="state"><span class="sdot ${k}" aria-hidden="true"></span>${t}</span><span class="small dim">${esc(d)}</span>`}</div>
+          <div class="ctl">${k !== "ok" ? `<button class="small" data-a="build">${p.built ? "Update pack" : "Make the pack"}</button>` : ""}
+            ${on ? `<a class="btn small" href="#/stick/pack/${esc(p.id)}/off">Uninstall</a>` : `<button class="small" data-a="install">${active ? "Install instead" : "Install on my memory stick"}</button>`}
+            <a class="btn small" href="#/pack/${esc(p.id)}/share">Share it</a>
+            <details class="menu"><summary class="small">More</summary><div class="menubox"><a class="btn small" href="#/pack/${esc(p.id)}">Change its songs</a><button class="small danger" data-a="del">Delete pack</button></div></details></div></div>`; }).join("")}</div>`
+      : `<p class="dim">No packs yet. Make one to put a set of songs in your game, or to share songs with a friend.</p>`}
+      ${PK.packs.length > 1 ? `<p class="small dim">One pack is installed at a time: installing a pack uninstalls the other one (its songs leave the game, nothing is deleted).</p>` : ""}
+    </section></div>`;
+  document.querySelectorAll(".sharepage [data-a]").forEach(b => b.onclick = async () => {
+    const id = b.closest(".srow").dataset.id, p = PK.packs.find(x => x.id === id), a = b.dataset.a;
+    if (a === "build") return makePack(p, `#/packs`);
+    if (a === "install") return installPack(p);
+    if (a === "del") {
+      if (await ask(`Delete the pack "${p.display}"?`, "Your songs are not touched: only the pack goes, with its folder and .zip file.", [{ label: "Delete pack", value: true, kind: "danger" }, { label: "Keep pack", value: null }]) !== true) return;
+      try { await savePacks(PK.packs.filter(x => x.id !== id)); toast(`${p.display} deleted (your songs are not touched)`); showPacks(); } catch (e) { fail("Couldn't delete the pack")(e); }
+    }
   });
 }
-// a built pack to a memory stick: its songs and its song database
+// Install on my memory stick: the Memory stick page with the pack's songs switched on (its songs made first if needed)
 async function installPack(p) {
-  const v = await loadSticks(), on = v.sticks.filter(s => s.online);
-  if (!on.length) return toast("No memory stick found: set PPSSPP's MUSIC folder on Setup, or connect the PSP by USB.", true);
-  const id = on.length === 1 ? on[0].id : await ask(`Install "${p.display}" to which memory stick?`, "", [...on.map(s => ({ label: s.label, value: s.id })), { label: "Cancel", value: null }]);
-  if (id) installTo(id, "pack:" + p.id, p.built.folders.map(f => f.folder), true);
+  if (p.outdated.length) {
+    const r = await ask(`Update ${p.display} first?`, `${p.outdated.length} of its songs ${p.outdated.length > 1 ? "aren't" : "isn't"} made with your latest changes yet. Updating the pack makes ${p.outdated.length > 1 ? "them" : "it"} first.`, [
+      { label: "Update pack, then install", value: "build", kind: "primary" }, { label: "Install as it is", value: "go" }, { label: "Cancel", value: null }]);
+    if (!r) return;
+    if (r === "build") return makePack(p, `#/stick/pack/${p.id}`);
+  }
+  location.hash = `#/stick/pack/${p.id}`;
 }
-async function buildPack(id) {
-  try { await api("POST", `/api/packbuild/${id}`); } catch (e) { fail("Pack build couldn't start")(e); return; }
-  showBuildPanel(true);
+// build (make or update) a pack with progress on the page, then go to `then` (or show what went wrong)
+async function makePack(p, then) {
+  try { await api("POST", `/api/packbuild/${p.id}`); } catch (e) { return fail("Couldn't start making the pack")(e); }
+  const steps = (p.outdated.length || 0) + 1 + (p.zip ? 1 : 0);
+  let done = 0, last = "", err = [];
+  $("#main").innerHTML = `<div class="sharepage"><section class="panel"><h2>Making ${esc(p.display)}…</h2><div class="meter" aria-hidden="true"><i id="pkMeter" style="width:5%"></i></div>
+    <p class="small dim" id="pkLine" aria-live="polite">Starting…</p><p class="small dim">The Build log (top right) shows every step.</p></section></div>`;
+  $("#buildToggle").classList.remove("hidden");
+  window.onBuildLine = l => {
+    if (/^\n?=== /.test(l)) done++;
+    if (/ERROR/.test(l)) err.push(l.replace(/^\s*ERROR:\s*/, ""));
+    if (l.trim()) last = l.trim();
+    const m = $("#pkMeter"); if (m) m.style.width = Math.round(100 * Math.min(done, steps) / (steps + 1)) + "%";
+    const t = $("#pkLine"); if (t) t.textContent = last;
+  };
+  window.onBuildEnd = code => {
+    window.onBuildLine = window.onBuildEnd = null;
+    if (!$("#pkMeter")) return false;
+    if (code === "0") { toast(`${p.display} is ready`); if (location.hash === then) route(); else location.hash = then; return true; }
+    $("#main").innerHTML = `<div class="sharepage"><section class="panel notice bad"><h2>${esc(p.display)} couldn't be made</h2><p>${esc(err.join(" ") || "Something went wrong.")}</p>
+      <p class="small dim">The Build log (top right) shows every step.</p><div class="actions"><a class="btn primary" href="#/packs">Back to Share &amp; Packs</a><button onclick="showBuildPanel(true)">Show the log</button></div></section></div>`;
+    return true;
+  };
   followBuild();
 }
+// Make a pack (#/pack/new) or change its songs (#/pack/<id>)
 async function showPackEdit(id) {
   PK = await api("GET", "/api/packs");
-  const isNew = id === "new", p = isNew ? { id: "", name: "", songs: [] } : PK.packs.find(x => x.id === id);
-  if (!p) { $("#main").innerHTML = `<div class="panel">No such pack.</div>`; return; }
-  $("#crumb").innerHTML = `<a href="#/">Songs</a> / <a href="#/packs">Packs</a> / ${isNew ? "New pack" : esc(p.display)}`;
-  const sel = new Set(p.songs), songs = PK.songs.filter(s => !s.error);
-  const genres = [...new Set(songs.map(s => s.genre).filter(Boolean))].sort();
+  const isNew = id === "new", p = isNew ? { id: "", name: "", songs: [], zip: true } : PK.packs.find(x => x.id === id);
+  if (!p) { $("#main").innerHTML = `<div class="panel">No such pack. <a href="#/packs">Back to Share &amp; Packs</a></div>`; return; }
+  const songs = PK.songs.filter(s => !s.error).sort((a, b) => String(a.title).localeCompare(String(b.title)));
+  const E = { sel: new Set(p.songs.filter(f => songs.some(s => s.folder === f))), q: "", zip: isNew ? true : !!p.zip, name: p.name || "" };
   const code = String(Math.round((Date.UTC(new Date().getFullYear(), new Date().getMonth(), new Date().getDate()) - Date.UTC(2008, 2, 7)) / 86400000)).padStart(6, "0");
-  $("#main").innerHTML = `<div class="panel"><h4>${isNew ? "New pack" : "Edit pack"}</h4><div class="form" style="grid-template-columns:120px 1fr">
-      <label>Pack name</label><input type="text" id="pk_name" maxlength="60" value="${esc(p.name)}" placeholder="e.g. Metal, Alternative rock… (empty: Pocket Encore ${code}, the code of its song database)">
-    </div></div>
-    <div class="panel"><h4>Songs</h4>
-      <div class="libbar"><input id="pk_filter" aria-label="Filter songs" placeholder="Filter…"><select id="pk_genre" aria-label="Add all songs with genre"><option value="">Add all songs with genre…</option>${genres.map(g => `<option>${esc(g)}</option>`).join("")}</select>
-        <button id="pk_all">Select all</button><button id="pk_none">Clear</button><span class="grow"></span><span id="pk_count" class="small"></span></div>
-      <table class="t pktable"><tr><th></th><th>Song</th><th>Artist</th><th>Genre</th><th>Build</th><th>MB</th></tr>
-        ${songs.map(s => `<tr data-f="${esc(s.folder)}" data-q="${esc((s.title + " " + s.artist + " " + s.folder + " " + s.genre).toLowerCase())}">
-          <td><input type="checkbox" aria-label="Include ${esc(s.title)} in the pack" ${sel.has(s.folder) ? "checked" : ""}></td><td>${esc(s.title)} <span class="dim small">${esc(s.folder)}</span></td><td>${esc(s.artist)}</td><td>${esc(s.genre)}</td>
-          <td><span class="badge ${s.status === "built" ? "ok" : s.status === "not built" ? "bad" : "warn"}">${esc(s.status)}</span></td><td>${s.mb || "–"}</td></tr>`).join("")}</table>
-      ${p.missing && p.missing.length ? `<p class="warnline small">Songs no longer in the library (dropped when you save): ${esc(p.missing.join(", "))}</p>` : ""}
-    </div>
-    <div class="actions"><button class="primary" id="pk_save">Save</button><button id="pk_savebuild">Save and build pack</button><button id="pk_cancel">Cancel</button>
-      <span class="small dim">Songs that are not built yet, or changed, are built when the pack is built.</span></div>`;
-  const count = () => {
-    const chosen = songs.filter(s => sel.has(s.folder)), mb = chosen.reduce((n, s) => n + (s.mb || 0), 0), todo = chosen.filter(s => s.status !== "built").length;
-    $("#pk_count").innerHTML = `<b>${chosen.length}</b> of up to ${PK.capacity} songs · ${mb.toFixed(1)} MB${todo ? ` · ${todo} to build` : ""}${chosen.length > PK.capacity ? ' <span class="badge bad">too many for the game</span>' : ""}`;
+  const render = () => {
+    const q = E.q.toLowerCase(), shown = songs.filter(s => !q || `${s.title} ${s.artist} ${s.genre} ${s.folder}`.toLowerCase().includes(q));
+    const chosen = songs.filter(s => E.sel.has(s.folder)), n = chosen.length, mb = chosen.reduce((a, s) => a + (s.mb || 0), 0), over = n > PK.capacity;
+    const allOn = shown.length && shown.every(s => E.sel.has(s.folder)), todo = chosen.filter(s => s.status !== "built").length;
+    $("#main").innerHTML = `<div class="sharepage packedit">
+      <div><a href="#/packs" class="small">← Share &amp; Packs</a></div>
+      <section class="panel"><h1>${isNew ? "Make a pack" : `Change the songs of ${esc(p.display)}`}</h1>
+        <p class="dim">Pick the songs for this pack, for example all your metal songs. You can install it on your memory stick, share it with a friend, or both.</p>
+        <div class="form"><label for="pkName">Pack name</label><div><input id="pkName" maxlength="60" placeholder="e.g. Metal night (empty: Pocket Encore ${code})" value="${esc(E.name)}">
+          <div class="small dim">Shown to your friend when they add it.</div></div></div></section>
+      <section class="panel"><div class="bar"><h2>Songs <span class="small dim">· ${n} picked · ${mb.toFixed(1)} MB</span></h2>
+          <input type="search" id="pkq" placeholder="Find a song, artist or genre…" aria-label="Find a song, artist or genre" value="${esc(E.q)}"></div>
+        <div class="listtools"><span class="small dim">${shown.length} shown</span><div class="actions">
+          <button class="small" id="pkAll" ${allOn ? "disabled" : ""}>${q ? `Pick these ${shown.length}` : "Pick all"}</button><button class="small" id="pkNone" ${n ? "" : "disabled"}>Pick none</button></div></div>
+        ${shown.length ? `<div class="srows">${shown.map(s => `<label class="srow pick"><input type="checkbox" data-pk="${esc(s.folder)}" ${E.sel.has(s.folder) ? "checked" : ""}>
+          <span class="rt"><b>${esc(s.title)}</b><span class="small dim">${esc(s.artist)}${s.genre ? " · " + esc(s.genre) : ""}</span></span>
+          <span class="small dim">${s.status === "built" ? "" : s.status === "not built" ? "Not made yet: made with the pack" : "Changed: made again with the pack"}</span><span class="small dim">${s.mb ? s.mb + " MB" : ""}</span></label>`).join("")}</div>`
+          : `<p class="small dim">${songs.length ? "No songs match." : `No songs yet: <a href="#/new">make your first song</a>.`}</p>`}
+        ${!isNew && p.missing.length ? `<p class="small warnline">No longer in your songs (left out when you save): ${esc(p.missing.join(", "))}</p>` : ""}</section>
+      <section class="panel"><label class="sw wrap"><input type="checkbox" id="pkZip" ${E.zip ? "checked" : ""}><span>Also save it as one .zip file, ready to send</span></label>
+        <div class="notice"><b>Before you share</b><p class="small">A pack has the songs' audio in it. Only share songs whose audio you're allowed to share.</p></div></section>
+      <div class="applybar"><span>${n ? `<b>${n} song${n > 1 ? "s" : ""}</b> · ${mb.toFixed(1)} MB${todo ? ` · ${todo} to make first` : ""}${over ? ` <span class="warnline">The game holds at most ${PK.capacity} custom songs: remove ${n - PK.capacity}.</span>` : ""}` : `<span class="dim">Pick at least one song</span>`}</span>
+        <button class="primary big" id="pkMake" ${n && !over ? "" : "disabled"}>${isNew ? "Make the pack" : "Save and update the pack"}</button></div></div>`;
+    bind();
   };
-  const sync = () => document.querySelectorAll(".pktable tr[data-f]").forEach(tr => { tr.querySelector("input").checked = sel.has(tr.dataset.f); });
-  document.querySelectorAll(".pktable tr[data-f] input").forEach(cb => cb.onchange = () => { const f = cb.closest("tr").dataset.f; cb.checked ? sel.add(f) : sel.delete(f); count(); });
-  $("#pk_filter").oninput = e => { const q = e.target.value.toLowerCase(); document.querySelectorAll(".pktable tr[data-q]").forEach(tr => tr.classList.toggle("hidden", !tr.dataset.q.includes(q))); };
-  $("#pk_genre").onchange = e => { const g = e.target.value; if (!g) return; songs.filter(s => s.genre === g).forEach(s => sel.add(s.folder)); e.target.value = ""; sync(); count(); toast(`Added the ${g} songs`); };
-  $("#pk_all").onclick = () => { document.querySelectorAll(".pktable tr[data-f]:not(.hidden)").forEach(tr => sel.add(tr.dataset.f)); sync(); count(); };
-  $("#pk_none").onclick = () => { sel.clear(); sync(); count(); };
-  // Cancel is an explicit "discard": no question
-  $("#pk_cancel").onclick = () => { GUARD = null; location.hash = "#/packs"; };
-  // stay = called from the leave dialog, which goes on to the page that was clicked; true when saved
-  const save = async (build, stay) => {
-    const name = $("#pk_name").value.trim();
-    const no = msg => { toast(msg, true); return false; };
-    if (!sel.size) return no("Pick at least one song for the pack.");
-    if (sel.size > PK.capacity) return no(`This pack has ${sel.size} songs, but the game holds at most ${PK.capacity} custom songs in this mode. Remove ${sel.size - PK.capacity}.`);
-    if (name && PK.packs.some(x => x.id !== p.id && (x.name || "").toLowerCase() === name.toLowerCase())) return no("Another pack already has that name. Choose a different one.");
-    const songsInOrder = songs.map(s => s.folder).filter(f => sel.has(f));
-    const list = isNew ? [...PK.packs, { id: "", name, songs: songsInOrder }] : PK.packs.map(x => x.id === p.id ? { ...x, name, songs: songsInOrder } : x);
-    try {
-      const r = await savePacks(list);
-      const saved = isNew ? r.packs[r.packs.length - 1] : r.packs.find(x => x.id === p.id);
-      toast("Pack saved");
-      GUARD = null;
-      if (!stay) location.hash = "#/packs";
-      if (build) await buildPack(saved.id);
-      // a built pack renamed by this save: its output folder still has the old name until it is built again
-      else if (!stay && saved.renamed && name !== (p.name || "").trim()
-        && await ask("Rebuild the pack under its new name?", `Its folder in out\\PACKS is still named "${saved.built.name}". Building the pack again names it "${saved.display}" and removes the old folder.`,
-          [{ label: "Rebuild pack", value: true, kind: "primary" }, { label: "Later", value: null }])) await buildPack(saved.id);
-      return true;
-    } catch (e) { fail("Couldn't save the pack")(e); return false; }
+  const keep = fn => { const y = window.scrollY, a = document.activeElement, sel = a && (a.id ? "#" + a.id : a.dataset.pk ? `[data-pk="${a.dataset.pk}"]` : null), c = a && a.id === "pkq" ? a.selectionStart : null;
+    fn(); render(); window.scrollTo({ top: y }); const b = sel && $(sel); if (b) { b.focus(); if (c != null) b.setSelectionRange(c, c); } };
+  const bind = () => {
+    $("#pkName").oninput = e => { E.name = e.target.value; };
+    $("#pkq").oninput = e => keep(() => { E.q = e.target.value; });
+    document.querySelectorAll("[data-pk]").forEach(c => c.onchange = () => keep(() => { c.checked ? E.sel.add(c.dataset.pk) : E.sel.delete(c.dataset.pk); }));
+    $("#pkAll").onclick = () => keep(() => document.querySelectorAll("[data-pk]").forEach(c => E.sel.add(c.dataset.pk)));
+    $("#pkNone").onclick = () => keep(() => E.sel.clear());
+    $("#pkZip").onchange = e => { E.zip = e.target.checked; };
+    $("#pkMake").onclick = async () => { const saved = await save(); if (saved) { GUARD = null; makePack(saved, `#/pack/${saved.id}/share`); } };
   };
-  $("#pk_save").onclick = () => save(false);
-  $("#pk_savebuild").onclick = () => save(true);
-  count();
-  // unsaved = the name or the ticked songs differ from the saved pack (the filter and genre picker don't count)
-  const nameEl = $("#pk_name");
-  GUARD = { what: "the pack", save: () => save(false, true),
-    dirty: () => nameEl.isConnected && (nameEl.value.trim() !== (p.name || "") || sel.size !== p.songs.length || p.songs.some(f => !sel.has(f))) };
+  // saves the pack (name, songs, .zip choice); resolves to the saved pack, or null
+  const save = async () => {
+    const name = E.name.trim();
+    if (!E.sel.size) { toast("Pick at least one song for the pack.", true); return null; }
+    if (name && PK.packs.some(x => x.id !== p.id && (x.name || "").toLowerCase() === name.toLowerCase())) { toast("Another pack already has that name. Choose a different one.", true); return null; }
+    const list = songs.map(s => s.folder).filter(f => E.sel.has(f));
+    const all = isNew ? [...PK.packs, { id: "", name, songs: list, zip: E.zip }] : PK.packs.map(x => x.id === p.id ? { ...x, name, songs: list, zip: E.zip } : x);
+    try { const r = await savePacks(all); return isNew ? r.packs[r.packs.length - 1] : r.packs.find(x => x.id === p.id); } catch (e) { fail("Couldn't save the pack")(e); return null; }
+  };
+  const base = () => [E.name.trim(), [...E.sel].sort().join(), E.zip].join("|"), start = base();
+  GUARD = { what: "the pack", save: async () => !!(await save()), dirty: () => !!$("#pkMake") && base() !== start };
+  render();
+}
+// Share it (#/pack/<id>/share): what to send, and what your friend does
+async function showPackShare(id) {
+  PK = await api("GET", "/api/packs");
+  const p = PK.packs.find(x => x.id === id);
+  if (!p) { $("#main").innerHTML = `<div class="panel">No such pack. <a href="#/packs">Back to Share &amp; Packs</a></div>`; return; }
+  const ready = packReady(p), z = !!(p.built && p.built.zip);
+  $("#main").innerHTML = `<div class="sharepage packshare"><div><a href="#/packs" class="small">← Share &amp; Packs</a></div>
+    ${ready ? `<section class="panel donebox"><h2>${esc(p.display)} is ready</h2><p class="small dim">${p.built.folders.length} songs · ${p.built.mb} MB</p>
+        <p>${z ? `Send <b>${esc(p.built.name)}.zip</b> to your friend.` : `Send the <b>${esc(p.built.name)}</b> folder to your friend.`}</p>
+        <div class="actions"><button class="primary" id="psInstall">Install it on my memory stick</button><button id="psShow">Show the ${z ? "zip file" : "folder"} to share</button><a class="btn" href="#/packs">Back to Share &amp; Packs</a></div></section>`
+      : `<section class="panel notice warn"><h2>${esc(p.display)} ${p.built ? "needs an update" : "isn't made yet"}</h2><p>${esc(packState(p)[2])}. ${p.built ? "Update it" : "Make it"} first, so your friend gets your latest songs.</p>
+        <div class="actions"><button class="primary" id="psBuild">${p.built ? "Update pack" : "Make the pack"}</button><a class="btn" href="#/packs">Back to Share &amp; Packs</a></div></section>`}
+    <section class="panel"><h2>What your friend does</h2>
+      <ol class="steps"><li><b>With Pocket Encore:</b> Share &amp; Packs → <i>Merge Songs</i> → pick the ${z ? "zip file" : "folder"}. Then install the songs from their Memory stick page.</li>
+        <li><b>Without Pocket Encore:</b> copy what's inside the pack's <span class="mono">MUSIC</span> folder into <span class="mono">PSP\\GAME\\ULUS10418\\MUSIC</span> on their memory stick. This replaces their custom song list with yours, so their own custom songs stop showing.</li></ol></section></div>`;
+  if ($("#psInstall")) $("#psInstall").onclick = () => installPack(p);
+  if ($("#psShow")) $("#psShow").onclick = () => api("POST", `/api/packopen/${p.id}${z ? "?what=zip" : ""}`).catch(fail("Couldn't show the pack"));
+  if ($("#psBuild")) $("#psBuild").onclick = () => makePack(p, `#/pack/${p.id}/share`);
+}
+
+// ---------- Merge Songs: a .zip, a pack folder or one song folder from someone -> your songs ----------
+let MG = { stage: "pick" };
+// from elsewhere (Memory stick page: Add to my library): straight to what's in that folder
+function importFrom(dir) { MG = { stage: "pick", look: dir }; if (location.hash === "#/merge") showMerge(); else location.hash = "#/merge"; }
+async function showMerge() {
+  if (MG.look) { const d = MG.look; MG = { stage: "pick" }; return mergeLook(d); }
+  if (MG.stage === "adding") MG = { stage: "pick" };
+  renderMerge();
+}
+async function mergeLook(dir) {
+  let c;
+  $("#main").innerHTML = `<div class="sharepage"><section class="panel dim">Looking for songs…</section></div>`;
+  try { c = await api("GET", "/api/import?dir=" + encodeURIComponent(dir)); } catch (e) { MG = { stage: "pick" }; renderMerge(); return fail("Couldn't find songs there")(e); }
+  MG = { stage: "found", dir: c.root, c, sel: new Set(c.songs.filter(s => s.ok && !s.inLibrary).map(s => s.folder)) };
+  renderMerge();
+}
+function renderMerge() {
+  const back = `<div><a href="#/packs" class="small">← Share &amp; Packs</a></div>`;
+  let body = "";
+  if (MG.stage === "pick") body = `${back}<section class="panel"><h1>Merge songs</h1>
+      <p class="dim">Pick the pack your friend sent: a .zip file, a pack folder, or a single song folder. Nothing is added until you confirm.</p>
+      <div class="dropzone mgdrop" id="mgDrop"><b>Drop the .zip file here</b><span class="small dim">or</span>
+        <div class="actions"><button class="primary" id="mgChoose">Choose the zip file or folder…</button></div><input type="hidden" id="mgPath"></div></section>`;
+  else if (MG.stage === "found") {
+    const c = MG.c, add = c.songs.filter(s => MG.sel.has(s.folder)), mine = c.songs.filter(s => s.yours).length;
+    body = `<div><button class="linkbtn small" id="mgBack">← Pick another</button></div>
+      <section class="panel"><h1>${esc(c.pack || "Shared songs")}</h1><p class="small dim">${c.songs.length} song${c.songs.length === 1 ? "" : "s"} found${mine ? ` · ${mine} made by you` : ""}</p>
+        ${c.songs.length ? `<div class="srows">${c.songs.map(s => { const d = s.details, why = s.problem || (s.inLibrary ? "Already in your songs" : "");
+          return `<label class="srow pick"><input type="checkbox" data-mg="${esc(s.folder)}" ${why ? "disabled" : MG.sel.has(s.folder) ? "checked" : ""}>
+            <span class="rt"><b>${esc(d.title || s.folder)}</b><span class="small dim">${esc(d.artist || "")}${d.year ? " · " + esc(d.year) : ""} · ${s.mb} MB</span></span>
+            <span class="state"><span class="sdot ${why ? "" : "new"}" aria-hidden="true"></span>${why ? esc(why) : "New"}</span>
+            <span class="small dim">${!why && s.needsDetails ? "Its details are missing: fill them in after adding it" : ""}</span></label>`; }).join("")}</div>`
+          : `<p>No song folders there.</p>`}
+        <div class="notice"><b>Good to know</b><p class="small">Shared songs come with their own chart and audio, used as they are. You can change their song info and difficulty, but not their notes.</p></div></section>
+      <div class="applybar"><span>${add.length ? `<b>${add.length} song${add.length > 1 ? "s" : ""} to add</b>` : `<span class="dim">Pick at least one song</span>`}</span>
+        <button class="primary big" id="mgAdd" ${add.length ? "" : "disabled"}>Add to my songs</button></div>`;
+  } else if (MG.stage === "adding") body = `<section class="panel"><h2>Adding ${MG.added.length} song${MG.added.length > 1 ? "s" : ""} to your songs…</h2>
+      <div class="meter" aria-hidden="true"><i id="mgMeter" style="width:10%"></i></div><p class="small dim" id="mgLine" aria-live="polite">Copying…</p></section>`;
+  else if (MG.stage === "done") {
+    const n = MG.added.length, need = MG.added.filter(x => x.needsDetails);
+    body = `<section class="panel donebox"><h2>${n} song${n > 1 ? "s" : ""} added to your songs</h2>
+      <p>To play ${n > 1 ? "them" : "it"}, install ${n > 1 ? "them" : "it"} on your memory stick.</p>
+      ${need.length ? `<p class="small warnline">Fill in the details of ${need.map(x => `<a href="#/song/${esc(x.folder)}">${esc(x.title || x.folder)}</a>`).join(", ")}: they weren't in the pack.</p>` : ""}
+      <div class="actions"><a class="btn primary big" href="#/stick">Go to Memory stick</a><button id="mgMore">Add more shared songs</button></div></section>`;
+  } else if (MG.stage === "failed") body = `<section class="panel notice bad"><h2>The songs were added, but not made ready for the game</h2><p>${esc(MG.err || "Something went wrong.")}</p>
+      <p class="small dim">The Build log (top right) shows every step. Open each song and use Make the song.</p><div class="actions"><a class="btn primary" href="#/">Back to my songs</a></div></section>`;
+  $("#main").innerHTML = `<div class="sharepage merge">${body}</div>`;
+  bindMerge();
+}
+function bindMerge() {
+  const on = (id, f) => { const e = $("#" + id); if (e) e.onclick = f; };
+  on("mgChoose", () => pickInto("#mgPath", null, true, /\.zip$/i));
+  const mp = $("#mgPath"); if (mp) mp.onchange = () => { if (mp.value) mergeLook(mp.value); };
+  const d = $("#mgDrop");
+  if (d) {
+    d.ondragover = e => { e.preventDefault(); d.classList.add("over"); };
+    d.ondragleave = () => d.classList.remove("over");
+    d.ondrop = async e => {
+      e.preventDefault(); d.classList.remove("over");
+      const items = [...(e.dataTransfer.items || [])], folder = items.some(i => i.webkitGetAsEntry && i.webkitGetAsEntry() && i.webkitGetAsEntry().isDirectory);
+      const f = [...e.dataTransfer.files].find(x => /\.zip$/i.test(x.name));
+      if (folder || !f) return toast(folder ? "A dropped folder can't be opened here: use Choose… and pick the folder." : "Drop a .zip file, or use Choose… to pick a folder.", true);
+      d.innerHTML = `<b>Reading ${esc(f.name)}…</b>`;
+      try { mergeLook(await uploadFile(f, "mg" + Date.now().toString(36))); } catch (err) { fail("Couldn't read the zip file")(err); renderMerge(); }
+    };
+  }
+  on("mgBack", () => { MG = { stage: "pick" }; renderMerge(); });
+  document.querySelectorAll("[data-mg]").forEach(c => c.onchange = () => { c.checked ? MG.sel.add(c.dataset.mg) : MG.sel.delete(c.dataset.mg); const y = window.scrollY; renderMerge(); window.scrollTo({ top: y }); const b = $(`[data-mg="${c.dataset.mg}"]`); if (b) b.focus(); });
+  on("mgMore", () => { MG = { stage: "pick" }; renderMerge(); });
+  on("mgAdd", async () => {
+    const folders = [...MG.sel];
+    let r;
+    try { r = await api("POST", "/api/import", { dir: MG.dir, folders }); } catch (e) { return fail("Couldn't add the songs")(e); }
+    MG = { stage: "adding", added: r.imported };
+    renderMerge();
+    // make them ready for the game (an imported song's build only copies its files: quick)
+    try { await api("POST", "/api/buildmany", { folders: r.imported.map(x => x.folder) }); } catch (e) { MG = { stage: "failed", added: r.imported, err: e.message }; return renderMerge(); }
+    $("#buildToggle").classList.remove("hidden");
+    let n = 0, err = [];
+    window.onBuildLine = l => { if (/^\n?=== /.test(l)) n++; if (/ERROR/.test(l)) err.push(l.replace(/^\s*ERROR:\s*/, "")); const m = $("#mgMeter"); if (m) m.style.width = Math.round(100 * Math.min(n, folders.length) / (folders.length + 1)) + "%"; const t = $("#mgLine"); if (t && l.trim()) t.textContent = l.trim(); };
+    window.onBuildEnd = code => {
+      window.onBuildLine = window.onBuildEnd = null;
+      MG = code === "0" ? { stage: "done", added: r.imported } : { stage: "failed", added: r.imported, err: err.join(" ") };
+      if (location.hash !== "#/merge") return false;
+      renderMerge(); return true;
+    };
+    followBuild();
+  });
 }
 
 // ---------- memory sticks: what is installed, install, import ----------
@@ -618,14 +755,37 @@ function stickSummaryLine(s, rows) {
   if (!ok && !upd) return made.length ? `None of your ${made.length} custom songs are on this memory stick yet.` : `You haven't made a custom song yet.`;
   return `${ok} of ${made.length} custom songs are installed ${s.kind === "psp" ? "on your PSP" : "in PPSSPP"}${upd ? ` – ${upd} ${upd > 1 ? "need" : "needs"} an update` : ""}.`;
 }
-async function showSticks() {
-  Object.assign(SP, { plan: {}, filter: "all", q: "", view: "list", target: null });
+async function showSticks(packReq) {
+  Object.assign(SP, { plan: {}, filter: "all", q: "", view: "list", target: null, pack: null });
   $("#main").innerHTML = `<div class="panel dim">Looking at your memory stick…</div>`;
   SP.v = await loadSticks();
   if (!SP.stick || !SP.v.sticks.some(s => s.id === SP.stick)) SP.stick = (SP.v.sticks.find(s => s.online && s.kind === "ppsspp") || SP.v.sticks.find(s => s.online) || SP.v.sticks[0] || { id: "ppsspp" }).id;
   GUARD = { what: "your switch changes", dirty: () => !!$(".stickpage") && Object.keys(SP.plan).length > 0 && ["list", "review"].includes(SP.view),
     leave: { title: "Leave without applying your changes?", body: "Your switch changes aren't on the memory stick yet.", discard: "Discard changes" } };
+  if (packReq) await stickPackPlan(packReq);
   renderSticks();
+}
+// Install a pack (Share page): its songs switched on, every other song off (one pack at a time); Uninstall: its songs off
+async function stickPackPlan(req) {
+  let pk; try { pk = await api("GET", "/api/packs"); } catch (e) { return fail("Couldn't read your packs")(e); }
+  const p = pk.packs.find(x => x.id === req.id), s = SP.v.sticks.find(x => x.id === SP.stick);
+  if (!p) return toast("That pack isn't there any more.", true);
+  if (!s || !s.online) return;
+  const active = activePackOf(pk.packs, s), rows = stickRowsOf(s);
+  SP.pack = { id: p.id, name: p.display, songs: p.songs, mode: req.mode, active: active && active.id !== p.id ? active.display : null,
+    notmade: rows.filter(r => r.st === "notmade" && p.songs.includes(r.folder)).length };
+  for (const r of rows) {
+    if (r.st === "notmade") continue;
+    const w = req.mode === "install" ? p.songs.includes(r.folder) : p.songs.includes(r.folder) ? false : r.def;
+    if (w !== r.def) SP.plan[r.folder] = w;
+  }
+}
+const leavePackMode = () => { SP.pack = null; if (location.hash !== "#/stick") { history.replaceState(null, "", "#/stick"); lastHash = location.hash; } };
+function stickPackBanner() {
+  const k = SP.pack; if (!k) return "";
+  const cancel = `Change any switch before you apply, or <button class="linkbtn small" id="spPackCancel">cancel</button>.`;
+  if (k.mode === "uninstall") return `<div class="notice"><b>Uninstalling the pack ${esc(k.name)}</b><p class="small">Its ${k.songs.length} songs are switched off, so they leave the game. Nothing is deleted: the songs and the pack stay in your library, ready to install again. ${cancel}</p></div>`;
+  return `<div class="notice"><b>Installing the pack ${esc(k.name)}</b><p class="small">Only one pack is installed at a time. ${k.active ? `This uninstalls <b>${esc(k.active)}</b>: its songs that aren't in ${esc(k.name)} leave the game, but nothing is deleted. ` : ""}The pack's ${k.songs.length} songs are switched on and every other song is switched off, so the memory stick will have exactly this pack. The other songs stay in your library.${k.notmade ? ` ${k.notmade} of its songs ${k.notmade > 1 ? "aren't" : "isn't"} made yet, so ${k.notmade > 1 ? "they stay" : "it stays"} off: update the pack first.` : ""} ${cancel}</p></div>`;
 }
 // re-render, keeping the keyboard focus on the same control (a switch, a filter, the search box)
 function renderSticks() {
@@ -681,7 +841,7 @@ function stickListHtml(s) {
         <button class="small" data-archive="${esc(r.folder)}" aria-label="Archive ${esc(songName(r))}">Archive</button></div></div>`; };
   const archived = SP.v.archived || [], onStick = f => s.songs.find(x => x.folder === f && x.state !== "missing");
   const archOn = archived.filter(a => onStick(a.folder));
-  return `${other ? `<div class="notice warn"><b>${stickSummaryLine(s, rows)}</b></div>` : ""}
+  return `${stickPackBanner()}${other ? `<div class="notice warn"><b>${stickSummaryLine(s, rows)}</b></div>` : ""}
     <div class="panel lead"><p><b>${other ? "Your songs are switched on below." : stickSummaryLine(s, rows)}</b></p>
       <p class="small dim">The switches below show what the memory stick will have. Nothing changes until you press <b>Review and apply</b>.</p></div>
     <section class="panel"><div class="bar"><h2>Your custom songs <span class="small dim">· ${rows.length}</span></h2>
@@ -708,7 +868,7 @@ function stickListHtml(s) {
         <div class="rs"><span class="state"><span class="sdot" aria-hidden="true"></span>Archived</span><span class="small dim">${x ? `Its folder is still on the memory stick${x.listed ? " (the game lists it until you apply your next changes)" : " (the game doesn't list it)"}` : "Not on the memory stick"}</span></div>
         <div class="ctl"><button class="small" data-restore="${esc(a.folder)}" aria-label="Restore ${esc(songName(a))}">Restore</button>${x ? `<button class="small" data-rmone="${esc(a.folder)}" aria-label="Remove ${esc(songName(a))} from the memory stick">Remove from memory stick</button>` : ""}</div></div>`; }).join("")}</div>
       ${archOn.length > 1 ? `<div class="actions"><button data-rmone="*">Remove all ${archOn.length} from the memory stick</button></div>` : ""}</details>` : ""}
-    <p class="small dim">Got songs from someone? Add them on the <a href="#/packs">Share</a> page.</p>
+    <p class="small dim">Got songs from someone? Add them on the <a href="#/packs">Share &amp; Packs</a> page.</p>
     <details class="panel"><summary>Details for experts</summary><p class="small dim"><span class="mono">${esc(s.music)}</span>${s.freeMb != null ? ` · ${sizeTxt(s.freeMb)} free` : ""}
       · song list ${s.db ? `<span class="mono">${esc(s.db.folder)}\\${esc(s.db.file)}</span> (${s.db.state === "official" ? "the game's own" : s.db.state === "other" ? `someone else's${s.db.pack ? `: ${esc(s.db.pack)}` : ""}` : "yours"}, ${s.db.customs.length} custom songs)` : "none (the game lists its own songs only)"}
       · each song is a folder named after it (${rows.slice(0, 2).map(r => esc(r.folder)).join(", ")}${rows.length > 2 ? "…" : ""}).</p></details>
@@ -728,6 +888,8 @@ function stickReviewHtml(s) {
       ${upd.length ? whatLi("ok", `<b>Updates</b> ${names(upd)} with your latest changes.`) : ""}
       ${P.show.length ? whatLi("ok", `<b>Shows again</b> ${names(P.show)} in the game.`) : ""}
       ${P.rm.length ? whatLi("rm", `<b>Removes</b> ${names(P.rm)} from the memory stick. ${P.rm.length > 1 ? "They stay" : "It stays"} in your library, so you can install ${P.rm.length > 1 ? "them" : "it"} again any time.`) : ""}
+      ${SP.pack && SP.pack.mode === "install" && SP.pack.active ? whatLi("rm", `<b>Uninstalls the pack ${esc(SP.pack.active)}</b> and installs <b>${esc(SP.pack.name)}</b> (one pack at a time). Nothing is deleted.`) : ""}
+      ${SP.pack && SP.pack.mode === "uninstall" ? whatLi("rm", `<b>Uninstalls the pack ${esc(SP.pack.name)}</b>. Its songs stay in your library.`) : ""}
       ${P.db === "write" ? whatLi("ok", `<b>Updates your song list</b> so the game lists exactly the ${P.on.length} song${P.on.length > 1 ? "s" : ""} switched on${other ? `, replacing the other ${s.db.pack ? `pack's (${esc(s.db.pack)})` : "build's"} song list` : ""}.`) : ""}
       ${P.db === "none" ? whatLi("rm", `<b>Removes your song list:</b> no custom song is switched on, so the game lists only its own songs.`) : ""}
       ${P.keep.length ? whatLi("", `<b>Not touched:</b> ${names(P.keep)}.`) : ""}
@@ -815,7 +977,7 @@ function bindSticks(s) {
     const id = e.currentTarget.dataset.dev; if (id === SP.stick) return;
     if (Object.keys(SP.plan).length && await ask("Discard your changes?", "Your switch changes for this memory stick aren't applied yet.", [
       { label: "Discard changes", value: "y", kind: "danger" }, { label: "Keep them", value: null }]) !== "y") return;
-    Object.assign(SP, { stick: id, plan: {}, view: "list" }); renderSticks();
+    Object.assign(SP, { stick: id, plan: {}, view: "list" }); leavePackMode(); renderSticks();
   });
   on("#spRescan", () => showSticks());
   if (!s || !s.online) return;
@@ -829,7 +991,8 @@ function bindSticks(s) {
     document.querySelectorAll("[data-want]").forEach(b => setWant(b.dataset.want, w));  // the songs shown (filter and search)
     renderSticks();
   });
-  on("#spUndo", () => { SP.plan = {}; renderSticks(); });
+  on("#spUndo", () => { SP.plan = {}; leavePackMode(); renderSticks(); });
+  on("#spPackCancel", () => { SP.plan = {}; leavePackMode(); renderSticks(); });
   on("[data-archive]", e => { SP.target = e.currentTarget.dataset.archive; go("archive"); });
   on("[data-rmone]", e => { SP.target = e.currentTarget.dataset.rmone; go("remove"); });
   on("[data-import]", e => importFrom(e.currentTarget.dataset.import));
@@ -840,12 +1003,13 @@ function bindSticks(s) {
     SP.v = await loadSticks(); renderSticks();
   });
   on("#spReview", () => go("review"));
-  on("#spBack", async () => { if (SP.view === "done" || SP.view === "failed") { SP.v = await loadSticks(); } go("list"); });
+  on("#spBack", async () => { if (SP.view === "done" || SP.view === "failed") { SP.v = await loadSticks(); leavePackMode(); } go("list"); });
   on("#spLog", () => { showBuildPanel(true); followBuild(); });
   on("#spApply", async () => {
     const r = stickRowsOf(s), P = stickPending(s, r);
     try { await api("POST", "/api/stick/apply", { stick: s.id, want: P.on }); } catch (err) { return fail("Couldn't update the memory stick")(err); }
-    followStick(P.copy.length + P.rm.length + (P.db !== "keep" ? 1 : 0), `Updating ${stickWhere(s)}…`, "Memory stick updated");
+    const k = SP.pack, done = !k ? "Memory stick updated" : k.mode === "install" ? `${k.name} is installed on ${stickWhere(s)}` : `${k.name} is uninstalled`;
+    followStick(P.copy.length + P.rm.length + (P.db !== "keep" ? 1 : 0), `Updating ${stickWhere(s)}…`, done);
   });
   on("#archGo", async () => {
     const x = s.songs.find(y => y.folder === SP.target), rm = !!($("#archRm") && $("#archRm").checked);
@@ -860,66 +1024,6 @@ function bindSticks(s) {
     try { await api("POST", "/api/stick/remove", { stick: s.id, folders: list.map(x => x.folder) }); } catch (err) { return fail("Couldn't remove it from the memory stick")(err); }
     followStick(list.length + 1, "Removing from the memory stick…", list.length === 1 ? `${songName(list[0])} is off the memory stick` : `${list.length} song folders removed`);
   });
-}
-// install: show what will happen, then copy (a job in the build log panel)
-async function installTo(stickId, source, songs, db) {
-  let p;
-  try { p = await api("POST", "/api/install", { stick: stickId, source, songs, db, dry: true }); } catch (e) { return fail("Couldn't plan the install")(e); }
-  if (!p.copy.length && !p.db) return toast("Nothing to copy: tick songs, or the song database.", true);
-  const theirs = p.hidden.filter(h => !h.inLibrary), mineHidden = p.hidden.filter(h => h.inLibrary);
-  $("#modalBox").innerHTML = `<b>Install ${esc(p.name)} to the ${esc(p.stick.label)}?</b>
-    <div class="small mono dim" style="margin:4px 0 8px">${esc(p.stick.music)}</div>
-    ${p.copy.length ? `<p>Copy <b>${p.copy.length} song${p.copy.length > 1 ? "s" : ""}</b> (${p.mb} MB), replacing those folders: ${p.copy.map(c => esc(c.title || c.folder)).join(", ")}.</p>` : ""}
-    ${p.db ? `<p>Replace the song database (<span class="mono">ZZCUSTOMDB</span>) with <span class="mono">${esc(p.dbFile)}</span>. Everything else in that folder goes${p.current && p.current.state === "other" ? `, including the other build's <span class="mono">${esc(p.current.file)}</span>` : ""}.</p>` : `<p class="small dim">The song database stays as it is.</p>`}
-    ${theirs.length ? `<p class="warnline">Hidden in the game afterwards (not in your library): ${theirs.map(h => esc(h.title || h.folder)).join(", ")}. Import ${theirs.length > 1 ? "them" : "it"} first to keep ${theirs.length > 1 ? "them" : "it"} listed.</p>` : ""}
-    ${mineHidden.length ? `<p class="warnline">Your songs not in the new database stay on the stick but hidden: ${mineHidden.map(h => esc(h.title || h.folder)).join(", ")}.</p>` : ""}
-    ${p.notOnStick.length ? `<p class="small dim">Listed but not on the stick (the game skips them): ${p.notOnStick.map(esc).join(", ")}.</p>` : ""}
-    <p class="small dim">Nothing else on the memory stick changes. ${p.stick.id === "ppsspp" ? "If the game is running in PPSSPP, restart it afterwards." : "Afterwards, end the USB connection on the PSP before unplugging it."}</p>
-    <div class="actions" style="margin-top:12px">${theirs.length ? `<button id="ins_import">Import first</button>` : ""}<button class="primary" id="ins_go">Install</button><button id="ins_cancel">Cancel</button></div>`;
-  $("#modal").classList.remove("hidden");
-  $("#ins_go").focus();
-  $("#ins_cancel").onclick = () => $("#modal").classList.add("hidden");
-  if ($("#ins_import")) $("#ins_import").onclick = () => importFrom(p.stick.music + "\\" + theirs[0].folder);
-  $("#ins_go").onclick = async () => {
-    $("#modal").classList.add("hidden");
-    try { await api("POST", "/api/install", { stick: stickId, source, songs: p.copy.map(c => c.folder), db: p.db }); } catch (e) { return fail("Couldn't start the install")(e); }
-    showBuildPanel(true);
-    followBuild();
-  };
-}
-// import: list the songs found in a folder, then add the ticked ones to the library
-async function importFrom(dir) {
-  let c;
-  try { c = await api("GET", "/api/import?dir=" + encodeURIComponent(dir)); } catch (e) { return fail("Couldn't look for songs there")(e); }
-  const rows = c.songs.map(s => {
-    const d = s.details, why = s.problem || (s.inLibrary ? "already in your library" : "");
-    return `<tr data-f="${esc(s.folder)}"><td>${why ? "" : `<input type="checkbox" checked aria-label="Import ${esc(d.title || s.folder)}">`}</td>
-      <td><b>${esc(d.title || "(no title)")}</b> <span class="dim small mono">${esc(s.folder)}</span><div class="small dim">${esc(d.artist || "")}${d.album ? " · " + esc(d.album) : ""}${d.year ? " · " + esc(d.year) : ""}${d.genre ? " · " + esc(d.genre) : ""}</div></td>
-      <td class="small">${why ? `<span class="warnline">${esc(why)}</span>` : s.needsDetails ? `<span class="warnline">details missing: fill them in after importing</span>` : `details from ${esc(s.from)}`}${s.yours ? ' <span class="badge">built by you</span>' : ""}</td><td class="small">${s.mb} MB</td></tr>`;
-  }).join("");
-  $("#modalBox").innerHTML = `<b>Import songs</b><div class="small mono dim" style="margin:4px 0 8px">${esc(c.root)}</div>
-    ${c.songs.length ? `<table class="t importtable">${rows}</table>` : `<p>No song folders there.</p>`}
-    <p class="small dim">Each song is copied into your library (songs\\&lt;FOLDER&gt;\\import) with its chart and audio as shipped: its details can be changed, its gems can't.
-    Then a build adds it to your song database.</p>
-    <div class="actions" style="margin-top:10px"><button class="primary" id="im_ok">Import</button><label class="small"><input type="checkbox" id="im_build" checked> and build the song database</label><button id="im_cancel">Cancel</button></div>`;
-  $("#modal").classList.remove("hidden");
-  $("#im_cancel").onclick = () => $("#modal").classList.add("hidden");
-  $("#im_ok").onclick = async () => {
-    const folders = [...document.querySelectorAll("#modalBox tr[data-f] input:checked")].map(b => b.closest("tr").dataset.f);
-    if (!folders.length) return toast("Tick the songs to import.", true);
-    try {
-      const r = await api("POST", "/api/import", { dir, folders });
-      $("#modal").classList.add("hidden");
-      const need = r.imported.filter(x => x.needsDetails);
-      toast(`Imported ${r.imported.map(x => x.title).join(", ")}` + (need.length ? `. Fill in the details of ${need.map(x => x.folder).join(", ")}` : ""), !!need.length);
-      location.hash = `#/song/${r.imported[0].folder}`;
-      if ($("#im_build").checked) {
-        try { await api("POST", "/api/buildmany", { folders: r.imported.map(x => x.folder) }); } catch (e) { return fail("Build couldn't start")(e); }
-        showBuildPanel(true);
-        followBuild();
-      }
-    } catch (e) { fail("Couldn't import")(e); }
-  };
 }
 
 // ---------- help ----------
@@ -1647,26 +1751,26 @@ async function wMake() {
 }
 
 // ---------- file picker ----------
-async function pickInto(selector, folder, dirs) {
+async function pickInto(selector, folder, dirs, accept) {
   const target = $(selector);
   let cur = localStorage.pickDir || "";
   const open = async dir => {
     let r;
     try { r = await api("GET", "/api/ls?dir=" + encodeURIComponent(dir || "")); } catch (e) { fail("Couldn't open that folder")(e); return; }
     localStorage.pickDir = r.dir;
-    $("#modalBox").innerHTML = `<b>${dirs ? "Pick a folder" : "Pick a file"}</b><div class="mono small dim" style="margin-top:6px">${esc(r.dir)}</div>
+    $("#modalBox").innerHTML = `<b>${dirs ? (accept ? "Pick a folder or a .zip file" : "Pick a folder") : "Pick a file"}</b><div class="mono small dim" style="margin-top:6px">${esc(r.dir)}</div>
       <div class="filelist">${r.parent ? `<div class="d" data-p="${esc(r.parent)}">..</div>` : ""}
       ${r.entries.map(e => `<div class="${e.dir ? "d" : ""}" data-p="${esc(r.dir + "\\" + e.name)}" data-file="${e.dir ? "" : 1}">${e.dir ? "📁 " : ""}${esc(e.name)}</div>`).join("")}</div>
       <div class="actions"><input type="text" id="pickPath" style="flex:1" placeholder="or type a folder path"><button id="pickGo">Go</button>${dirs ? '<button id="pickThis" class="primary">Use this folder</button>' : ""}<button id="pickCancel">Cancel</button></div>`;
     document.querySelectorAll(".filelist div").forEach(d => d.onclick = async () => {
       if (!d.dataset.file) return open(d.dataset.p);
-      if (dirs) return;
+      if (dirs && !(accept && accept.test(d.dataset.p))) return;
       let p = d.dataset.p;
       if (folder) p = (await api("GET", `/api/relpath/${folder}?p=${encodeURIComponent(p)}`)).rel;
       target.value = p; target.dispatchEvent(new Event("change", { bubbles: true })); $("#modal").classList.add("hidden");
     });
     $("#pickGo").onclick = () => open($("#pickPath").value.trim());
-    if (dirs) $("#pickThis").onclick = () => { target.value = r.dir; $("#modal").classList.add("hidden"); };
+    if (dirs) $("#pickThis").onclick = () => { target.value = r.dir; $("#modal").classList.add("hidden"); target.dispatchEvent(new Event("change", { bubbles: true })); };
     $("#pickCancel").onclick = () => $("#modal").classList.add("hidden");
   };
   $("#modal").classList.remove("hidden");
