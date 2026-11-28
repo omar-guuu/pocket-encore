@@ -12,7 +12,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const { spawn } = require("child_process");
+const { spawn, execFile } = require("child_process");
 const MIDI = require("./midi.js");
 const { checkChart } = require("./checks.js");
 
@@ -302,6 +302,30 @@ function audioFile(folder, track) {
   for (const f of [path.join(B, "wav_tail", track + ".wav"), path.join(REAPER, folder, track + ".wav")])
     if (fs.existsSync(f)) return f;
   return null;
+}
+
+// ---------- attacks: where notes start in each track, for the chart editor's "snap to attacks" ----------
+// scripts/attacks.py on the tracks the editor plays; kept in build/attacks.json until one of them changes
+const ATTACK_TRACKS = { drums: "drums", bass: "bass_guitar", guitar: "lead_guitar", vocals: "vocals" };
+const attackJobs = new Map();
+function songAttacks(folder) {
+  const files = Object.entries(ATTACK_TRACKS).map(([part, track]) => [part, audioFile(folder, track)]).filter(([, f]) => f);
+  if (!files.length) return { parts: {} };
+  const key = files.map(([part, f]) => { const st = fs.statSync(f); return `${part}:${path.basename(path.dirname(f))}:${st.size}:${Math.round(st.mtimeMs)}`; }).join("|");
+  const cache = path.join(songDir(folder), "build", "attacks.json");
+  try { const c = JSON.parse(fs.readFileSync(cache, "utf8")); if (c.key === key) return c; } catch { }
+  if (attackJobs.has(folder)) return attackJobs.get(folder);
+  const job = new Promise((resolve, reject) => execFile(settings.load().python, [path.join(SCRIPTS, "attacks.py"), cache, ...files.map(([part, f]) => `${part}=${f}`)],
+    { cwd: SCRIPTS, windowsHide: true, timeout: 180000 }, (err, out, errOut) => {
+      attackJobs.delete(folder);
+      if (err) return reject(httpError(500, "Couldn't find the attacks: " + (String(errOut || "").trim().split("\n").pop() || err.message)));
+      try {  // the key says which tracks these attacks are from
+        const res = { ...JSON.parse(fs.readFileSync(cache, "utf8")), key };
+        fs.writeFileSync(cache, JSON.stringify(res)); resolve(res);
+      } catch (e) { reject(e); }
+    }));
+  attackJobs.set(folder, job);
+  return job;
 }
 
 // ---------- builds (one at a time, output streamed to the page and written to build/build.log) ----------
@@ -903,6 +927,7 @@ async function route(req, res) {
     writeSong(folder, S);
     return json(res, { ok: true });
   }
+  if (what === "attacks" && M === "GET") return json(res, await songAttacks(folder));
   if (what === "audio" && M === "GET") {
     const f = audioFile(folder, extra);
     if (!f) throw httpError(404, "no audio yet: build the song once");

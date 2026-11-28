@@ -51,7 +51,7 @@ window.openEditor = async (root, folder, details) => {
   const S = details.song;
   E = {
     folder, S, midi: chart.midi, source: chart.source, hasAuto: chart.hasAuto, tpb: chart.midi.tpb, lead: (chart.audio && chart.audio.lead) || 0,
-    diff: 3, snap: 4, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, saved: false,
+    diff: 3, snap: 4, snapAtt: false, attacks: null, pps: 120, x0: 0, sel: new Set(), undo: [], redo: [], dirty: false, saved: false,
     reduce: S.chart ? !!S.reduce : true,
     ctx: null, bufs: {}, peaks: {}, gains: {}, vol: {}, mute: {}, solo: {}, srcs: [], playing: false, t0: 0, off: 0, rate: 1,
     focus: "guitar", ticks: false, held: [null, null, null, null], lastPress: null, odStart: null, view: "all",  // always opens with every part shown; Focus / Only last until the editor closes padState: "", clickNext: 0, length: (chart.audio && chart.audio.audioSeconds) || 0, drag: null, ghost: null, showGhost: false,
@@ -72,6 +72,7 @@ window.openEditor = async (root, folder, details) => {
   draw();
   const cur = E; TL.loadAudio(E, $("#audioState"), () => E === cur);
   if (E.source === "edited" && E.hasAuto) loadGhost();
+  loadAttacks();
 };
 
 // ---------- tempo map (timeline.js) ----------
@@ -130,12 +131,12 @@ const CHORD_COL = "#f0a030";  // the highway's (dark in both themes); the chart 
 const PAL = {
   dark: { bg: "#111318", grid: "#1c2028", beatDown: "#3c4352", beat: "#262b35", barNum: "#9aa1ad", secs: "#8a919e", fxLane: "#181b21", fxWave: "#2c3140",
     fx: "rgba(180,110,240,.38)", fxLine: "#b46ef0", fxSel: "rgba(240,160,48,.55)", fxSelLine: "#f0a030", fxText: "#ffffff", ovFx: "rgba(180,110,240,.5)",
-    partFocus: "#1a1d24", part: "#171a20", laneLine: "#20242c", soloFill: "rgba(240,160,48,.10)", soloBar: "#f0a030", od: "#6fd8ff", sel: "#ffffff",
+    partFocus: "#1a1d24", part: "#171a20", att: "rgba(255,255,255,.5)", barLine: "#4a5263", beatLine: "#232832", barAlt: "rgba(255,255,255,.028)", laneLine: "#20242c", soloFill: "rgba(240,160,48,.10)", soloBar: "#f0a030", od: "#6fd8ff", sel: "#ffffff",
     gutFocus: "#262a33", gut: "#1e2128", gutText: "#9aa1ad", gutDim: "#8a919e", chord: "#f0a030", band: "#f0a030", playhead: "#ffffff", ovBg: "#0e1014",
     loopFill: "rgba(90,170,255,.09)", loopFillOff: "rgba(90,170,255,.035)", loopBand: "rgba(90,170,255,.45)", loopBandOff: "rgba(90,170,255,.2)", loopLine: "#5aaaff", waveA: "40", gemLine: "" },
   light: { bg: "#fbfbfc", grid: "#eceef1", beatDown: "#aeb5c1", beat: "#dde1e7", barNum: "#3f4652", secs: "#5f6673", fxLane: "#eff1f4", fxWave: "#cfd4dc",
     fx: "rgba(150,80,220,.28)", fxLine: "#8a4fd0", fxSel: "rgba(240,160,48,.45)", fxSelLine: "#b86a00", fxText: "#1d2026", ovFx: "rgba(150,80,220,.5)",
-    partFocus: "#ffffff", part: "#f5f6f8", laneLine: "#e4e7eb", soloFill: "rgba(240,160,48,.14)", soloBar: "#c87800", od: "#0a8cbc", sel: "#1d2026",
+    partFocus: "#ffffff", part: "#f5f6f8", att: "rgba(20,24,30,.45)", barLine: "#b3bac6", beatLine: "#e3e6eb", barAlt: "rgba(20,30,50,.035)", laneLine: "#e4e7eb", soloFill: "rgba(240,160,48,.14)", soloBar: "#c87800", od: "#0a8cbc", sel: "#1d2026",
     gutFocus: "#e2e7ef", gut: "#eceff3", gutText: "#3f4652", gutDim: "#5f6673", chord: "#d97400", band: "#b86a00", playhead: "#1d2026", ovBg: "#eceff3",
     loopFill: "rgba(40,120,220,.10)", loopFillOff: "rgba(40,120,220,.04)", loopBand: "rgba(40,120,220,.45)", loopBandOff: "rgba(40,120,220,.2)", loopLine: "#2a78d8", waveA: "55",
     gemLine: "rgba(0,0,0,.55)" },  // the lane colors are pale on a light chart (yellow 1.6:1); an outline keeps the game colors readable
@@ -322,22 +323,32 @@ function loop() {
   E.raf = requestAnimationFrame(loop);
 }
 // ticks for the next 0.2 s, counted in raw play time (so a loop's wrap is a jump in song time, not a gap)
+function click(when, freq, gain, out, len = 0.04) {
+  const o = E.ctx.createOscillator(), g = E.ctx.createGain();
+  o.frequency.value = freq; o.connect(g); g.connect(out);
+  g.gain.setValueAtTime(gain, when); g.gain.exponentialRampToValueAtTime(0.001, when + len);
+  o.start(when); o.stop(when + len + 0.01);
+}
 function scheduleClicks() {
-  if (!E || !E.playing || !E.ticks) return;
+  if (!E || !E.playing || !(E.ticks || E.metro)) return;
+  if (E.metro && !E.metroGain) { E.metroGain = E.ctx.createGain(); E.metroGain.gain.value = Number($("#metroVol").value); E.metroGain.connect(E.ctx.destination); }
   const p = focusPart(), L = E.playLoop, rnow = rawPos(), r1 = rnow + 0.2 * E.rate;
   if (E.clickNext < rnow - 0.05 || E.clickNext > r1) E.clickNext = rnow;
   let r = E.clickNext;
   while (r < r1) {
     const s = songAt(r), end = L ? Math.max(r + 1e-6, Math.min(r1, r + (L.b - s))) : r1, s1 = s + (end - r);
-    for (const n of gemsOf(p)) {
+    if (E.ticks) for (const n of gemsOf(p)) {
       const gs = t2s(n.t);
       if (gs < s || gs >= s1) continue;
       const when = E.t0 + (r + (gs - s) - E.off) / E.rate;
-      if (when < E.ctx.currentTime) continue;
-      const o = E.ctx.createOscillator(), g = E.ctx.createGain();
-      o.frequency.value = 1500 + 300 * laneOf(p, n); o.connect(g); g.connect(E.clickGain);
-      g.gain.setValueAtTime(0.9, when); g.gain.exponentialRampToValueAtTime(0.001, when + 0.04);
-      o.start(when); o.stop(when + 0.05);
+      if (when >= E.ctx.currentTime) click(when, 1500 + 300 * laneOf(p, n), 0.9, E.clickGain);
+    }
+    // metronome: every beat of the song's tempo map (BEAT track), higher and louder on the first beat of a bar
+    if (E.metro) for (const b of TL.beatList(E, s2t(s), s2t(s1))) {
+      const bs = t2s(b.t);
+      if (bs < s || bs >= s1) continue;
+      const when = E.t0 + (r + (bs - s) - E.off) / E.rate;
+      if (when >= E.ctx.currentTime) click(when, b.down ? 1320 : 880, b.down ? 1 : 0.6, E.metroGain, 0.06);
     }
     r = end;
   }
@@ -345,6 +356,30 @@ function scheduleClicks() {
 }
 // ---------- loop ----------
 const snapS = s => t2s(snapT(s2t(s)));
+
+// ---------- snap to attacks: a gem lands where a note starts in its part's track (a pick, strum, hit or syllable) ----------
+// The server finds the attacks once per song (scripts/attacks.py, kept in build/attacks.json until a track changes).
+async function loadAttacks() {
+  const me = E;
+  try { const r = await api("GET", `/api/attacks/${E.folder}`); if (E !== me) return; E.attacks = r.parts || {}; }
+  catch (e) { if (E !== me) return; E.attacks = {}; if (E.snapAtt) toast(e.message, true); }
+  if (E.snapAtt) { draw(); toast("Attacks found: gems now snap to them."); }
+}
+const ATT_WIN = 0.06;  // s: how far a gem may move to reach an attack
+// the start tick for a gem of part p near tick t: the best attack within ATT_WIN (strong and close), else the grid
+function snapGem(t, p) {
+  const A = E.snapAtt && E.attacks && p && E.attacks[p.key];
+  if (!A || !A.length) return snapT(t);
+  const s = t2s(t);
+  let lo = 0, hi = A.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (A[m][0] < s - ATT_WIN) lo = m + 1; else hi = m; }
+  let best = null, score = 0;
+  for (let i = lo; i < A.length && A[i][0] <= s + ATT_WIN; i++) {
+    const v = Math.min(2, A[i][1]) * (1 - 0.6 * Math.abs(A[i][0] - s) / ATT_WIN);
+    if (v > score) { score = v; best = A[i][0]; }
+  }
+  return best == null ? snapT(t) : Math.max(0, Math.round(s2t(best)));
+}
 const downbeats = (t0, t1) => beatList(t0, t1).filter(b => b.down).map(b => b.t);
 const barStart = t => { const d = downbeats(0, t); return d.length ? d[d.length - 1] : 0; };
 const barAfter = (t, n = 1) => { const d = downbeats(t, t + E.tpb * 64).filter(x => x > t); return d[n - 1] ?? t + n * 4 * E.tpb; };
@@ -479,12 +514,21 @@ function draw() {
   TL.drawGrid(E, c, K, { gut: GUT, ruler: RULER, h: H, step: E.snap > 1 ? step() : 0 });
   // parts
   const geo = partGeo();
+  const vb = TL.beatList(E, s2t(Math.max(0, E.x0)) - 8 * E.tpb, s2t(sOf(W)) + 8 * E.tpb).map(b => ({ ...b, x: Math.round(xOf(t2s(b.t))) + .5 }));
+  const downs = vb.filter(b => b.down);
   E.parts.forEach((p, i) => {
     const g = geo[i], y0 = g.y, LN = g.lane, gw = g.gw;
     if (g.hidden) return;
     if (g.strip) { drawStrip(c, K, p, g, W); return; }
     c.fillStyle = p.key === E.focus ? K.partFocus : K.part; c.fillRect(GUT, y0, W - GUT, g.h);
+    c.fillStyle = K.barAlt;
+    for (let i = 0; i + 1 < downs.length; i++) if (downs[i].bar % 2 === 0) { const a = Math.max(GUT, downs[i].x), b = Math.min(W, downs[i + 1].x); if (b > a) c.fillRect(a, y0 + HEAD, b - a, 4 * LN); }
     wave(STEM_OF[p.key], y0 + HEAD, 4 * LN, PART_COL[p.key] + K.waveA);
+    for (const b of vb) { if (b.x < GUT || b.x > W) continue; c.strokeStyle = b.down ? K.barLine : K.beatLine; c.beginPath(); c.moveTo(b.x, y0 + HEAD); c.lineTo(b.x, y0 + HEAD + 4 * LN); c.stroke(); }
+    if (E.snapAtt && E.attacks && E.attacks[p.key]) {  // where notes start in the track: taller = stronger
+      const yb = y0 + HEAD + 4 * LN; c.fillStyle = K.att;
+      for (const [s, v] of E.attacks[p.key]) { const x = xOf(s); if (x < GUT) continue; if (x > W) break; const h = 3 + 7 * Math.min(1, v / 2); c.fillRect(Math.round(x), yb - h, 1, h); }
+    }
     for (let l = 1; l < 4; l++) { c.strokeStyle = K.laneLine; c.beginPath(); c.moveTo(GUT, y0 + HEAD + l * LN + .5); c.lineTo(W, y0 + HEAD + l * LN + .5); c.stroke(); }
     // overdrive and solo markers (shared by every difficulty): solo bar on top, overdrive bar below it, both draggable
     const od = [], hov = E.hoverSpan, soloLabels = [];
@@ -552,7 +596,7 @@ function draw() {
   if (pv) {
     const [sh, x, y] = pv, h = hit(x, y);
     if (x >= GUT && h.zone === "lane" && h.part.key === E.focus) {
-      const g = geoOf(h.part), t = snapT(s2t(sOf(x)));
+      const g = geoOf(h.part), t = snapGem(s2t(sOf(x)), h.part);
       for (const [l, k] of sh.gems) {
         const gx = xOf(t2s(t + k * shapeStep())), bx = gemBox(g, l);
         c.globalAlpha = .6; c.fillStyle = LANE_COL[l]; c.fillRect(gx, bx.gy, g.gw, bx.gh); c.globalAlpha = 1;
@@ -664,7 +708,7 @@ function renderShell(root, details) {
       <button id="zoomOut" title="Zoom out (Ctrl+wheel)" aria-label="Zoom out">−</button><button id="zoomIn" title="Zoom in (Ctrl+wheel)" aria-label="Zoom in">+</button>
     </div>
     <div class="grp" role="group" aria-label="Edit">
-      <label class="small dim" for="snap">snap</label><select id="snap">${opts([[1, "1 beat"], [2, "1/2"], [3, "1/3"], [4, "1/4"], [6, "1/6"], [8, "1/8"], [0, "off"]], 4)}</select>
+      <label class="small dim" for="snap">snap</label><select id="snap" title="Where new and moved gems land. Attacks: where a note starts in the part's track (a pick, strum, hit or syllable), else on the 1/4 grid">${opts([["a", "attacks"], [1, "1 beat"], [2, "1/2"], [3, "1/3"], [4, "1/4"], [6, "1/6"], [8, "1/8"], [0, "off"]], 4)}</select>
       <button id="odBtn" title="Overdrive phrase on/off over the selected gems; while recording, press to start a phrase at the playhead and again to end it (O). Drag a phrase's bar to move it, or its ends to resize it.">Overdrive</button><button id="soloBtn" title="Solo on/off over the selected gems; one part at a time, at most 4 per part (L). Drag a solo's bar to move it, or its ends to resize it.">Solo</button>
       <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button><button id="redo" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
       <button id="tempoBtn">Tempo…</button>
@@ -678,7 +722,7 @@ function renderShell(root, details) {
       <button id="saveEd" class="primary">Save</button><button id="saveBuildEd" title="Save, then rebuild the song's chart">Save + rebuild</button>
     </div>
   </div>
-  ${TL.mixerHtml(`<span class="ch"><label title="Play a click on the selected part's gems, to check the sync"><input type="checkbox" id="ticks"> <b>Ticks</b></label><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span>`)}
+  ${TL.mixerHtml(`<span class="ch"><label title="Play a click on the selected part's gems, to check the sync"><input type="checkbox" id="ticks"> <b>Ticks</b></label><input type="range" min="0" max="1" step="0.05" value="0.5" id="clickVol" aria-label="Ticks volume"></span><span class="ch"><label title="A click on every beat of the song's tempo, higher on the first beat of each bar (N)"><input type="checkbox" id="metro"> <b>Metronome</b></label><input type="range" min="0" max="1" step="0.05" value="0.6" id="metroVol" aria-label="Metronome volume"></span>`)}
   <div id="shapes" class="shapes"></div>
   <div class="edmain"><div class="canvaswrap" id="cvwrap"><canvas id="cv"></canvas><canvas id="overview"></canvas></div><canvas id="highway"></canvas></div>
   <div class="edfoot">
@@ -687,7 +731,7 @@ function renderShell(root, details) {
       <span id="edMode" style="margin-left:8px"></span>
       <div id="diffBox" class="diffbox" style="margin-top:6px"></div></div>
     <div class="panel keys" style="width:390px">
-      <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off (at the playhead's bar) · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
+      <kbd>Space</kbd> play/pause · click ruler = seek, drag it = loop a section · <kbd>K</kbd> loop on/off (at the playhead's bar) · <kbd>N</kbd> metronome · <kbd>Home</kbd> start · <kbd>R</kbd> record mode<br>
       <kbd>1</kbd>–<kbd>4</kbd> add a gem in that lane at the playhead (hold while playing = held note; together = chord) · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd> add that shape<br>
       shapes: drag one onto its part, or click it then click the part; <kbd>Esc</kbd> stops placing<br>
       click a lane = add gem (with several gems selected, it unselects them first) · drag = move · drag the right end = hold length<br>
@@ -716,12 +760,18 @@ function renderShell(root, details) {
   $("#rate").onchange = e => { const was = E.playing; stop(); E.rate = Number(e.target.value); if (was) play(); };
   $("#diff").onchange = e => setDiff(Number(e.target.value));
   $("#padBtn").onclick = padDialog;
-  $("#snap").onchange = e => { E.snap = Number(e.target.value); draw(); };
+  $("#snap").onchange = e => {
+    E.snapAtt = e.target.value === "a"; E.snap = E.snapAtt ? 4 : Number(e.target.value);
+    if (E.snapAtt && !E.attacks) toast("Finding where the notes start in each track (a few seconds, once per song)…");
+    draw();
+  };
   $("#zoomIn").onclick = () => zoom(1.5, GUT + (E.W - GUT) / 2);
   $("#zoomOut").onclick = () => zoom(1 / 1.5, GUT + (E.W - GUT) / 2);
   $("#focus").onchange = e => setFocus(e.target.value);
   $("#loopBtn").onclick = toggleLoop; $("#loopBtn").title = LOOP_TIP;
   $("#ticks").onchange = e => { E.ticks = e.target.checked; E.clickNext = rawPos(); };
+  $("#metro").onchange = e => { E.metro = e.target.checked; E.clickNext = rawPos(); };
+  $("#metroVol").oninput = e => { if (E.metroGain) E.metroGain.gain.value = Number(e.target.value); };
   $("#rec").onclick = toggleRec;
   $("#odBtn").onclick = () => overdrivePress(performance.now());
   document.querySelectorAll("#viewSeg [data-view]").forEach(b => b.onclick = () => setView(b.dataset.view));
@@ -760,7 +810,7 @@ function renderShell(root, details) {
 function toggleRec() { E.recording = !E.recording; if (!E.recording) E.odStart = null; $("#rec").classList.toggle("on", E.recording); if (E.recording && !E.playing) play(); draw(); }
 function recordGem(lane) {
   if (lockedDiff()) return;
-  const p = focusPart(), t = snapT(s2t(pos()));
+  const p = focusPart(), t = snapGem(s2t(pos()), p);
   if (t < 0) return;
   pushUndo();
   const g = addGem(p, lane, t);
@@ -833,7 +883,7 @@ function onDown(e) {
   }
   if (E.stamp && h.zone === "lane") {
     if (h.part.key !== E.focus) toast(`These are ${E.focus} shapes: click the ${E.focus} part.`, true);
-    else placeShape(h.part, E.stamp, snapT(s2t(sOf(x))));
+    else placeShape(h.part, E.stamp, snapGem(s2t(sOf(x)), h.part));
     return;
   }
   const sp = h.zone === "head" && spanAt(x, y);
@@ -876,7 +926,7 @@ function onMove(e) {
   }
   if ((d.mode === "move" || d.mode === "resize") && viewOnly()) { if (!d.warned && Math.hypot(x - d.x, y - d.y) > 4) { d.warned = true; lockedDiff(); } return; }
   if (d.mode === "move") {
-    const dt = snapT(s2t(sOf(x)) - s2t(sOf(d.x)) + (d.orig.get(d.gem).t)) - d.orig.get(d.gem).t;
+    const dt = snapGem(s2t(sOf(x)) - s2t(sOf(d.x)) + (d.orig.get(d.gem).t), d.part) - d.orig.get(d.gem).t;
     const h = hit(x, y), g = geoOf(d.part), dl = h.zone === "lane" && h.part === d.part ? h.lane - Math.min(3, Math.floor((d.y - g.y - HEAD) / g.lane)) : 0;
     let ok = true;
     for (const [n, o] of d.orig) { const p = partOf(n), l = o.n - BASE[E.diff] - p.off + dl; if (l < 0 || l > 3 || o.t + dt < 0) ok = false; }
@@ -901,7 +951,7 @@ function onUp() {
     const h = hit(d.cx, d.cy), inside = d.cx >= GUT && d.cx <= E.W && d.cy >= 0 && d.cy <= H;
     if (inside && h.zone === "lane") {
       if (h.part.key !== E.focus) toast(`These are ${E.focus} shapes: drop them on the ${E.focus} part.`, true);
-      else placeShape(h.part, d.sh, snapT(s2t(sOf(d.cx))));
+      else placeShape(h.part, d.sh, snapGem(s2t(sOf(d.cx)), h.part));
     }
     draw(); return;
   }
@@ -911,7 +961,7 @@ function onUp() {
     // a click on an empty lane with several gems selected: unselect them (the next click adds a gem)
     if (!d.add && E.sel.size > 1) { E.sel.clear(); draw(); return; }
     // a click on an empty lane: new gem
-    const t = snapT(s2t(sOf(d.x))), p = d.part;
+    const p = d.part, t = snapGem(s2t(sOf(d.x)), p);
     if (t < 0 || lockedDiff()) return draw();
     pushUndo();
     const g = addGem(p, d.lane, t);
@@ -980,7 +1030,7 @@ function laneDown(lane, ms) {
   if (lockedDiff()) return;
   const p = focusPart(), s = songTimeAt(ms), now = performance.now(), lp = E.lastPress;
   const chord = lp && lp.part === p && now - lp.ms < CHORD_MS;
-  const t = chord ? lp.t : snapT(s2t(s));
+  const t = chord ? lp.t : snapGem(s2t(s), p);
   if (t < 0) return;
   if (!chord) pushUndo();
   const g = addGem(p, lane, t);
@@ -1186,11 +1236,12 @@ function onKey(e) {
   const k = e.key, ctrl = e.ctrlKey || e.metaKey;
   if (e.shiftKey && !ctrl && /^Digit[1-9]$/.test(e.code)) {  // Shift+n: shape n of the part, at the playhead
     const sh = (SHAPES[E.focus] || [])[Number(e.code.slice(5)) - 1];
-    if (sh) { e.preventDefault(); placeShape(focusPart(), sh, snapT(s2t(pos()))); }
+    if (sh) { e.preventDefault(); placeShape(focusPart(), sh, snapGem(s2t(pos()), focusPart())); }
     return;
   }
   if (k >= "1" && k <= "4" && !ctrl) { e.preventDefault(); if (!e.repeat) laneDown(Number(k) - 1, e.timeStamp); return; }
   if ((k === "k" || k === "K") && !ctrl) { toggleLoop(); return; }
+  if ((k === "n" || k === "N") && !ctrl) { const m = $("#metro"); m.checked = !m.checked; m.dispatchEvent(new Event("change")); return; }
   if (k === " ") { e.preventDefault(); E.playing ? stop() : play(); return; }
   if (k === "Home") { seek(0); E.x0 = 0; draw(); return; }
   if (ctrl && k.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
@@ -1263,7 +1314,7 @@ function copy() {
 }
 function paste() {
   if (!clip || lockedDiff()) return;
-  const at = snapT(s2t(pos()));
+  const c0 = clip.find(c => c.t === 0) || clip[0], at = snapGem(s2t(pos()), E.parts.find(q => q.key === c0.part));
   pushUndo(); E.sel.clear();
   for (const c of clip) {
     const p = E.parts.find(q => q.key === c.part), g = { t: at + c.t, l: c.l, n: BASE[E.diff] + p.off + c.lane, v: 100, c: 0 };

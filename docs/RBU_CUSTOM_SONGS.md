@@ -739,9 +739,8 @@ when every track has passed its end (the lanes hide).
   "made from Expert" checkbox; in Easy they are view-only) and Tempo…; the folder name in Make a new song; More → Open
   the song's game files. Everything else is Easy, held drum gems included (the rules button warns). The full table is
   on the Help page (Easy and Advanced Edit Mode).
-- TODO: in-game screenshots of each screen effect for the Effects & Band Anims preview box (user is taking them;
-  they go in `pocketencore\public\fx\<effect>.png` and in the public repo - user's decision 2026-11-24; list in
-  `pocketencore\public\fx\README.md`).
+- Done: in-game screenshots of all 15 screen effects for the Effects & Band Anims preview box, in
+  `pocketencore\public\fx\` (list in `pocketencore\public\fx\README.md`).
 - Solos are supported (format matched on all official charts); first in-game test: Handlebars (guitar intro solo).
 - Vocals from a stem (vocalchart.js) are new; first test: Handlebars.
 - Vocals are charted from the synth line (no real vocal part in the source MIDI); kick notes are ignored.
@@ -752,6 +751,12 @@ when every track has passed its end (the lanes hide).
 - Kicks: Unplugged's drums have 4 lanes and no kick, so kick notes are dropped by design.
 - TODO (parked 2026-11-09): camera shots. The camera follows the instrument being played and the codes look
   random, so naming them and a song.json "cameras" option are on hold (see "Camera shots" below; ZCAMTEST).
+  Next session (planned 2026-11-27, on hold): staying on one instrument is not possible (the game asks to switch
+  lanes after each phrase), so play ZCAMTEST normally, twice, and press F12 about 2 s after each marker (32
+  screenshots per run, in `memstick\PSP\SCREENSHOT\`; the highway shows the active instrument). Then: match the
+  screenshots to the markers, fill in checklist.txt with the shot and the instrument, find what stays the same per
+  code (the shot style), and propose names and a song.json "cameras" option. ZCAMTEST gets into the song list through
+  Pocket Encore (Memory stick → other songs → Add to my library → Review and apply); archive it afterwards.
 
 ### Screen effects (old film on TODAY)
 The engine has 22 full-screen effects (Blur, Tint, Monochrome, Sepia, FishEye, Photonegative, FilmGrain, FilmDust,

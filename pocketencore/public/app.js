@@ -1156,6 +1156,7 @@ const HELP = [
       <tr><td><kbd>F</kbd> · All parts / Focus / Only</td><td>show all four parts · enlarge the selected part, the others as thin strips (click one to switch) · only the selected part; double-click a part's name to enlarge it or go back</td></tr>
       <tr><td><kbd>O</kbd> / Overdrive · <kbd>L</kbd> / Solo</td><td>overdrive phrase · solo, on/off for the selected gems (one part has a solo at a time); while recording, <kbd>O</kbd> or Overdrive starts a phrase at the playhead and a second press ends it</td></tr>
       <tr><td>drag on the ruler · <kbd>K</kbd> / ⟲ Loop</td><td>mark a section to repeat · loop on/off: it starts at the playhead's bar, as long as the last loop (with gems selected: loops their bars)</td></tr>
+      <tr><td><kbd>N</kbd> / Metronome (in the mixer)</td><td>a click on every beat of the song's tempo, higher on the first beat of each bar; it has its own volume and follows the playback speed</td></tr>
       <tr><td>Shapes · <kbd>Shift</kbd>+<kbd>1</kbd>–<kbd>7</kbd></td><td>drag a shape onto its part, or click it then click the part · add shape n at the playhead</td></tr>
       <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>/<kbd>Y</kbd> · <kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> · <kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>undo/redo · copy/paste at the playhead · save</td></tr>
       <tr><td>wheel · <kbd>Ctrl</kbd>+wheel</td><td>scroll · zoom</td></tr>
@@ -1165,6 +1166,8 @@ const HELP = [
     charts do (too fast, too many chords, one thumb alternating, held drums…); it flashes when an edit breaks a rule. Click it
     to see the list over the chart: <b>go</b> to a warning, or dismiss it with ×. It never blocks you.</p>
     <h3>Loop and shapes</h3>
+    <p>Every bar is marked inside the parts: a stronger line where it starts, fainter lines on the beats, and every other
+    bar lightly shaded, so a bar is easy to loop, chart, copy and paste at the start of another bar.</p>
     <p><b>Loop</b> repeats a section while you edit or record it: press <kbd>K</kbd> (or ⟲ Loop) where the playhead is,
     select gems and press <kbd>K</kbd>, or drag along the time ruler. <b>Shapes</b> (above the chart) are the gem combinations the official charts use most: guitar and drums
     chords (3-gem chords on Expert only), and for bass two gems in a row, since bass has no chords. Vocals have none.</p>
@@ -1175,6 +1178,11 @@ const HELP = [
     The other actions (play, record, loop, undo…) and the sticks are listed in the editor's <b>🎮 Controller</b> dialog, where
     any button can be changed. If your presses land early or late, use its <b>Calibrate…</b>.</p>
     <h3>Tempo</h3>
+    <p><b>snap → attacks</b> places gems where a note starts in that part's track (a pick or strum, a drum hit, a sung
+    syllable), found once per song from the audio; small marks along the bottom of each part show them, taller for
+    stronger ones. A gem goes to the best attack within 60 ms, or to the 1/4 grid if there is none. It helps most on
+    guitar and bass, whose waveform is a solid block: click or record roughly at the right moment and the gem lands on
+    the note. The other snap choices use the beat grid.</p>
     <p><b>Tempo…</b> (Advanced Edit Mode) sets a steady BPM from the first beat, or shifts every gem against the audio. Screen effects are on the
     <b>Effects &amp; Band Anims</b> tab.</p>`],
   ["anims", "Effects & Band Anims", `
